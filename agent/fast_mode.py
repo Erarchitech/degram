@@ -86,7 +86,8 @@ def effective_request_overrides(agent: Any) -> dict[str, Any]:
         )
     if "speed" in overrides and getattr(agent, "model", None) in (getattr(agent, "_fast_mode_unavailable_models", None) or ()):
         overrides.pop("speed", None)
-    return overrides
+    from degram_variant.relay_headers import augment_request_overrides  # variant degram: provenance headers
+    return augment_request_overrides(overrides)
 
 
 def fast_mode_unprovisioned(api_error: Any, api_kwargs: Any) -> bool:

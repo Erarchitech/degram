@@ -763,6 +763,60 @@
       }
     },
     {
+      "name": "degram.context.cancel",
+      "summary": "Abort the in-flight bridge read of a preview (or every read); the preview resolves with CANCELLED.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramContextCancelParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramContextCancelResult"
+        }
+      }
+    },
+    {
+      "name": "degram.context.preview",
+      "summary": "Read the pinned document and return the exact bounded context payload with its disclosure.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramContextPreviewParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramContextPreviewResult"
+        }
+      }
+    },
+    {
+      "name": "degram.context.send",
+      "summary": "Submit a turn whose message embeds the previewed payload byte for byte. Whole-definition needs consent true.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramContextSendParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramContextSendResult"
+        }
+      }
+    },
+    {
       "name": "degram.credentials.clear",
       "summary": "Wipe the delegated DG token; the next provider call fails with CREDENTIALS_MISSING.",
       "params": [
@@ -813,6 +867,42 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/DegramCredentialsStatusResult"
+        }
+      }
+    },
+    {
+      "name": "degram.documents.list",
+      "summary": "Open documents of every reachable CAD bridge with a state per bridge; pins nothing.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/Params"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramDocumentsListResult"
+        }
+      }
+    },
+    {
+      "name": "degram.documents.pin",
+      "summary": "Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramDocumentsPinParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramDocumentsPinResult"
         }
       }
     },
@@ -12187,6 +12277,401 @@
         "title": "CurrentSubscription",
         "type": "object"
       },
+      "DegramContextCancelParams": {
+        "additionalProperties": false,
+        "properties": {
+          "previewId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Previewid"
+          }
+        },
+        "title": "DegramContextCancelParams",
+        "type": "object"
+      },
+      "DegramContextCancelResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "cancelled": {
+            "default": 0,
+            "title": "Cancelled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramContextCancelResult",
+        "type": "object"
+      },
+      "DegramContextPreviewParams": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": "selection",
+            "title": "Scope",
+            "type": "string"
+          },
+          "previewId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Previewid"
+          }
+        },
+        "title": "DegramContextPreviewParams",
+        "type": "object"
+      },
+      "DegramContextPreviewResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "previewId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Previewid"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
+          },
+          "requestedScope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestedscope"
+          },
+          "requiresConsent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requiresconsent"
+          },
+          "limits": {
+            "default": null,
+            "title": "Limits"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Payload"
+          },
+          "summary": {
+            "default": null,
+            "title": "Summary"
+          },
+          "truncation": {
+            "default": null,
+            "title": "Truncation"
+          },
+          "missing": {
+            "default": null,
+            "title": "Missing"
+          },
+          "document": {
+            "default": null,
+            "title": "Document"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramContextPreviewResult",
+        "type": "object"
+      },
+      "DegramContextSendParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "previewId": {
+            "title": "Previewid",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "consent": {
+            "default": false,
+            "title": "Consent",
+            "type": "boolean"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "session_id",
+          "previewId",
+          "text"
+        ],
+        "title": "DegramContextSendParams",
+        "type": "object"
+      },
+      "DegramContextSendResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "previewId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Previewid"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bytes"
+          },
+          "submit": {
+            "default": null,
+            "title": "Submit"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramContextSendResult",
+        "type": "object"
+      },
       "DegramCredentialsClearResult": {
         "additionalProperties": false,
         "properties": {
@@ -12348,6 +12833,165 @@
           "present"
         ],
         "title": "DegramCredentialsStatusResult",
+        "type": "object"
+      },
+      "DegramDocumentsListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "groups": {
+            "default": null,
+            "title": "Groups"
+          },
+          "pinned": {
+            "default": null,
+            "title": "Pinned"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramDocumentsListResult",
+        "type": "object"
+      },
+      "DegramDocumentsPinParams": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          },
+          "identity": {
+            "default": null,
+            "title": "Identity"
+          }
+        },
+        "title": "DegramDocumentsPinParams",
+        "type": "object"
+      },
+      "DegramDocumentsPinResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "pinned": {
+            "default": null,
+            "title": "Pinned"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramDocumentsPinResult",
         "type": "object"
       },
       "DelegationPauseParams": {

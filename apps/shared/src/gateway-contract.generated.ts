@@ -1260,6 +1260,77 @@ export interface DegramCredentialsStatusResult {
   company?: string | null
   project?: string | null
 }
+export interface DegramDocumentsListResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  groups?: unknown
+  pinned?: unknown
+}
+export interface DegramDocumentsPinParams {
+  app?: string | null
+  identity?: unknown
+}
+export interface DegramDocumentsPinResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  pinned?: unknown
+}
+export interface DegramContextPreviewParams {
+  scope?: string
+  previewId?: string | null
+}
+export interface DegramContextPreviewResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  previewId?: string | null
+  scope?: string | null
+  requestedScope?: string | null
+  requiresConsent?: boolean | null
+  limits?: unknown
+  payload?: string | null
+  summary?: unknown
+  truncation?: unknown
+  missing?: unknown
+  document?: unknown
+}
+export interface DegramContextSendParams {
+  session_id: string
+  previewId: string
+  text: string
+  consent?: boolean
+  scope?: string | null
+}
+export interface DegramContextSendResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  previewId?: string | null
+  scope?: string | null
+  bytes?: number | null
+  submit?: unknown
+}
+export interface DegramContextCancelParams {
+  previewId?: string | null
+}
+export interface DegramContextCancelResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  cancelled?: number
+}
 /** ``tools/bot_desktop/runtime.py::DesktopStatus`` plus the lease and the profile it speaks for. */
 export interface DisplayStatus {
   profile: string
@@ -4988,12 +5059,22 @@ export interface RpcMethods {
   'connectors.tools': { params: ConnectorToolsParams; result: ConnectorToolsResult }
   /** List/add/remove/pause/resume cron jobs in the (optionally profile-scoped) cron store. */
   'cron.manage': { params: CronManageParams; result: CronManageResult }
+  /** Abort the in-flight bridge read of a preview (or every read); the preview resolves with CANCELLED. */
+  'degram.context.cancel': { params: DegramContextCancelParams; result: DegramContextCancelResult }
+  /** Read the pinned document and return the exact bounded context payload with its disclosure. */
+  'degram.context.preview': { params: DegramContextPreviewParams; result: DegramContextPreviewResult }
+  /** Submit a turn whose message embeds the previewed payload byte for byte. Whole-definition needs consent true. */
+  'degram.context.send': { params: DegramContextSendParams; result: DegramContextSendResult }
   /** Wipe the delegated DG token; the next provider call fails with CREDENTIALS_MISSING. */
   'degram.credentials.clear': { params: Params; result: DegramCredentialsClearResult }
   /** Store the delegated DG token in process memory (variant degram only). Errors: CREDENTIALS_INVALID. */
   'degram.credentials.set': { params: DegramCredentialsSetParams; result: DegramCredentialsSetResult }
   /** Presence, scope and expiry of the delegated credential; never the token. */
   'degram.credentials.status': { params: Params; result: DegramCredentialsStatusResult }
+  /** Open documents of every reachable CAD bridge with a state per bridge; pins nothing. */
+  'degram.documents.list': { params: Params; result: DegramDocumentsListResult }
+  /** Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY. */
+  'degram.documents.pin': { params: DegramDocumentsPinParams; result: DegramDocumentsPinResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */
   'delegation.pause': { params: DelegationPauseParams; result: DelegationPauseResult }
   /** Running subagent tree plus the spawn pause flag and limits. */
@@ -5457,9 +5538,14 @@ export const RPC_METHODS = [
   'connectors.policy.set',
   'connectors.tools',
   'cron.manage',
+  'degram.context.cancel',
+  'degram.context.preview',
+  'degram.context.send',
   'degram.credentials.clear',
   'degram.credentials.set',
   'degram.credentials.status',
+  'degram.documents.list',
+  'degram.documents.pin',
   'delegation.pause',
   'delegation.status',
   'diagnostics.share_nous',

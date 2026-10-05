@@ -656,6 +656,8 @@ _CLIENT_SURFACES = frozenset({"hud", "voice-live"})
 
 @method("prompt.submit")
 def _(rid, params: dict) -> dict:
+    from degram_variant.relay_headers import on_prompt_submit
+    on_prompt_submit(params)  # variant degram: only degram.context.send keeps a context scope armed
     from hermes_cli.input_sanitize import sanitize_user_prompt_text
     sid = params.get("session_id", "")
     raw_text = params.get("text", "")
