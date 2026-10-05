@@ -26,18 +26,19 @@ export class ProfilesCliError extends Error {
   }
 }
 
+/**
+ * Every value is bound to its flag as `--flag=value`: a scope value that comes from the DG server and happens
+ * to look like an option (`--home=...`) stays a value, never a flag of its own.
+ */
 function argsFor(command: 'ensure' | 'purge', home: string, scope: ScopeKey): string[] {
   return [
     '-m',
     'degram_variant.profiles',
     command,
-    '--home',
-    home,
-    '--user',
-    scope.user,
-    ...(scope.company ? ['--company', scope.company] : []),
-    '--project',
-    scope.project
+    `--home=${home}`,
+    `--user=${scope.user}`,
+    ...(scope.company ? [`--company=${scope.company}`] : []),
+    `--project=${scope.project}`
   ]
 }
 

@@ -21,14 +21,10 @@ describe('createProfilesCli', () => {
       '-m',
       'degram_variant.profiles',
       'ensure',
-      '--home',
-      HOME,
-      '--user',
-      'alice',
-      '--company',
-      'ACME',
-      '--project',
-      'alpha'
+      `--home=${HOME}`,
+      '--user=alice',
+      '--company=ACME',
+      '--project=alpha'
     ])
   })
 
@@ -40,9 +36,23 @@ describe('createProfilesCli', () => {
 
     const args = run.mock.calls[0]![0] as string[]
 
-    expect(args).not.toContain('--company')
-    expect(args).toContain('a; rm -rf /')
-    expect(args).toContain('p&q')
+    expect(args.some(arg => arg.startsWith('--company'))).toBe(false)
+    expect(args).toContain('--user=a; rm -rf /')
+    expect(args).toContain('--project=p&q')
+  })
+
+  it('binds every value to its flag so a value that looks like an option cannot become one', async () => {
+    const run = vi.fn(async (_args: string[]) => ({ code: 0, stdout: '{"profile":"scope-abc"}', stderr: '' }))
+    const cli = createProfilesCli({ run, home: HOME })
+
+    await cli.ensure({ user: 'alice', company: '--home=/elsewhere', project: '--user=mallory' })
+
+    const args = run.mock.calls[0]![0] as string[]
+
+    expect(args.filter(arg => arg.startsWith('--home'))).toEqual([`--home=${HOME}`])
+    expect(args.filter(arg => arg.startsWith('--user'))).toEqual(['--user=alice'])
+    expect(args).toContain('--company=--home=/elsewhere')
+    expect(args).toContain('--project=--user=mallory')
   })
 
   it('runs purge with the same scope arguments', async () => {
