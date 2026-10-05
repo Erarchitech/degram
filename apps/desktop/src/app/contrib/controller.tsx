@@ -40,6 +40,7 @@ import { discoverBundledPlugins } from '@/contrib/plugins'
 import { Slot } from '@/contrib/react/slot'
 import { registry } from '@/contrib/registry'
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
+import { DegramShellHost } from '@/degram/shell-host'
 import { LocalizedTabTitle, translateNow } from '@/i18n'
 import { NEW_SESSION_TITLE, sessionTitle as storedSessionTitle } from '@/lib/chat-runtime'
 import {
@@ -59,6 +60,7 @@ import { TRANSCRIPT_DIRECTIVE_AREA, type TranscriptDirectiveContribution } from 
 import { setYoloEnabled } from '@/lib/yolo-session'
 import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { watchDeadSessionPrune } from '@/store/dead-session-prune'
+import { $degramEnabled } from '@/store/degram-flag'
 import { $interfaceMode, $showsAdvancedChrome, setModeContext, toggleSimpleMode } from '@/store/interface-mode'
 import {
   $fileBrowserOpen,
@@ -803,6 +805,7 @@ registerPaneCloser('files', () =>
 export function ContribController() {
   const sidebarOpen = useStore($sidebarOpen)
   const statusbarVisible = useStore($statusbarVisible)
+  const degramEnabled = useStore($degramEnabled)
 
   // HUD mode is the SAME app with its frame removed: the wiring (gateway,
   // sessions, streams, submit) mounts identically, and only the shell around
@@ -854,6 +857,9 @@ export function ContribController() {
               just hidden — while toggled off, so its 15s status poll and the
               per-turn readouts stop with it. */}
           {statusbarVisible && <WiredPane part="statusbar" />}
+
+          {/* DeGram variant only: sign-in / project gate, scope strip and DG page (Phase 1301-13). */}
+          {degramEnabled && <DegramShellHost />}
         </div>
       </ContribWiring>
     </SidebarProvider>

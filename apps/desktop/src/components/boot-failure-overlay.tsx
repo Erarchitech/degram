@@ -8,6 +8,7 @@ import { DialogPortalContainerContext } from '@/components/ui/dialog-portal-cont
 import { ErrorIcon } from '@/components/ui/error-state'
 import { Loader } from '@/components/ui/loader'
 import { LogView } from '@/components/ui/log-view'
+import { parseIsolationBootError } from '@/degram/use-degram-state'
 import type { DesktopConnectionConfig, DesktopOauthLoginResult } from '@/global'
 import { useI18n } from '@/i18n'
 import { reestablishCloudAgentSession } from '@/lib/cloud-agent-session'
@@ -112,7 +113,13 @@ export function BootFailureOverlay() {
   // can return, and a later clear or a different error shows the overlay again.
   const [dismissedError, setDismissedError] = useState<string | null>(null)
 
-  const visible = Boolean(boot.error) && boot.error !== dismissedError && !boot.running
+  // DeGram's runtime-isolation refusal is shown by the DeGram gate (full path, no continue action), not here.
+  const visible =
+    Boolean(boot.error) &&
+    boot.error !== dismissedError &&
+    !boot.running &&
+    parseIsolationBootError(boot.error) === null
+
   // While first-run onboarding owns the picker/flow we let it surface its own
   // progress; the recovery overlay is for hard failures, which it covers via a
   // higher z-index regardless of onboarding state.

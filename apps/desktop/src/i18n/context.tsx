@@ -2,6 +2,7 @@ import { applyDocumentLocale, isRecord } from '@hermes/shared/i18n'
 import { useStore } from '@nanostores/react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
+import { degramFirstRunLocale } from '@/degram/i18n'
 import { getHermesConfigRecord, type HermesConfigRecord, retainConfigReadOrigin, saveHermesConfig } from '@/hermes'
 
 import { TRANSLATIONS } from './catalog'
@@ -101,7 +102,7 @@ export function I18nProvider({
   initialLocale,
   scopeKey
 }: I18nProviderProps) {
-  const [locale, setLocaleState] = useState<Locale>(() => normalizeLocale(initialLocale))
+  const [locale, setLocaleState] = useState<Locale>(() => normalizeLocale(initialLocale ?? degramFirstRunLocale()))
   const [isLoadingConfig, setIsLoadingConfig] = useState(false)
   const [isSavingLocale, setIsSavingLocale] = useState(false)
   const [configLoadError, setConfigLoadError] = useState<Error | null>(null)
@@ -198,7 +199,7 @@ export function I18nProvider({
           const machineProfile = await window.hermesDesktop?.getMachineProfile?.().catch(() => null)
 
           if (!cancelled && !userLocaleRef.current) {
-            setLocaleState(resolveInitialLocale(undefined, machineProfile?.locale))
+            setLocaleState(degramFirstRunLocale() ?? resolveInitialLocale(undefined, machineProfile?.locale))
           }
         })
         .catch(error => {
@@ -207,7 +208,7 @@ export function I18nProvider({
           }
 
           setConfigLoadError(toError(error))
-          setLocaleState(DEFAULT_LOCALE)
+          setLocaleState(degramFirstRunLocale() ?? DEFAULT_LOCALE)
 
           if (retryCount < MAX_LOCALE_RETRIES) {
             retryCount += 1

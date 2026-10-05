@@ -1,4 +1,5 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
+import { degramRu } from '@/degram/i18n'
 
 import { defineLocale } from './define-locale'
 
@@ -4300,6 +4301,8 @@ export const ru = defineLocale({
     reloadWindow: 'Перезагрузить окно',
     openLogs: 'Открыть журналы'
   },
+
+  degram: degramRu,
 
   ui: {
     search: {

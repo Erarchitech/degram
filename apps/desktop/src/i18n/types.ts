@@ -5,6 +5,7 @@
 // partial locales should use `defineLocale()` so missing desktop-only strings
 // fall back to English while new keys remain type-checked.
 
+import type { DegramCopy } from '@/degram/i18n'
 import type { ErrorCodeKey } from '@/lib/error-surface'
 import type { TipId } from '@/lib/tips/catalog'
 
@@ -4672,6 +4673,9 @@ export interface Translations {
     reloadWindow: string
     openLogs: string
   }
+
+  /** DeGram variant surfaces (Phase 1301-13). */
+  degram: DegramCopy
 
   ui: {
     search: {

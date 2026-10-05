@@ -1,4 +1,5 @@
 import { FIELD_DESCRIPTIONS, FIELD_LABELS } from '@/app/settings/constants'
+import { degramEn } from '@/degram/i18n'
 
 import type { Translations } from './types'
 
@@ -5662,6 +5663,8 @@ export const en: Translations = {
     reloadWindow: 'Reload window',
     openLogs: 'Open logs'
   },
+
+  degram: degramEn,
 
   ui: {
     search: {
