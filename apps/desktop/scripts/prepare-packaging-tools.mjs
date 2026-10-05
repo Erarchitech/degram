@@ -28,6 +28,31 @@ export function pinnedPackageRoot(source, name) {
   return directory
 }
 
+/** Package formats the preparation can supply on one platform. NSIS is Windows-only (DeGram, D-04).
+ * @param {NodeJS.Platform} platform @returns {string[]} */
+export function supportedPackagingFormats(platform) {
+  return platform === 'win32' ? ['dir', 'msix', 'nsis', 'zip'] : platform === 'darwin' ? ['dir', 'dmg', 'zip'] : ['dir', 'AppImage', 'deb', 'rpm', 'zip']
+}
+
+/** The formats prepared when none are named. DeGram packages an unsigned NSIS installer on Windows.
+ * @param {NodeJS.Platform} platform @param {string | undefined} variant @returns {string[]} */
+export function defaultPackagingFormats(platform, variant) {
+  return platform === 'win32' ? [variant === 'degram' ? 'nsis' : 'msix'] : platform === 'darwin' ? ['dmg', 'zip'] : ['AppImage']
+}
+
+/**
+ * The NSIS toolset, from electron-builder's own pinned and checksummed supplier (the same module
+ * the NSIS target imports), copied into the preparation work directory so the strict build
+ * consumes it as a `file://` custom toolset and downloads nothing.
+ * @param {{ load: (relative: string) => Promise<any>, config: import('app-builder-lib').Configuration, resourcesDir: string, out: string }} options
+ * @returns {Promise<string>}
+ */
+export async function prepareNsisToolset({ load, config, resourcesDir, out }) {
+  const nsis = await load('toolsets/nsis.js')
+  const makensis = await nsis.getMakeNsisPath(config.toolsets?.nsis, resourcesDir)
+  return copyTool(path.dirname(makensis.path), path.join(out, 'nsis'))
+}
+
 /** @param {string} target @returns {'x64' | 'arm64'} */
 export function packagingTargetArch(target) {
   if (target === `${process.platform}-x64`) return 'x64'
@@ -59,9 +84,9 @@ async function preparePackagingTools({ source, out, cache, target = `${process.p
   pinnedPackageRoot(source, 'electron-builder')
   const require = createRequire(path.join(source, 'apps/desktop/package.json'))
   const config = require(path.join(source, 'apps/desktop/electron-builder.config.cjs'))
-  formats ??= process.platform === 'win32' ? ['msix'] : process.platform === 'darwin' ? ['dmg', 'zip'] : ['AppImage']
+  formats ??= defaultPackagingFormats(process.platform, process.env.HERMES_DESKTOP_VARIANT)
   if (process.env.CUSTOM_DMGBUILD_PATH) throw new Error('Preparation must select the pinned dmgbuild supplier, not CUSTOM_DMGBUILD_PATH')
-  const supported = process.platform === 'win32' ? ['dir', 'msix', 'zip'] : process.platform === 'darwin' ? ['dir', 'dmg', 'zip'] : ['dir', 'AppImage', 'deb', 'rpm', 'zip']
+  const supported = supportedPackagingFormats(process.platform)
   if (formats.some(format => !supported.includes(format))) throw new Error(`Unsupported prepared package formats: ${formats.join(', ')}`)
   const dmg = formats.includes('dmg') ? prepareDmgbuild({ source, out, cache, binary: dmgbuild }) : null
   const previousCache = process.env.ELECTRON_BUILDER_CACHE
@@ -110,6 +135,9 @@ async function acquirePackagingTools({ source, out, cache, target, formats, buil
     windows = { makeappx: path.join(kit, 'makeappx.exe'), signtool: path.join(kit, 'signtool.exe'),
       dlib: path.join(kit, 'Azure.CodeSigning.Dlib.dll'), dotnetRoot: copyTool(tools.dotnetRoot, path.join(out, 'dotnet')) }
     toolsets.winCodeSign = kitRoot
+  }
+  if (formats.includes('nsis')) {
+    toolsets.nsis = await prepareNsisToolset({ load, config, resourcesDir, out })
   }
   if (formats.includes('AppImage')) {
     const appimage = await load('toolsets/appimage.js')

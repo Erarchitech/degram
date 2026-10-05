@@ -169,9 +169,11 @@ export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
 /** @param {string[]} args @returns {string[]} */
 function sourceFormats(args) {
   if (args.includes('--dir')) return ['dir']
-  const formats = args.filter(arg => ['dmg', 'zip', 'msix', 'AppImage', 'deb', 'rpm'].includes(arg))
+  const formats = args.filter(arg => ['dmg', 'zip', 'msix', 'nsis', 'AppImage', 'deb', 'rpm'].includes(arg))
   const platform = selectedPlatform(args)
-  return formats.length ? formats : platform === 'darwin' ? ['dmg', 'zip'] : platform === 'win32' ? ['msix'] : ['AppImage']
+  // DeGram (Phase 1301 D-04) is an unsigned per-user NSIS installer on Windows; every other variant keeps MSIX.
+  const windowsDefault = process.env.HERMES_DESKTOP_VARIANT === 'degram' ? ['nsis'] : ['msix']
+  return formats.length ? formats : platform === 'darwin' ? ['dmg', 'zip'] : platform === 'win32' ? windowsDefault : ['AppImage']
 }
 
 if (isMain(import.meta.url)) process.exitCode = runElectronBuilder(process.argv.slice(2))

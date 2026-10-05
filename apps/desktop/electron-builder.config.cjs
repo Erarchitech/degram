@@ -67,6 +67,10 @@ if (!/^\d+\.\d+\.\d+$/.test(electronVersion)) {
   throw new Error(`invalid electron version ${electronVersion} in package.json`)
 }
 
+// The read-only Revit adapter (Phase 1301 D-04): the sibling submodule of the framework checkout
+// (apps/degram/apps/desktop -> apps/revit-mcp), or an explicit path for a build of the fork on its own.
+const revitMcpSource = process.env.DEGRAM_REVIT_MCP_SOURCE || path.resolve(__dirname, '../../../revit-mcp')
+
 const macFeed = channelRequest ? null : feedContract.darwinFeed(channel === 'canary' || channel === 'light-canary' ? 'canary' : 'stable', light)
 const publicUrl = feedContract.feedBaseUrl(process.env.CLOUDFLARE_R2_PUBLIC_URL)
 
@@ -135,6 +139,29 @@ module.exports = {
     },
     ...(['bundled', 'store', 'degram'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
       ? [{ from: 'build/agent-payload', to: 'agent-payload' }]
+      : []),
+    // DeGram carries the adapter source next to the agent payload as `resources/revit-mcp`
+    // (resolveRevitAdapter looks exactly there). Tests, VCS metadata, bytecode and any local
+    // environment are left out: a `.venv` binds to the build machine's Python and is not relocatable.
+    ...(degram
+      ? [
+          {
+            from: revitMcpSource,
+            to: 'revit-mcp',
+            filter: [
+              '**/*',
+              '!tests/**',
+              '!.git',
+              '!.git/**',
+              '!.github/**',
+              '!**/__pycache__/**',
+              '!**/*.pyc',
+              '!.venv/**',
+              '!.pytest_cache/**',
+              '!.ruff_cache/**'
+            ]
+          }
+        ]
       : []),
     {
       from: 'assets/icon.ico',

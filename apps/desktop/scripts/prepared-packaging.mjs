@@ -3,7 +3,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 
 /** @typedef {{ path: string, digest: string }} PreparedFile */
-/** @typedef {{ sevenZip: string, icons: string, winCodeSign?: string, appimage?: string, fpm?: string }} PackagingToolsets */
+/** @typedef {{ sevenZip: string, icons: string, winCodeSign?: string, nsis?: string, appimage?: string, fpm?: string }} PackagingToolsets */
 /** @typedef {{ schema: number, source: string, out: string, identity: string, target: string, formats: string[], electron: string, toolsets: PackagingToolsets, windows: import('./windows-bundle-tools.mjs').WindowsBundleTools | null, dmgbuild: string | null, files: PreparedFile[] }} PreparedPackaging */
 
 /** @param {string} message @returns {Error} */
@@ -115,6 +115,10 @@ export function readPackagingInputs(manifest, source, target = `${process.platfo
     if (target.startsWith('win32-')) {
       if (!result.windows || !result.toolsets.winCodeSign || !result.windows.dotnetRoot) throw preparationRequired('Missing Windows tool selection')
       required.push(result.windows.dotnetRoot)
+    }
+    if (result.formats.includes('nsis')) {
+      if (!result.toolsets.nsis) throw preparationRequired('Missing prepared NSIS toolset')
+      required.push(result.toolsets.nsis)
     }
     if (result.formats.includes('dmg')) {
       if (!result.dmgbuild) throw preparationRequired('Missing prepared dmgbuild')
