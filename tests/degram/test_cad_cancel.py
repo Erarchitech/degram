@@ -121,7 +121,15 @@ class TestDeadlinesAndNoRetry:
         gh.silent = True
         gh.requests.clear()
         before = gh.connections
-        monkeypatch.setattr(gh_bridge, "_monotonic", lambda: time.monotonic() + (31.0 if gh.requests else 0.0))
+        # Every clock read advances 31 s, so each read's deadline (start + 30 s) has
+        # passed by its next poll regardless of when the fake records the request.
+        ticks = {"n": 0}
+
+        def _fast_clock():
+            ticks["n"] += 1
+            return time.monotonic() + 31.0 * ticks["n"]
+
+        monkeypatch.setattr(gh_bridge, "_monotonic", _fast_clock)
         started = time.monotonic()
         view = rt.composer.preview("selection")
         assert view["status"] == "error" and view["code"] == "BUSY" and view["bridgeState"] == "busy"
