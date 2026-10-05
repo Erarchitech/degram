@@ -132,7 +132,10 @@ def discover_builtin_tools(tools_dir: Optional[Path] = None) -> List[str]:
     if cache_dirty or set(fresh_cache) != set(cache):
         _save_discovery_cache(fresh_cache)
     imported: List[str] = []
+    from degram_variant.lockdown import tool_module_allowed
     for mod_name in module_names:
+        if not tool_module_allowed(mod_name):  # variant degram: stock tool modules are not even imported
+            continue
         try:
             importlib.import_module(mod_name)
             imported.append(mod_name)
@@ -672,6 +675,10 @@ class ToolRegistry:
         """Register a tool (called at import time by each tool file). ``override=True`` is an
         explicit opt-in for plugins replacing a built-in implementation (e.g. a headed-Chrome
         browser backend); without it, cross-toolset shadowing is rejected."""
+        from degram_variant.lockdown import tool_name_allowed
+        if not tool_name_allowed(name):  # variant degram: only the allowlist registers (D-22)
+            logger.debug("variant degram: tool %r is not registered (outside the allowlist)", name)
+            return
         # Reject malformed schemas at registration, not at request time: a non-dict
         # ``parameters`` (e.g. a list) serializes into every provider request and 400s the
         # whole turn far from the offending plugin. Failing here names the culprit instead.

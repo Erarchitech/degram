@@ -2317,16 +2317,17 @@ def _merge_managed_overlay(expanded: Dict[str, Any]) -> Tuple[Dict[str, Any], An
     a managed literal: managed values expand only against the process environment. This
     deliberately inverts the usual env-over-config precedence for the keys the managed layer pins
     (docs/design/managed-scope.md §4.1)."""
+    from degram_variant.lockdown import lock_config  # no-op outside variant degram
     managed_config = managed_scope.load_managed_config()
     if not managed_config:
-        return expanded, managed_config
+        return lock_config(expanded), managed_config
     # Same canonicalization as the user config BEFORE merging (parity with
     # managed_scope.apply_managed_overlay) so the merged result never exposes a nested dict.
     managed_normalized = _normalize_root_model_keys(managed_config)
     if isinstance(managed_normalized.get("model"), str):
         managed_normalized = dict(managed_normalized)
         managed_normalized["model"] = {"default": managed_normalized["model"]}
-    return _deep_merge(expanded, _expand_env_vars(managed_normalized)), managed_config
+    return lock_config(_deep_merge(expanded, _expand_env_vars(managed_normalized))), managed_config
 
 
 def _load_config_cache_hit(path_key: str, cache_sig: Any) -> Optional[Dict[str, Any]]:

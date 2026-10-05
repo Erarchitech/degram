@@ -187,6 +187,9 @@ def prewarm_picker_cache_async() -> Optional["_threading.Thread"]:
     The first ``/model`` open (or the first after the 1h TTL) otherwise blocks ~1-2s on serial
     live ``/v1/models`` fetches. Fire-and-forget, at most once per process, fully
     exception-isolated. Returns the thread (for tests) or None if already warmed."""
+    from degram_variant.lockdown import is_degram
+    if is_degram():  # variant degram: the /model picker is locked, so its catalogs are never prefetched
+        return None
     from hermes_cli.model_switch import list_authenticated_providers
     if _picker_prewarm_done.is_set():
         return None

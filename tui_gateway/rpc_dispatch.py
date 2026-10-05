@@ -19,6 +19,11 @@ def _handle_admitted_request(req: dict) -> dict | None:
     if isinstance(normalized, dict):
         return normalized
     rid, method, params = normalized
+    from degram_variant.lockdown import DegramLockedError, assert_rpc_allowed, rpc_locked_response
+    try:
+        assert_rpc_allowed(method, params)  # variant degram: deny by default, before any handler or lookup
+    except DegramLockedError as exc:
+        return rpc_locked_response(rid, exc, _err)
     if not (fn := _methods.get(method)):
         return _err(rid, -32601, f"unknown method: {method} — the client and the Hermes backend are out of sync "
                     "(different versions); run `hermes update` and restart both")

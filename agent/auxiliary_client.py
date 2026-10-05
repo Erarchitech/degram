@@ -4421,7 +4421,8 @@ def _try_configured_fallback_chain(
     """Try auxiliary.<task>.fallback_chain entries in order (each needs ``provider``; model/base_url/api_key optional).
     ``failed_model`` scoping per ``_failed_backend_skip`` (sibling models on the same provider still
     run after a model-scoped failure). Returns (client, model, provider_label) or (None, None, "")."""
-    if not task:
+    from degram_variant.lockdown import is_degram
+    if not task or is_degram():  # variant degram: no configured fallback chains
         return None, None, ""
     chain = _get_auxiliary_task_config(task).get("fallback_chain")
     if not chain or not isinstance(chain, list):
@@ -4507,6 +4508,9 @@ def _try_main_fallback_chain(
     """Top-level main-agent fallback chain for a ``provider: auto`` auxiliary call: auto tasks honour the
     user's main fallback policy before the built-in discovery chain; read via ``get_fallback_chain`` so
     ``fallback_providers`` and legacy ``fallback_model`` keep the main agent's order."""
+    from degram_variant.lockdown import is_degram
+    if is_degram():  # variant degram: no fallback chain
+        return None, None, ""
     try:
         from hermes_cli.config import load_config_readonly
         from hermes_cli.fallback_config import get_fallback_chain
@@ -4657,6 +4661,9 @@ def _discovery_chain_allowed(main_provider: str, task: Optional[str] = None) -> 
     ``auxiliary.<task>``, ``fallback_providers``); guessing "whatever else is logged in" bills an
     account they never pointed this session at (xAI OAuth session with a dead token → every
     compression silently charged to a Nous Portal balance)."""
+    from degram_variant.lockdown import is_degram
+    if is_degram():  # variant degram: never guess another logged-in provider
+        return False
     if (main_provider or "").strip().lower() in {"", "auto"}:
         return True
     logger.warning(
@@ -4668,6 +4675,9 @@ def _discovery_chain_allowed(main_provider: str, task: Optional[str] = None) -> 
 
 def _try_discovery_chain() -> Tuple[Optional[OpenAI], Optional[str], str]:
     """Step 3: hardcoded aggregator/fallback chain, skipping unhealthy providers."""
+    from degram_variant.lockdown import is_degram
+    if is_degram():
+        return None, None, ""
     tried = []
     for label, try_fn in _get_provider_chain():
         candidate_base_url = _custom_health_base_url(label)
@@ -4699,6 +4709,9 @@ def _resolve_auto_route(
     top-level chain; (3) OpenRouter → Nous → custom → Codex → API-key providers, only with no policy
     and no working main client."""
     global auxiliary_is_nous
+    from degram_variant.lockdown import aux_task_allowed, is_degram
+    if is_degram() and not aux_task_allowed(task):  # variant degram: disabled auxiliary task
+        return None, None, ""
     auxiliary_is_nous = False  # Reset — _try_nous() will set True if it wins
     runtime = _normalize_main_runtime(main_runtime)
     _warn_stale_openai_base_url(runtime.get("provider", ""))
@@ -5460,6 +5473,11 @@ def resolve_provider_client(
     (full auto-detection chain). ``model=None`` → provider's default aux model. ``raw_codex`` → bare OpenAI
     client for ``responses.stream()`` callers. ``api_mode`` forces "codex_responses"/"chat_completions"/
     "anthropic_messages" instead of auto-detect. Returns (client, resolved_model) or (None, None)."""
+    from degram_variant.lockdown import aux_explicit_route_allowed, aux_task_allowed, is_degram
+    if is_degram() and not aux_explicit_route_allowed(explicit_base_url):  # the pinned relay route or nothing (D-16)
+        if not aux_task_allowed(task):
+            return None, None
+        provider, explicit_base_url, explicit_api_key, api_mode = "auto", None, None, None
     _validate_proxy_env_urls()
     # Keep the pre-alias name so a custom_providers entry named like a built-in alias
     # (e.g. "kimi" → "kimi-coding") is still reachable via the named-custom branch.
@@ -5723,6 +5741,9 @@ def resolve_vision_provider_client(
     Direct endpoint overrides beat provider selection; explicit providers may force
     experimental backends; auto mode only tries backends known to work.
     """
+    from degram_variant.lockdown import is_degram
+    if is_degram():  # variant degram: vision is disabled (no image surface)
+        return None, None, None
     runtime = _normalize_main_runtime(main_runtime)
     requested, resolved_model, resolved_base_url, resolved_api_key, resolved_api_mode = _resolve_task_provider_model(
         "vision", provider, model, base_url, api_key

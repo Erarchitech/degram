@@ -409,6 +409,8 @@ def _warn_hidden_whitespace(server_name: str, config: dict) -> List[str]:
 
 def _filter_suspicious_mcp_servers(servers: Dict[str, dict]) -> Dict[str, dict]:
     """Drop exfiltration-shaped MCP configs before any stdio spawn path."""
+    from degram_variant.lockdown import lock_mcp_servers  # variant degram: only allowlisted stdio servers
+    servers = lock_mcp_servers(servers)
     try:
         from hermes_cli.mcp_security import validate_mcp_server_entry
     except Exception:

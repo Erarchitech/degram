@@ -1046,6 +1046,9 @@ _mount_plugin_api_routes()
 from hermes_cli.dashboard_auth.routes import router as _dashboard_auth_router  # noqa: E402
 
 app.include_router(_dashboard_auth_router)
+from degram_variant.lockdown import prune_rest_routes  # noqa: E402
+
+prune_rest_routes(app)  # variant degram: only the gateway + liveness routes remain (DGCL-02)
 mount_spa(app)
 
 

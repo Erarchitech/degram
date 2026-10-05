@@ -2047,6 +2047,9 @@ def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
     """The agent's toolsets for this session (None = all): an explicit HERMES_TUI_TOOLSETS pin; else the
     coding posture (coding_context collapses to coding toolset + enabled MCP servers in a code workspace);
     else the configured CLI toolsets. Client-surface toolsets fold in here — only this surface can answer them."""
+    from degram_variant.lockdown import enabled_toolsets, is_degram
+    if is_degram():  # variant degram: the fixed allowlist toolsets, no pin/posture/surface fold-in (D-22)
+        return enabled_toolsets()
     session_platform = platform or _resolve_session_platform()
     explicit = [item.strip() for item in os.environ.get("HERMES_TUI_TOOLSETS", "").split(",") if item.strip()]
     fallback_notice = None
@@ -2663,7 +2666,9 @@ def _make_agent(
     fallback_notice = runtime.pop("_fallback_notice", None)
     _pr = _load_provider_routing()
     platform = _resolve_agent_platform(platform_override)
-    ignore_rules = is_truthy_value(os.environ.get("HERMES_IGNORE_RULES"))
+    from degram_variant.lockdown import is_degram
+    # variant degram: no context files from the cwd and no memory store (no file/memory surface, D-22)
+    ignore_rules = is_truthy_value(os.environ.get("HERMES_IGNORE_RULES")) or is_degram()
     with _sessions_lock:
         session = _sessions.get(sid)
     agent = AIAgent(

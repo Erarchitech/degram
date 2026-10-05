@@ -41,9 +41,11 @@ async def _preflight_stdio_command(server_name: str, command: str, args: list) -
     cached-npx swap. The preflight must see the REAL command/args: anything that rewrites argv to a
     wrapper or resolved binary has to happen after it, or the check silently inspects the wrapper
     and becomes a no-op (``_infer_ecosystem`` keys off the command basename being npx/uvx/pipx)."""
+    from degram_variant.lockdown import osv_preflight_disabled
     from tools.osv_check import check_package_for_malware
     try:
-        malware_error = await asyncio.wait_for(
+        # variant degram: only the pinned in-repo server is configured, so no osv.dev call
+        malware_error = None if osv_preflight_disabled() else await asyncio.wait_for(
             asyncio.to_thread(check_package_for_malware, command, args), timeout=_OSV_MALWARE_CHECK_TIMEOUT_S)
     except asyncio.TimeoutError:
         logger.warning("MCP server '%s': OSV malware preflight timed out after %.0fs "

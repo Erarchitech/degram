@@ -443,6 +443,9 @@ def fetch_models_dev(force_refresh: bool = False, *, allow_network: bool = True)
     ``force_refresh=True`` bypasses the cache fast paths and the backoff, falling back to cached data
     only if the call fails. ``allow_network=False`` returns any memory/disk cache and never makes a request."""
     global _models_dev_cache, _models_dev_cache_time, _models_dev_retry_after
+    from degram_variant.lockdown import is_degram
+    if is_degram():  # variant degram: models.dev is never contacted (fixed context length instead)
+        allow_network = False
     if not allow_network:
         if not _models_dev_cache and (disk_data := _load_disk_cache()):
             _models_dev_cache = disk_data
