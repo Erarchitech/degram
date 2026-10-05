@@ -11,10 +11,17 @@ const repoRoot = resolve(import.meta.dirname, '../../..')
 
 // Evaluate the one identity module in a fresh process. Its CJS cache and the
 // caller's environment must not carry a previous variant into this artifact.
-function productIdentity(source, stamp) {
-  const variant = stamp.updateMechanism === 'microsoft-store' ? 'store'
+export function productIdentity(source, stamp) {
+  // DeGram (Phase 1301 D-01/D-02) is a bundled payload with its own identity. Its stamp carries
+  // `variant: 'degram'`; ignoring it bakes the stock bundled identity into the packaged main bundle, which
+  // then attaches to a running Hermes backend and writes to the Hermes home (found by the 1301-15 launch).
+  if (stamp.variant === 'degram' && stamp.payload !== 'bundled') {
+    throw new Error(`Invalid desktop stamp payload for variant degram: ${stamp.payload}`)
+  }
+  const variant = stamp.variant === 'degram' ? 'degram'
+    : stamp.updateMechanism === 'microsoft-store' ? 'store'
     : stamp.payload === 'bootstrap' ? '' : stamp.payload
-  if (!['', 'bundled', 'light', 'store'].includes(variant)) {
+  if (!['', 'bundled', 'light', 'store', 'degram'].includes(variant)) {
     throw new Error(`Invalid desktop stamp payload: ${stamp.payload}`)
   }
   return execFileSync(process.execPath, ['-e', 'console.log(JSON.stringify(require(process.argv[1])))',

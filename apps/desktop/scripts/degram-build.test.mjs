@@ -452,3 +452,72 @@ test('prepared inputs for nsis are refused without the prepared NSIS toolset', a
     fs.rmSync(source, { recursive: true, force: true })
   }
 })
+
+// ---- Plan 1301-15 launch finding: the identity baked into the PACKAGED main bundle ----
+//
+// The first launch of the built installer ran as stock "Hermes Agent <commit>": it attached to the user's
+// running Hermes backend and wrote to the user's Hermes home, because bundle-electron-main.mjs derived the
+// baked product identity from the stamp's `payload` ("bundled") and ignored `variant: "degram"`. The env-driven
+// tests above could not see it: a packaged app has no HERMES_DESKTOP_VARIANT at run time.
+
+const DEGRAM_STAMP = {
+  schemaVersion: 1,
+  commit: 'a'.repeat(40),
+  source: 'commit-build',
+  payload: 'bundled',
+  variant: 'degram',
+  updateMechanism: 'external',
+  tag: null
+}
+
+test('the baked product identity of a degram stamp is the DeGram identity (isolated, own appId and CLI)', async () => {
+  const { productIdentity } = await import('./bundle-electron-main.mjs')
+  const source = path.resolve(import.meta.dirname, '../../..')
+  const identity = JSON.parse(productIdentity(source, DEGRAM_STAMP))
+  assert.equal(identity.degram, true)
+  assert.equal(identity.appId, 'com.erarchitech.degram')
+  assert.equal(identity.displayName, 'DeGram')
+  assert.equal(identity.cliName, 'degram')
+  assert.equal(identity.channel, null)
+})
+
+test('the baked identity of every other stamp is unchanged and never degram', async () => {
+  const { productIdentity } = await import('./bundle-electron-main.mjs')
+  const source = path.resolve(import.meta.dirname, '../../..')
+
+  const bundled = JSON.parse(productIdentity(source, { ...DEGRAM_STAMP, variant: undefined, source: 'ci' }))
+  assert.equal(bundled.degram, false)
+  assert.equal(bundled.appId, 'com.nousresearch.hermes-bundled')
+
+  const bootstrap = JSON.parse(productIdentity(source, { ...DEGRAM_STAMP, variant: undefined, payload: 'bootstrap', source: 'ci' }))
+  assert.equal(bootstrap.degram, false)
+  assert.equal(bootstrap.appId, 'com.nousresearch.hermes')
+
+  // A stray marker on a non-bundled payload must not select the isolated product.
+  assert.throws(() => productIdentity(source, { ...DEGRAM_STAMP, payload: 'bootstrap' }), /payload|variant/i)
+})
+
+test('the packaged electron-main bundle carries the DeGram identity and fixed-home isolation (not stock Hermes)', async () => {
+  const { bundleElectronMain } = await import('./bundle-electron-main.mjs')
+  const source = path.resolve(import.meta.dirname, '../../..')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'degram-main-'))
+
+  try {
+    const stamp = path.join(root, 'install-stamp.json')
+    fs.writeFileSync(stamp, JSON.stringify({ ...DEGRAM_STAMP, builtAt: '2026-10-05T00:00:00.000Z' }))
+    const out = path.join(root, 'dist')
+    await bundleElectronMain({ source, out, stamp })
+    const text = fs.readFileSync(path.join(out, 'electron-main.mjs'), 'utf8')
+    assert.ok(text.includes('com.erarchitech.degram'), 'the packaged main must bake the DeGram appId')
+    assert.ok(text.includes('HOME_OVERLAP'), 'the isolation module ships in the bundle')
+
+    // Control: a plain bundled stamp bakes the stock identity.
+    const stock = path.join(root, 'stock-stamp.json')
+    fs.writeFileSync(stock, JSON.stringify({ ...DEGRAM_STAMP, variant: undefined, builtAt: '2026-10-05T00:00:00.000Z' }))
+    const stockOut = path.join(root, 'stock')
+    await bundleElectronMain({ source, out: stockOut, stamp: stock })
+    assert.ok(!fs.readFileSync(path.join(stockOut, 'electron-main.mjs'), 'utf8').includes('com.erarchitech.degram'))
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
