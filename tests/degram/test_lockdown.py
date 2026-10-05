@@ -24,6 +24,7 @@ from degram_variant import lockdown
 from degram_variant.lockdown import (
     ALLOWED_RPC_METHODS,
     ALLOWED_TOOL_NAMES,
+    DEGRAM_TOOL_NAMES,
     DegramLockedError,
     assert_rpc_allowed,
     is_degram,
@@ -82,9 +83,9 @@ class TestAllowlistContents:
         assert ALLOWED_TOOL_NAMES == frozenset({
             "clarify", "todo_list",
             "degram_project_graph", "degram_document_snapshot", "degram_list_documents", "degram_bridge_status",
-            "mcp_revit_get_revit_status", "mcp_revit_get_revit_model_info", "mcp_revit_list_open_documents",
-            "mcp_revit_get_selection_snapshot", "mcp_revit_get_element_properties", "mcp_revit_list_levels",
-            "mcp_revit_get_current_view_info", "mcp_revit_list_category_parameters"})
+            "mcp__revit__get_revit_status", "mcp__revit__get_revit_model_info", "mcp__revit__list_open_documents",
+            "mcp__revit__get_selection_snapshot", "mcp__revit__get_element_properties", "mcp__revit__list_levels",
+            "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})
 
     def test_forbidden_names_are_not_allowlisted(self):
         assert FORBIDDEN_TOOL_NAMES.isdisjoint(ALLOWED_TOOL_NAMES)
@@ -115,18 +116,19 @@ class TestRegistry:
         names = set(run_py(REGISTRY_SCRIPT, tmp_path, degram=True))
         assert names <= ALLOWED_TOOL_NAMES, f"registered outside the allowlist: {sorted(names - ALLOWED_TOOL_NAMES)}"
         assert {"clarify", "todo_list"} <= names
+        assert DEGRAM_TOOL_NAMES <= names, "plan 1301-11 registers the degram toolset"
         assert FORBIDDEN_TOOL_NAMES.isdisjoint(names)
 
     def test_register_refuses_any_name_outside_the_allowlist(self, degram):
         from tools.registry import ToolRegistry
         reg = ToolRegistry()
         schema = {"name": "x", "description": "d", "parameters": {"type": "object", "properties": {}}}
-        for name in ("terminal", "mcp_revit_not_allowlisted", "mcp_other_get_status", "send_message"):
+        for name in ("terminal", "mcp__revit__not_allowlisted", "mcp_other_get_status", "send_message"):
             reg.register(name=name, toolset="t", schema=schema, handler=lambda a, **k: "{}")
         assert reg.get_all_tool_names() == []
-        reg.register(name="mcp_revit_get_revit_status", toolset="mcp-revit", schema=schema, handler=lambda a, **k: "{}")
+        reg.register(name="mcp__revit__get_revit_status", toolset="mcp-revit", schema=schema, handler=lambda a, **k: "{}")
         reg.register(name="clarify", toolset="clarify", schema=schema, handler=lambda a, **k: "{}")
-        assert sorted(reg.get_all_tool_names()) == ["clarify", "mcp_revit_get_revit_status"]
+        assert sorted(reg.get_all_tool_names()) == ["clarify", "mcp__revit__get_revit_status"]
 
     def test_register_is_unchanged_outside_degram(self, monkeypatch):
         monkeypatch.delenv("HERMES_DEGRAM", raising=False)

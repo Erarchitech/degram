@@ -87,6 +87,19 @@ class DocumentsService:
             groups.append(group)
         return {"groups": groups, "pinned": pinned}
 
+    def status(self, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """One line per bridge (state, code, reason, number of open documents) and the pinned document."""
+        listing = self.list(cancel)
+        bridges = []
+        for group in listing["groups"]:
+            line: dict[str, Any] = {"app": group["app"], "state": group["state"],
+                                    "documents": len(group["documents"])}
+            for key in ("code", "reason", "message"):
+                if group.get(key):
+                    line[key] = group[key]
+            bridges.append(line)
+        return {"status": "ok", "bridges": bridges, "pinned": listing["pinned"]}
+
     def pin(self, app: str, identity: dict[str, Any], cancel: CancelToken | None = None) -> dict[str, Any]:
         """Pin an open document. The document must be in the bridge's fresh list: a stale picker row cannot pin a
         document that is gone. Raises ValueError for an unknown app, ``BridgeError`` when the document is not open."""

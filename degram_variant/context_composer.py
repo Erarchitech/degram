@@ -29,6 +29,7 @@ from .outcomes import (
     CANCELLED,
     CONSENT_REQUIRED,
     DG_UNAVAILABLE,
+    DOCUMENT_NOT_OPEN,
     SCOPE_NOT_SUPPORTED,
     BridgeError,
 )
@@ -140,6 +141,7 @@ class ContextComposer:
         if cancel.cancelled:
             raise BridgeError(CANCELLED, "CANCELLED_BY_USER", "The read was cancelled.")
         view = self._compose(info.project, pinned, scope, snapshot, rules, missing)
+        view.pop("_snapshot", None)
         stored = _Stored(pid, view["payload"], scope, requested, (info.user, info.company, info.project), generation)
         with self._lock:
             self._previews[pid] = stored
@@ -246,7 +248,24 @@ class ContextComposer:
             "bytes": final_bytes, "emptySelection": bool(snapshot and snapshot.empty_selection),
         }
         return {"payload": payload, "summary": summary, "truncation": shown, "missing": missing,
-                "document": doc}
+                "document": doc, "_snapshot": snapshot_body(n)}
+
+    # -- agent tool ------------------------------------------------------------------------------
+    def agent_snapshot(self, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """The pinned document's current selection, bounded exactly like a preview, for the agent tool
+        ``degram_document_snapshot``. Selection scope only: whole-definition goes through the context card and its
+        consent, never through a tool call. Raises ``BridgeError`` (no pin, identity, bridge outcomes)."""
+        try:
+            info = _credentials.require_info()
+        except DegramCredentialsError as exc:
+            raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
+        pinned = self._documents.pinned
+        if pinned is None:
+            raise BridgeError(DOCUMENT_NOT_OPEN, "NO_DOCUMENT_PINNED", "No document is pinned. Ask the user to select one.")
+        snapshot = self._documents.read_snapshot("selection", info.project, cancel)
+        view = self._compose(info.project, pinned, "selection", snapshot, [], list(snapshot.missing) if snapshot else [])
+        return {"status": "ok", "scope": "selection", "document": view["document"], "summary": view["summary"],
+                "truncation": view["truncation"], "missing": view["missing"], "snapshot": view["_snapshot"]}
 
     # -- send ------------------------------------------------------------------------------------
     def prepare_send(self, preview_id: str, text: str, *, consent: bool = False, scope: str | None = None) -> SendPlan:

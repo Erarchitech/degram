@@ -91,7 +91,10 @@ class TestEnsure:
         assert cfg["model_catalog"]["enabled"] is False
         assert cfg["telemetry"]["shared_metrics"]["enabled"] is False and cfg["telemetry"]["shared_metrics"]["send"] is False
         assert cfg["updates"]["check"] is False and cfg["nous"]["guest"] is False
-        assert cfg["mcp_servers"]["revit"]["enabled"] is False
+        # plan 11: the template carries the bundled-Python placeholders and is enabled; an unset variable keeps the
+        # literal placeholder, the spawn fails and the Revit group reports setup-incomplete
+        assert cfg["mcp_servers"]["revit"]["enabled"] is True
+        assert cfg["mcp_servers"]["revit"]["command"] == "${DEGRAM_PYTHON}"
         assert cfg["mcp_servers"]["revit"]["sampling"]["enabled"] is False
         for task, block in cfg["auxiliary"].items():
             if isinstance(block, dict):

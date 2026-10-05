@@ -12,13 +12,33 @@ platform_toolsets:
   cli: [clarify, todo, degram, mcp-revit]
   desktop: [clarify, todo, degram, mcp-revit]
   tui: [clarify, todo, degram, mcp-revit]
-# The pinned read-only Revit bridge. The command is filled from the DeGram settings (plan 11); until then
-# the entry stays disabled and variant degram drops it at load.
+# The pinned read-only Revit bridge (plan 1301-11, D-11): an MCP stdio child started with the bundled Python.
+# Electron main sets DEGRAM_PYTHON (bundled interpreter) and DEGRAM_REVIT_MCP_DIR (apps/revit-mcp) for the backend;
+# an unset variable keeps the literal placeholder, the spawn fails and the Revit group reports setup-incomplete.
+# DEGRAM_MODE=1 makes the adapter refuse HTTP/SSE (no MCP port is ever opened). Only the eight allowlisted read
+# tools register; resources, prompts, sampling and elicitation are off. No retry: a slow read is BUSY after 40 s.
 mcp_servers:
   revit:
-    command: ""
-    args: []
-    enabled: false
+    command: ${DEGRAM_PYTHON}
+    args:
+      - ${DEGRAM_REVIT_MCP_DIR}/main.py
+    env:
+      DEGRAM_MODE: "1"
+    enabled: true
+    connect_timeout: 20
+    timeout: 40
+    tools:
+      include:
+        - get_revit_status
+        - get_revit_model_info
+        - list_open_documents
+        - get_selection_snapshot
+        - get_element_properties
+        - list_levels
+        - get_current_view_info
+        - list_category_parameters
+      resources: false
+      prompts: false
     sampling:
       enabled: false
     elicitation:

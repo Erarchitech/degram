@@ -40,9 +40,9 @@ class DegramLockedError(Exception):
 DEGRAM_TOOL_NAMES = frozenset({
     "degram_project_graph", "degram_document_snapshot", "degram_list_documents", "degram_bridge_status"})
 REVIT_TOOL_NAMES = frozenset({
-    "mcp_revit_get_revit_status", "mcp_revit_get_revit_model_info", "mcp_revit_list_open_documents",
-    "mcp_revit_get_selection_snapshot", "mcp_revit_get_element_properties", "mcp_revit_list_levels",
-    "mcp_revit_get_current_view_info", "mcp_revit_list_category_parameters"})
+    "mcp__revit__get_revit_status", "mcp__revit__get_revit_model_info", "mcp__revit__list_open_documents",
+    "mcp__revit__get_selection_snapshot", "mcp__revit__get_element_properties", "mcp__revit__list_levels",
+    "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})
 ALLOWED_TOOL_NAMES = frozenset({"clarify", "todo_list"}) | DEGRAM_TOOL_NAMES | REVIT_TOOL_NAMES
 ALLOWED_TOOLSETS = ("clarify", "todo", "degram", "mcp-revit")
 ALLOWED_MCP_SERVERS = frozenset({"revit"})
