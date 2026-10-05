@@ -1,0 +1,59 @@
+# DeGram per-scope profile config (variant degram, plan 1301-10).
+# Regenerated from this template every time a scope is opened: edits to the generated file are discarded.
+# No secret and no relay address lives here; the delegated credential and the relay base arrive at runtime
+# through the gateway RPC degram.credentials.set and stay in memory.
+model:
+  provider: custom
+  default: degram-system
+fallback_providers: []
+providers: {}
+toolsets: [clarify, todo, degram, mcp-revit]
+platform_toolsets:
+  cli: [clarify, todo, degram, mcp-revit]
+  desktop: [clarify, todo, degram, mcp-revit]
+  tui: [clarify, todo, degram, mcp-revit]
+# The pinned read-only Revit bridge. The command is filled from the DeGram settings (plan 11); until then
+# the entry stays disabled and variant degram drops it at load.
+mcp_servers:
+  revit:
+    command: ""
+    args: []
+    enabled: false
+    sampling:
+      enabled: false
+    elicitation:
+      enabled: false
+# Every auxiliary uses the pinned relay route or is disabled (compression is the only one that runs).
+auxiliary:
+  compression:
+    provider: auto
+    model: ""
+    base_url: ""
+    api_key: ""
+  title_generation:
+    provider: auto
+    model_upgrade_enabled: false
+  background_review:
+    enabled: false
+tools:
+  tool_search:
+    enabled: "off"
+model_catalog:
+  enabled: false
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+updates:
+  check: false
+nous:
+  guest: false
+curator:
+  enabled: false
+plugins:
+  auto_update_check_hours: 0
+  auto_apply: false
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+  provider: ""
