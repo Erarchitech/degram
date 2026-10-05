@@ -184,7 +184,7 @@ function main() {
     )
   }
 
-  const bundled = ['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT)
+  const bundled = ['bundled', 'store', 'degram'].includes(process.env.HERMES_DESKTOP_VARIANT)
   const payload = bundled
     ? stageDesktopLaunchers(join(OUT_DIR, 'agent-payload'))
     : null
@@ -250,17 +250,21 @@ export function buildStampPayload(stamp, env = process.env, platform = process.p
     bootstrap: 'self',
     store: 'microsoft-store',
     bundled: { win32: 'app-installer', darwin: 'electron-updater' }[platform] || 'external',
-    light: platform === 'darwin' ? 'electron-updater' : 'external'
+    light: platform === 'darwin' ? 'electron-updater' : 'external',
+    // DeGram (Phase 1301 D-03): no feed, no check, on every platform.
+    degram: 'external'
   }[variant]
   if (!updateMechanism) throw new Error(`Unknown desktop variant: ${variant}`)
   if (channelBuild && updateMechanism === 'external') throw new Error('Channel builds require a supported native update owner')
-  const bundled = variant === 'bundled' || variant === 'store'
+  const bundled = variant === 'bundled' || variant === 'store' || variant === 'degram'
   if (bundled && !payload?.runtime?.commands?.hermes) {
     throw new Error('PM payload has no completed launch contract; stage the bundle before packaging')
   }
   return {
     ...base,
-    payload: variant === "store" ? "bundled" : variant || "bootstrap",
+    // DeGram ships the bundled Python agent, so it tells the bundled runtime story.
+    payload: variant === "store" || variant === "degram" ? "bundled" : variant || "bootstrap",
+    ...(variant === "degram" ? { variant: "degram" } : {}),
     distribution: "desktop-app",
 
     updateMechanism: commitBuild ? 'external' : updateMechanism,

@@ -385,6 +385,8 @@ declare global {
       localModelsEnabled?: boolean
       /** Launch flag shared with every backend the app starts. */
       guestOnboardingEnabled?: boolean
+      /** Product fact: the DeGram variant, which has no update channel (Phase 1301 D-03). */
+      degramEnabled?: boolean
       /** Sanitized local `display.skin`, available before any gateway connects. */
       localSkin?: { profile: string; skin: HermesSkin } | null
       setTranslucency?: (payload: TranslucencyState) => void

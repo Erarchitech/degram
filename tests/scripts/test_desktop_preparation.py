@@ -273,3 +273,47 @@ def test_flavored_icon_staging_hands_the_admitted_checkout_back(tmp_path):
         with flavored_assets(rendered, assets):
             raise RuntimeError("packaging failed")
     require_source(source, commit)
+
+
+def test_degram_is_a_payload_bearing_variant_that_builds_nsis(tmp_path):
+    """Phase 1301 D-04: degram is the bundled shape (Python agent inside) with an NSIS target."""
+    from scripts.bundles.desktop import package_targets
+    from scripts.bundles.desktop_inputs import identity_environment
+    from scripts.bundles.desktop_prepare import BuildRequest
+
+    source, commit = _project(tmp_path)
+    request = BuildRequest.create(source, tag=None, commit=commit, variant="degram",
+                                  work=tmp_path / "work", cache=tmp_path / "cache", bundle_env={})
+
+    assert request.variant == "degram"
+    # Payload-bearing: the TUI and web workspaces are built, unlike remote-only light.
+    assert request.workspaces() == ["apps/desktop", "ui-tui", "web"]
+    env = identity_environment(request, request.variant, {})
+    assert env["HERMES_DESKTOP_VARIANT"] == "degram"
+
+    assert package_targets("win32", "degram") == ["--win", "nsis"]
+    assert package_targets("win32", "bundled") == ["--win", "msix"]
+    assert package_targets("darwin", "degram") == ["--mac", "dmg", "zip"]
+    assert package_targets("linux", "degram") == ["--linux", "AppImage"]
+
+
+def test_degram_is_selectable_on_the_bundle_cli_and_other_variants_are_untouched(tmp_path):
+    from scripts.bundles import desktop
+    from scripts.bundles.desktop_prepare import BuildRequest
+
+    source, commit = _project(tmp_path)
+
+    for variant in ("bundled", "light"):
+        BuildRequest.create(source, tag=None, commit=commit, variant=variant,
+                            work=tmp_path / "work", cache=tmp_path / "cache", bundle_env={})
+
+    with pytest.raises(ValueError, match="invalid desktop variant"):
+        BuildRequest.create(source, tag=None, commit=commit, variant="hermes-fork",
+                            work=tmp_path / "work", cache=tmp_path / "cache", bundle_env={})
+
+    # DeGram has no tag or channel route: a stable-tag or channel request is refused.
+    with pytest.raises(ValueError):
+        BuildRequest.create(source, tag="v1.2.4", commit=None, variant="degram",
+                            work=tmp_path / "work", cache=tmp_path / "cache", bundle_env={})
+
+    assert "degram" in desktop.VARIANTS

@@ -223,7 +223,8 @@ import {
   type DegramPaths,
   degramProcessEnv,
   isolatedBackendRequired,
-  resolveDegramPaths
+  resolveDegramPaths,
+  updateMenuEntries
 } from './degram/isolation'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
@@ -6840,7 +6841,7 @@ function buildApplicationMenu() {
       label: APP_NAME,
       submenu: [
         { label: `About ${APP_NAME}`, click: () => showAboutPanelFresh() },
-        checkForUpdatesItem,
+        ...updateMenuEntries(PRODUCT_IDENTITY, checkForUpdatesItem),
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -6959,7 +6960,7 @@ function buildApplicationMenu() {
   template.push({
     label: 'Help',
     role: 'help',
-    submenu: [checkForUpdatesItem]
+    submenu: updateMenuEntries(PRODUCT_IDENTITY, checkForUpdatesItem)
   })
 
   return Menu.buildFromTemplate(template)
@@ -18350,7 +18351,9 @@ ipcMain.on('hermes:feature-flags', (event: IpcMainEvent): void => {
       argv: process.argv,
       canary: resolveUpdaterChannelFromStamp() === 'canary'
     }),
-    guestOnboarding: GUEST_ONBOARDING
+    guestOnboarding: GUEST_ONBOARDING,
+    // DeGram (D-03): the renderer must never start the update poller.
+    degram: PRODUCT_IDENTITY.degram === true
   }
 })
 

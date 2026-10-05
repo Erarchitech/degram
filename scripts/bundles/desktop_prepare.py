@@ -122,8 +122,11 @@ class BuildRequest:
             bundle_env = channel_request["bundleEnv"]
         if variant == "store" and (commit or not tag or channel_for_tag(tag) != "stable"):
             raise ValueError("Store packaging requires a stable release tag")
-        if variant not in {"bundled", "store", "light"}:
+        if variant not in {"bundled", "store", "light", "degram"}:
             raise ValueError("invalid desktop variant")
+        if variant == "degram" and tag:
+            # DeGram has no release channel (Phase 1301 D-03/D-04): local commit builds only.
+            raise ValueError("DeGram builds are local commit builds; a release tag is not admitted")
         if bool(tag) == bool(commit):
             raise ValueError("exactly one of --tag or --commit is required")
         bundle_env = validate(bundle_env)

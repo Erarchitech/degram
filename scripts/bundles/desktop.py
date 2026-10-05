@@ -14,6 +14,16 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# `degram` (Phase 1301 D-04) is the bundled shape (Python agent inside) packaged
+# as an unsigned NSIS installer on Windows; it has no release channel.
+VARIANTS = ["bundled", "store", "light", "degram"]
+
+
+def package_targets(platform: str, variant: str) -> list[str]:
+    """electron-builder platform/target arguments for one variant."""
+    win = ["--win", "nsis" if variant == "degram" else "msix"]
+    return {"win32": win, "darwin": ["--mac", "dmg", "zip"], "linux": ["--linux", "AppImage"]}[platform]
+
 
 def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     print("bundle: " + subprocess.list2cmdline(argv), flush=True)
@@ -96,7 +106,7 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
     if request.release_epoch is not None:
         env["HERMES_RELEASE_EPOCH"] = str(request.release_epoch)
     desktop = repo / "apps/desktop"
-    targets = {"win32": ["--win", "msix"], "darwin": ["--mac", "dmg", "zip"], "linux": ["--linux", "AppImage"]}[sys.platform]
+    targets = package_targets(sys.platform, variant)
     package_args = ["--prepared", str(prepared.packager), "--native-deps", str(prepared.native),
                     *targets, f"-c.extraMetadata.version={request.version}"]
     run([node, "scripts/run-electron-builder.mjs", "--validate-only", *package_args, *builder_args],
@@ -147,7 +157,7 @@ def main() -> None:
                              "version comes from the target pyproject, no tag is referenced")
     parser.add_argument("--release-commit", help="Admitted commit for a stable tag not created until green")
     parser.add_argument("--channel-request", type=Path, help="Immutable admitted channel request JSON")
-    parser.add_argument("--variant", choices=["bundled", "store", "light"])
+    parser.add_argument("--variant", choices=VARIANTS)
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--work", type=Path)
     parser.add_argument("--cache", type=Path)

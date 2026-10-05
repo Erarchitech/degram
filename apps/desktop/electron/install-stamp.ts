@@ -89,6 +89,8 @@ export interface InstallStamp {
   payload: ArtifactKind
   /** Present on bundled artifacts. Validated at build time, never discovered at boot. */
   runtime?: PayloadRuntime
+  /** Set only on the DeGram product variant (Phase 1301); absent on every Hermes artifact. */
+  variant?: 'degram'
   /** Complete channel inputs, absent on legacy releases and one-off builds. */
   channelBuild?: Readonly<ChannelBuildRequest>
   /** Cross-application receiver shipped in this artifact, absent on older builds. */

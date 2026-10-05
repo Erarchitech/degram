@@ -61,6 +61,12 @@ vi.mock('@/store/connections', () => ({
   refreshConnectionsRegistry: () => Promise.resolve($mockConnectionsRegistry.get())
 }))
 
+// The DeGram product gate (D-03). Controlled per test; false everywhere else.
+const { atom: degramAtom } = await import('nanostores')
+const $mockDegramEnabled = degramAtom(false)
+
+vi.mock('@/store/degram-flag', () => ({ $degramEnabled: $mockDegramEnabled }))
+
 const checkHermesUpdateSpy = vi.fn()
 const updateHermesSpy = vi.fn()
 const getActionStatusSpy = vi.fn()
@@ -1521,6 +1527,22 @@ describe('startUpdatePoller', () => {
     stopUpdatePoller()
     delete (globalThis as unknown as { window?: unknown }).window
     vi.useRealTimers()
+  })
+
+  it('never starts for the DeGram variant: no check, no progress stream, no timer (D-03)', async () => {
+    $mockDegramEnabled.set(true)
+
+    try {
+      startUpdatePoller()
+      await vi.advanceTimersByTimeAsync(BACKGROUND_UPDATE_CHECK_MS * 2)
+
+      expect(checkMock).not.toHaveBeenCalled()
+      expect(onProgressMock).not.toHaveBeenCalled()
+      expect(checkHermesUpdateSpy).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      $mockDegramEnabled.set(false)
+    }
   })
 
   it('calls checkUpdates() on startup so the version pill populates immediately', async () => {

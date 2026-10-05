@@ -18,6 +18,7 @@ const { createMacSigner } = require('./scripts/mac-sign.mjs')
 const {
   light,
   store,
+  degram,
   storeMsix,
   displayName,
   appId,
@@ -78,13 +79,16 @@ module.exports = {
   protocols: [
     {
       name: `${displayName} Protocol`,
-      schemes: ['hermes']
+      // DeGram owns degram:// so it never claims a Hermes link (T-1301-04-04).
+      schemes: [degram ? 'degram' : 'hermes']
     }
   ],
   // A store build is archived, never served to a feed — prefix its artifact
   // so it can't collide with the out-of-store MSIX of the same tag/arch, and
   // the release pipeline can keep the two apart.
-  artifactName: `${store ? 'Store-' : ''}${artifactNamePascal}-\${version}-\${os}-\${arch}.\${ext}`,
+  artifactName: degram
+    ? 'DeGram-Setup-${version}.${ext}'
+    : `${store ? 'Store-' : ''}${artifactNamePascal}-\${version}-\${os}-\${arch}.\${ext}`,
   icon: 'assets/icon',
   // The electron-updater feed. CI builds set CLOUDFLARE_R2_PUBLIC_URL (the R2
   // public bucket / custom domain) and publish there — the feed yml, blockmaps
@@ -129,7 +133,7 @@ module.exports = {
       from: 'build/install-stamp.json',
       to: 'install-stamp.json'
     },
-    ...(['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
+    ...(['bundled', 'store', 'degram'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
       ? [{ from: 'build/agent-payload', to: 'agent-payload' }]
       : []),
     {
@@ -233,13 +237,26 @@ module.exports = {
   win: {
     executableName: windowsExecutableName,
     legalTrademarks: displayName,
-    target: ['msix'],
+    // DeGram (Phase 1301 D-04): unsigned NSIS pilot installer, no MSIX package.
+    target: [degram ? 'nsis' : 'msix'],
     // The updaters' relaunch waiter is PowerShell run outside the package. The
     // sealed payload's snapshot omits scripts/, so it ships as a resource
     // (RELAUNCH_WAITER_SCRIPT in electron/updater/relaunch-waiter.ts).
     extraResources: [{ from: 'scripts/update-relaunch-waiter.ps1', to: 'update-relaunch-waiter.ps1' }],
     ...windowsSigning()
   },
+  // Per-user, directory-selectable, not one-click: a local pilot installer
+  // that never needs elevation and never replaces an installed Hermes.
+  ...(degram
+    ? {
+        nsis: {
+          oneClick: false,
+          perMachine: false,
+          allowToChangeInstallationDirectory: true,
+          artifactName: 'DeGram-Setup-${version}.${ext}'
+        }
+      }
+    : {}),
   msix: {
     // A store build uses the Partner Center packaging identity (the Store
     // re-signs + rewrites the publisher on submission); everything else uses

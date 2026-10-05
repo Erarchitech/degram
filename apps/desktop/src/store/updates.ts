@@ -19,6 +19,7 @@ import { checkHermesUpdate, getActionStatus, updateHermes } from '@/hermes'
 import { translateNow } from '@/i18n'
 import { persistString, storedString } from '@/lib/storage'
 import { $connectionsRegistry, refreshConnectionsRegistry } from '@/store/connections'
+import { $degramEnabled } from '@/store/degram-flag'
 import { reconnectGateway } from '@/store/gateway-reconnect'
 import { dismissNotification, notify } from '@/store/notifications'
 import { $connection } from '@/store/session'
@@ -1211,7 +1212,8 @@ function runPassiveChecks(): void {
 
 /** Wire up background polling + progress streaming. Idempotent. */
 export function startUpdatePoller(): void {
-  if (pollerStarted || typeof window === 'undefined') {
+  // DeGram (Phase 1301 D-03) has no update channel: never poll, never check.
+  if (pollerStarted || typeof window === 'undefined' || $degramEnabled.get()) {
     return
   }
 

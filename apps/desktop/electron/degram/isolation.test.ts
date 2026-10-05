@@ -20,7 +20,8 @@ import {
   type DegramPaths,
   degramProcessEnv,
   isolatedBackendRequired,
-  resolveDegramPaths
+  resolveDegramPaths,
+  updateMenuEntries
 } from './isolation'
 
 const require: NodeJS.Require = createRequire(import.meta.url)
@@ -334,6 +335,13 @@ test('degram owns the degram:// protocol and never answers hermes:// (T-1301-04-
   })
   assert.deepEqual(deepLinkProtocols({ degram: false }, false), { primary: 'hermes', accepted: ['hermes'] })
   assert.deepEqual(deepLinkProtocols({}, true), { primary: 'hermes-dev', accepted: ['hermes-dev', 'hermes'] })
+})
+
+test('degram has no Check for Updates menu entry; Hermes keeps it (D-03)', (): void => {
+  const entry = { label: 'Check for Updates…' }
+  assert.deepEqual(updateMenuEntries({ degram: true }, entry), [])
+  assert.deepEqual(updateMenuEntries({ degram: false }, entry), [entry])
+  assert.deepEqual(updateMenuEntries({}, entry), [entry])
 })
 
 test('degram process env pins the home, isolates the backend and drops inherited home selectors', (): void => {

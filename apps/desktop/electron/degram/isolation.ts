@@ -191,6 +191,11 @@ export function deepLinkProtocols(
     : { primary: 'hermes', accepted: ['hermes'] }
 }
 
+/** The "Check for Updates…" menu entries: DeGram has no update channel (D-03), so none. */
+export function updateMenuEntries<T>(identity: { degram?: boolean }, entry: T): T[] {
+  return identity.degram ? [] : [entry]
+}
+
 /** DeGram never attaches to a host Hermes backend; other variants keep the env opt-in. */
 export function isolatedBackendRequired(identity: { degram?: boolean }, env: NodeJS.ProcessEnv): boolean {
   return identity.degram === true || env.HERMES_DESKTOP_ISOLATED_BACKEND === '1'

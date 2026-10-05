@@ -22,12 +22,16 @@ const require = createRequire(import.meta.url)
 const {
   light,
   store,
+  degram,
   displayName,
   appNamePascal,
   artifactNamePascal
 } = require('../product-identity.cjs')
 
 export default async function beforeBuild() {
+  // DeGram (Phase 1301 D-04) ships an unsigned NSIS installer: no MSIX logos,
+  // extensions fragment or manifests are staged for it.
+  if (degram) return false
   stageMsixAssets()
   writeMsixExtensions()
   if (store) stageStoreManifest(path.join(import.meta.dirname, '..'), process.env.HERMES_PAYLOAD_TAG)
@@ -85,7 +89,7 @@ function writeMsixExtensions() {
   const output = path.join('build', 'msix-extensions.xml')
   const file = path.join(desktop, output)
   const manifest = path.join(desktop, 'build', 'agent-payload', 'manifest.json')
-  const launchers = ['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
+  const launchers = ['bundled', 'store', 'degram'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
     ? JSON.parse(fs.readFileSync(manifest, 'utf8')).launchers : []
   if (!Array.isArray(launchers)) throw new Error('Bundled payload has no declared launchers')
   const nonstable = appNamePascal !== artifactNamePascal
