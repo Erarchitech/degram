@@ -225,7 +225,16 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       publish()
     },
     setDgMode: async (mode: DgMode): Promise<void> => {
-      await viewTask(() => dgView.setMode(mode))
+      await viewTask(async () => {
+        await dgView.setMode(mode)
+
+        // After an access loss the view is reset to blank while the DG session stays signed in, and no sign-in
+        // transition follows, so a project chosen afterwards would meet a blank DG page. Choosing the mode is
+        // also the renderer's request to show the page: it is loaded here, in the chosen mode.
+        if (dgView.getState().page === 'blank' && session.state().kind === 'signed-in') {
+          await dgView.showDg()
+        }
+      })
       publish()
     },
     reloadDg: (): Promise<void> => viewTask(() => dgView.reload()),

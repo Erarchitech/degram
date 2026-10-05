@@ -5,6 +5,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router'
 import { codiconIcon } from '@/components/ui/codicon'
 import { KbdCombo } from '@/components/ui/kbd'
 import { Tip } from '@/components/ui/tooltip'
+import { isSettingsViewHidden, isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
@@ -78,6 +79,11 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'about'
 ]
 
+// Variant degram drops the pages that carry model, provider, key, billing and gateway entries (DGCL-02). The route
+// enum is built without them, so a stale `?tab=` deep link coerces to the default view instead of a hidden page.
+const VISIBLE_SETTINGS_VIEWS = SETTINGS_VIEWS.filter(view => !isSettingsViewHidden(view))
+const DEFAULT_SETTINGS_VIEW = (isSurfaceHidden('model-settings') ? 'config:chat' : 'config:model') as SettingsViewId
+
 export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: SettingsPageProps) {
   const scopeProfile = useStore($settingsScopeProfile)
   const activeConnectionId = useStore($activeConnectionId)
@@ -96,7 +102,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
     }
   }, [navigate, search])
 
-  const [activeView] = useRouteEnumParam('tab', SETTINGS_VIEWS, 'config:model' as SettingsViewId)
+  const [activeView] = useRouteEnumParam('tab', VISIBLE_SETTINGS_VIEWS, DEFAULT_SETTINGS_VIEW)
 
   useEffect(() => recordFeatureUse(settingsArea(activeView)), [activeView])
   const params = new URLSearchParams(search)
@@ -156,8 +162,9 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
   const [providerView, setProviderView] = useRouteEnumParam<ProviderView>('pview', PROVIDER_VIEWS, 'accounts')
   const [keysView] = useRouteEnumParam<KeysView>('kview', KEYS_VIEWS, 'tools')
   const [billingView] = useRouteEnumParam<BillingSubView>('bview', BILLING_VIEWS, 'overview')
-  const billingState = useBillingState()
-  const subscriptionState = useSubscriptionState()
+  // No billing request is made while the billing page is hidden (variant degram).
+  const billingState = useBillingState(!isSurfaceHidden('billing-settings'))
+  const subscriptionState = useSubscriptionState(!isSurfaceHidden('billing-settings'))
   const billingPresentation = deriveBillingView(billingState.data, subscriptionState.data)
   const canViewPlans = billingPresentation.status === 'normal' && Boolean(billingPresentation.plan?.action)
 
@@ -396,23 +403,25 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             onSelect: () => setActiveView('about')
           }
         ] as OverlayNavGroup[]
-      ).map(group => {
-        const view = group.id as SettingsViewId
-        const children = settingsSubpages(view)
+      )
+        .filter(group => !isSettingsViewHidden(group.id))
+        .map(group => {
+          const view = group.id as SettingsViewId
+          const children = settingsSubpages(view)
 
-        return children.length
-          ? {
-              ...group,
-              children: children.map(page => ({
-                active: group.active && subpage === page.id,
-                icon: settingsSubpageIcon(page, group.icon),
-                id: `${view}:${page.id}`,
-                label: t.settings.subpages[page.labelKey],
-                onSelect: () => openSettingsPage(view, page.id)
-              }))
-            }
-          : group
-      }),
+          return children.length
+            ? {
+                ...group,
+                children: children.map(page => ({
+                  active: group.active && subpage === page.id,
+                  icon: settingsSubpageIcon(page, group.icon),
+                  id: `${view}:${page.id}`,
+                  label: t.settings.subpages[page.labelKey],
+                  onSelect: () => openSettingsPage(view, page.id)
+                }))
+              }
+            : group
+        }),
     [
       activeView,
       billingView,

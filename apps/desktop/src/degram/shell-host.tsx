@@ -6,6 +6,8 @@
 // previous project's transcript is never reused), and renders the gate that stands in for the app until the user
 // is signed in with a project chosen.
 
+import './fonts.css'
+
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router'
@@ -17,6 +19,7 @@ import { requestFreshSession } from '@/store/profile'
 
 import { DegramGate } from './degram-gate'
 import { stopActiveResponse } from './host-actions'
+import { registerDgPage } from './register-dg-page'
 import { ScopeStrip } from './scope-strip'
 import {
   type DegramActions,
@@ -58,6 +61,7 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
   // A newly ready scope opens a fresh chat for it (D-19): the previous project's transcript is never reused.
   useEffect(() => startDegramSync(undefined, actions.startNewChat), [actions])
   useEffect(() => registerScopeStrip(), [])
+  useEffect(() => registerDgPage(), [])
 
   // A refusal that reached the renderer through the boot state (plan 04: HOME_OVERLAP) is shown by the gate,
   // with the full path and no continue action, instead of the stock recovery overlay.

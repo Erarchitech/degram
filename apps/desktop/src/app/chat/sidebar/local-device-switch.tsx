@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 
 import { FirstRunRemoteSetup } from '@/components/remote-setup/first-run'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { useI18n } from '@/i18n'
 import { notifyError } from '@/store/notifications'
 
@@ -110,7 +111,9 @@ export function useLocalDeviceSwitch() {
           title={install ? fleet.installDeviceTitle : fleet.switchDeviceTitle}
         />
       ) : null}
-      {connectOpen ? <FirstRunRemoteSetup onBack={() => setConnectOpen(false)} /> : null}
+      {connectOpen && !isSurfaceHidden('remote-setup') ? (
+        <FirstRunRemoteSetup onBack={() => setConnectOpen(false)} />
+      ) : null}
     </>
   )
 

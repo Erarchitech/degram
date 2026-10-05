@@ -251,6 +251,28 @@ describe('degram runtime: DG page controls', () => {
     expect(r.fake.visible()).toBe(true)
   })
 
+  it('shows the DG page again after a revocation blanked the view, on the renderer asking for a mode', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.dgView.reset()
+    expect(r.runtime.getState().dg.page).toBe('blank')
+
+    await r.runtime.setDgMode('graph')
+
+    expect(r.runtime.getState().dg.page).toBe('dg')
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/#degram`)
+  })
+
+  it('does not show the DG page for a signed-out session when a mode is chosen', async () => {
+    const r = rig({ signedIn: false })
+
+    await r.runtime.start()
+    await r.runtime.setDgMode('full')
+
+    expect(r.runtime.getState().dg.page).toBe('sign-in')
+  })
+
   it('forwards a blocked external link to the renderer and opens it only on confirmation', async () => {
     const r = rig()
 

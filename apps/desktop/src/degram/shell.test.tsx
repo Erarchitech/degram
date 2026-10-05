@@ -1,5 +1,4 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { I18nProvider, useI18n } from '@/i18n'
@@ -8,15 +7,16 @@ import { $notifications } from '@/store/notifications'
 import { $busy } from '@/store/session'
 import { stubMenuDomApis } from '@/test/jsdom'
 
-import type { DegramBridge, DegramState } from '../../electron/degram/ipc'
-import type { DegramEvent } from '../../electron/degram/scope'
+import type { DegramState } from '../../electron/degram/ipc'
 
 import { DegramGate } from './degram-gate'
+import { DgPage } from './dg-page'
 import { IsolationBootFailure } from './isolation-boot-failure'
 import { ProjectPicker } from './project-picker'
 import { ScopeStrip } from './scope-strip'
 import { SignInState } from './sign-in-state'
-import { DegramActionsContext, resetDegramStore, startDegramSync } from './use-degram-state'
+import { install, makeState, noScope, withActions } from './test-harness'
+import { resetDegramStore, startDegramSync } from './use-degram-state'
 
 beforeEach(() => {
   stubMenuDomApis()
@@ -30,79 +30,6 @@ afterEach(() => {
   $degramEnabled.set(false)
   delete (window as { hermesDesktop?: unknown }).hermesDesktop
 })
-
-const noScope = { status: 'no-project', project: null, company: null, profile: null, epoch: 0, error: null } as const
-
-function makeState(
-  over: Partial<DegramState> & { memberships?: DegramState['auth']['memberships'] } = {}
-): DegramState {
-  return {
-    auth: {
-      kind: 'signed-in',
-      username: 'ann',
-      isAdmin: false,
-      memberships: over.memberships ?? [
-        { project: 'Alpha', role: 'member', company: 'Acme' },
-        { project: 'Beta', role: 'member', company: null }
-      ]
-    },
-    scope: over.scope ?? { ...noScope },
-    dg: over.dg ?? { mode: 'graph', page: 'dg', reachable: true }
-  }
-}
-
-interface Harness {
-  bridge: DegramBridge
-  emitState: (state: DegramState) => void
-  emitEvent: (event: DegramEvent) => void
-  stop: () => void
-}
-
-function install(initial: DegramState): Harness {
-  let stateListener: ((state: DegramState) => void) | null = null
-  let eventListener: ((event: DegramEvent) => void) | null = null
-
-  const bridge: DegramBridge = {
-    getState: vi.fn(async () => initial),
-    onState: vi.fn(cb => {
-      stateListener = cb
-
-      return () => {
-        stateListener = null
-      }
-    }),
-    onEvent: vi.fn(cb => {
-      eventListener = cb
-
-      return () => {
-        eventListener = null
-      }
-    }),
-    selectProject: vi.fn(async () => ({ ok: true, state: initial.scope }) as never),
-    signOut: vi.fn(async () => undefined),
-    setDgMode: vi.fn(async () => undefined),
-    reloadDg: vi.fn(async () => undefined),
-    setDgBounds: vi.fn(async () => undefined),
-    reportOutcome: vi.fn(async () => true),
-    openExternalConfirmed: vi.fn(async () => true)
-  }
-
-  ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = { degram: bridge, degramEnabled: true }
-  $degramEnabled.set(true)
-  const stop = startDegramSync(bridge)
-
-  return {
-    bridge,
-    emitState: s => act(() => stateListener?.(s)),
-    emitEvent: e => act(() => eventListener?.(e)),
-    stop
-  }
-}
-
-const withActions = (
-  ui: ReactNode,
-  actions = { stopResponse: vi.fn(async () => undefined), startNewChat: vi.fn() }
-) => <DegramActionsContext.Provider value={actions}>{ui}</DegramActionsContext.Provider>
 
 describe('sign-in state (D-05, UI loading/error E7)', () => {
   it('renders the wordmark and the Connecting to DG loader until the login page paints', async () => {
@@ -175,6 +102,7 @@ describe('isolation boot failure (D-02, UI overflow/long-text E8)', () => {
     const copy = screen.getByText((_, el) => el?.tagName === 'P' && Boolean(el.textContent?.includes(longPath)))
 
     expect(copy.textContent).toContain("DeGram can't start: its data folder overlaps a Hermes profile at")
+
     const pathNode = within(copy.parentElement as HTMLElement)
       .getAllByText(longPath)
       .find(el => el.className.includes('break-all'))
@@ -499,5 +427,101 @@ describe('copy catalog', () => {
 
     expect(dump.toLowerCase()).not.toContain('genpro')
     expect(dump.toLowerCase()).not.toContain('mimo')
+  })
+})
+
+describe('DG page (D-07, UI E6)', () => {
+  const ready = (over: Partial<DegramState['dg']> = {}) =>
+    makeState({
+      scope: { status: 'ready', project: 'Alpha', company: 'Acme', profile: 'p', epoch: 1, error: null },
+      dg: { mode: 'graph', page: 'dg', reachable: true, ...over }
+    })
+
+  it('shows the project EmptyState, never a blank view, before sign-in or a project', async () => {
+    const h = install({ ...makeState(), auth: { kind: 'signed-out', username: null, isAdmin: false, memberships: [] } })
+
+    await act(async () => undefined)
+    render(<DgPage />)
+    expect(screen.getByText('Choose a project')).toBeTruthy()
+    cleanup()
+
+    h.emitState(makeState())
+    render(withActions(<DgPage />))
+    expect(screen.getByText('Choose a project')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Choose project' })).toBeTruthy()
+  })
+
+  it('renders the Project graph / Full DG control and the reload icon button with an accessible name', async () => {
+    const h = install(ready())
+
+    await act(async () => undefined)
+    render(<DgPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Full DG' }))
+    expect(h.bridge.setDgMode).toHaveBeenCalledWith('full')
+    fireEvent.click(screen.getByRole('button', { name: 'Project graph' }))
+    expect(h.bridge.setDgMode).toHaveBeenCalledWith('graph')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload the DG page' }))
+    expect(h.bridge.reloadDg).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports the placeholder rectangle once painted and hides the view when it unmounts', async () => {
+    const h = install(ready())
+
+    await act(async () => undefined)
+    const { unmount } = render(<DgPage />)
+
+    await waitFor(() => expect(h.bridge.setDgBounds).toHaveBeenCalledWith(expect.objectContaining({ width: 0 })))
+    unmount()
+    expect(h.bridge.setDgBounds).toHaveBeenLastCalledWith(null)
+  })
+
+  it('shows the Loader until the first paint and keeps the view hidden meanwhile', async () => {
+    const h = install(ready({ page: 'blank' }))
+
+    await act(async () => undefined)
+    render(<DgPage />)
+
+    expect(screen.getByText('Connecting to DG')).toBeTruthy()
+    expect(h.bridge.setDgBounds).not.toHaveBeenCalledWith(expect.objectContaining({ width: expect.any(Number) }))
+
+    h.emitEvent({ type: 'dg-reachable' })
+    await waitFor(() => expect(screen.queryByText('Connecting to DG')).toBeNull())
+  })
+
+  it('brings a blank view to the DG page once a project is open, but never reloads on the mode echo', async () => {
+    const h = install(ready({ page: 'blank' }))
+
+    await act(async () => undefined)
+    render(<DgPage />)
+
+    await waitFor(() => expect(h.bridge.setDgMode).toHaveBeenCalledWith('graph'))
+    const calls = (h.bridge.setDgMode as ReturnType<typeof vi.fn>).mock.calls.length
+
+    h.emitState(ready({ page: 'dg', mode: 'full' }))
+    await act(async () => undefined)
+    expect((h.bridge.setDgMode as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls)
+  })
+
+  it('shows the unreachable ErrorState with Reload page when the load fails', async () => {
+    const h = install(ready({ reachable: false }))
+
+    await act(async () => undefined)
+    render(<DgPage />)
+
+    expect(
+      screen.getByText("The DG server can't be reached. Check your network or VPN, then retry the request.")
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Reload page' }))
+    expect(h.bridge.reloadDg).toHaveBeenCalledTimes(1)
+  })
+
+  it('has no scrolling shell: the section clips and the web view owns its own scrolling', async () => {
+    install(ready())
+    await act(async () => undefined)
+    render(<DgPage />)
+
+    expect(screen.getByTestId('dg-page').className).toContain('overflow-hidden')
   })
 })

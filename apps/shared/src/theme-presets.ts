@@ -549,6 +549,65 @@ export const THEME_PRESET_PALETTES = {
       userBubble: '#1e2a38',
       userBubbleBorder: '#2e4060'
     }
+  },
+  // DeGram (Phase 1301-13): the DG web tokens of `ui-v2/src/styles/tokens/colors.css` (canvas, ink, paper,
+  // hairline, signal), so the shell and the embedded DG page read as one product. Exact values from
+  // 1301-UI-SPEC "Theme preset degram"; this entry is the only place those literals may appear.
+  degram: {
+    colors: {
+      background: '#f5f5f5',
+      foreground: '#0a0a0a',
+      card: '#ffffff',
+      cardForeground: '#0a0a0a',
+      muted: '#fafafa',
+      mutedForeground: '#737373',
+      popover: '#ffffff',
+      popoverForeground: '#0a0a0a',
+      primary: '#171717',
+      primaryForeground: '#fafafa',
+      secondary: '#ebebeb',
+      secondaryForeground: '#171717',
+      accent: '#f0f0f0',
+      accentForeground: '#0a0a0a',
+      border: '#e5e5e5',
+      input: '#e5e5e5',
+      ring: '#e7000b',
+      midground: '#e7000b',
+      composerRing: '#e7000b',
+      destructive: '#b8000e',
+      destructiveForeground: '#ffffff',
+      sidebarBackground: '#fafafa',
+      sidebarBorder: '#e5e5e5',
+      userBubble: '#ffffff',
+      userBubbleBorder: '#e5e5e5'
+    },
+    darkColors: {
+      background: '#111111',
+      foreground: '#f0f0f0',
+      card: '#1b1b1b',
+      cardForeground: '#f0f0f0',
+      muted: '#171717',
+      mutedForeground: '#909090',
+      popover: '#1b1b1b',
+      popoverForeground: '#f0f0f0',
+      primary: '#e2e2e2',
+      primaryForeground: '#111111',
+      secondary: '#262626',
+      secondaryForeground: '#e2e2e2',
+      accent: '#222222',
+      accentForeground: '#f0f0f0',
+      border: '#2a2a2a',
+      input: '#2a2a2a',
+      ring: '#ff3b44',
+      midground: '#ff3b44',
+      composerRing: '#ff3b44',
+      destructive: '#ff7079',
+      destructiveForeground: '#111111',
+      sidebarBackground: '#171717',
+      sidebarBorder: '#2a2a2a',
+      userBubble: '#1b1b1b',
+      userBubbleBorder: '#2a2a2a'
+    }
   }
 } satisfies Record<string, ThemePresetPalette>
 

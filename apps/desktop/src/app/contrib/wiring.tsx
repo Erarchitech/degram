@@ -37,6 +37,7 @@ import { SendDiagnosticsHost } from '@/components/send-diagnostics-dialog'
 import { SharedMetricsConsentDialog } from '@/components/shared-metrics/consent-dialog'
 import { TipHost } from '@/components/tips'
 import { emitGatewayEvent } from '@/contrib/events'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { translateNow } from '@/i18n'
 import { type ChatMessage, chatMessageText } from '@/lib/chat-messages'
 import { isMessagingSource } from '@/lib/session-source'
@@ -1358,14 +1359,14 @@ export function ContribWiring({ children }: { children: ReactNode }) {
       {/* The full real overlay set (mirrors DesktopController's `overlays`). */}
       <RemoteDisplayBanner />
       {!isAuxiliaryWindow() && <DesktopInstallOverlay />}
-      {!isAuxiliaryWindow() && (
+      {!isAuxiliaryWindow() && !isSurfaceHidden('onboarding-provider-steps') && (
         <OnboardingChatGate
           enabled={gatewayState === 'open'}
           onKickoff={kickoffFirstChat}
           requestGateway={ambientRequestGateway}
         />
       )}
-      {!isAuxiliaryWindow() && (
+      {!isAuxiliaryWindow() && !isSurfaceHidden('onboarding-provider-steps') && (
         <DesktopOnboardingOverlay
           enabled={gatewayState === 'open'}
           onCompleted={() => {
@@ -1387,22 +1388,26 @@ export function ContribWiring({ children }: { children: ReactNode }) {
       {/* One host for every free-tier sign-in entry point (Settings › Billing,
           the statusbar chip, the first-launch intro). It owns the flow; the
           entry points only record the intent. */}
-      {!isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
-      <ModelPickerOverlay
-        gateway={gateway || undefined}
-        onSelect={selectModel}
-        ownerConnectionId={activeConnectionId || undefined}
-        profile={activeGatewayProfile}
-        requestGateway={requestGateway}
-      />
+      {!isAuxiliaryWindow() && !isSurfaceHidden('free-tier') && <FreeTierSignInDialog onSelectModel={selectModel} />}
+      {!isSurfaceHidden('model-picker-overlay') && (
+        <ModelPickerOverlay
+          gateway={gateway || undefined}
+          onSelect={selectModel}
+          ownerConnectionId={activeConnectionId || undefined}
+          profile={activeGatewayProfile}
+          requestGateway={requestGateway}
+        />
+      )}
       <SessionPickerOverlay onResume={sessionId => openSessionFromPicker(sessionId, navigate)} />
-      <ModelVisibilityOverlay
-        gateway={gateway || undefined}
-        onOpenProviders={openProviderSettings}
-        ownerConnectionId={activeConnectionId || undefined}
-        profile={activeGatewayProfile}
-      />
-      <UpdatesOverlay />
+      {!isSurfaceHidden('model-visibility') && (
+        <ModelVisibilityOverlay
+          gateway={gateway || undefined}
+          onOpenProviders={openProviderSettings}
+          ownerConnectionId={activeConnectionId || undefined}
+          profile={activeGatewayProfile}
+        />
+      )}
+      {!isSurfaceHidden('updates-overlay') && <UpdatesOverlay />}
       <GatewayConnectingOverlay />
       <BootFailureOverlay />
       <CommandPalette />

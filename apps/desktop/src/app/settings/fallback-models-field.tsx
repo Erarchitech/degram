@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { getGlobalModelOptions } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { Plus, X } from '@/lib/icons'
@@ -69,13 +70,12 @@ function entriesEqual(a: FallbackEntry[], b: FallbackEntry[]): boolean {
  * local state and only complete pairs are emitted upward, so the config
  * autosave never persists a partial `{provider, model: ''}`.
  */
-export function FallbackModelsField({
-  value,
-  onChange
-}: {
-  value: unknown
-  onChange: (next: FallbackEntry[]) => void
-}) {
+export function FallbackModelsField(props: { value: unknown; onChange: (next: FallbackEntry[]) => void }) {
+  // Variant degram has one server-chosen model and no fallback chain (DGCL-02).
+  return isSurfaceHidden('fallback-models') ? null : <FallbackModelsEditor {...props} />
+}
+
+function FallbackModelsEditor({ value, onChange }: { value: unknown; onChange: (next: FallbackEntry[]) => void }) {
   const { t } = useI18n()
   const m = t.settings.model
 

@@ -31,6 +31,7 @@ import {
 import { HighlightMatches } from '@/components/ui/highlight-matches'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tip, TipHintLabel } from '@/components/ui/tooltip'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
@@ -199,7 +200,12 @@ interface ProviderGroup {
  * plugin surfaces that pick a model without a session behind it — so the two
  * can never drift apart.
  */
-export function ModelCatalogMenu({
+export function ModelCatalogMenu(props: ModelCatalogMenuProps): null | ReactElement {
+  // Variant degram offers no model choice: the entry renders nothing (DGCL-02).
+  return isSurfaceHidden('model-catalog-menu') ? null : <ModelCatalogMenuBody {...props} />
+}
+
+function ModelCatalogMenuBody({
   controller,
   footer,
   gateway,

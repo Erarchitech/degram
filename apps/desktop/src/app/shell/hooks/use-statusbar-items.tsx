@@ -15,6 +15,7 @@ import { $paneVisible } from '@/components/pane-shell/tree/store'
 import { Badge } from '@/components/ui/badge'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { useI18n } from '@/i18n'
 import { displayPath, pathLeaf } from '@/lib/display-path'
 import {
@@ -405,7 +406,7 @@ export function useStatusbarItems({
 
     return {
       className: status.hasUpdate ? 'text-primary hover:text-primary' : undefined,
-      hidden: status.unknown,
+      hidden: status.unknown || isSurfaceHidden('update-status'),
       icon: applying ? <Loader2 className="size-3 animate-spin" /> : <Hash className="size-3" />,
       id: 'version-client',
       label: status.label,
@@ -431,7 +432,7 @@ export function useStatusbarItems({
   ])
 
   const backendVersionItem = useMemo<StatusbarItem | null>(() => {
-    if (connection?.mode !== 'remote') {
+    if (connection?.mode !== 'remote' || isSurfaceHidden('update-status')) {
       return null
     }
 
@@ -487,7 +488,7 @@ export function useStatusbarItems({
         variant: 'action'
       },
       {
-        hidden: !sessionsShowing,
+        hidden: !sessionsShowing || isSurfaceHidden('remote-setup'),
         id: 'gateway-switcher',
         lockedVisible: true,
         render: () => <StatusbarGatewaySwitcher />
@@ -539,7 +540,7 @@ export function useStatusbarItems({
         // Shown while a free-tier identity exists and the tier is on: it names the
         // identity that carries the connectors (and inference when nothing else
         // does), and it is the persistent way in to the sign-in.
-        hidden: !freeTier?.available || guideOwnsSignIn,
+        hidden: !freeTier?.available || guideOwnsSignIn || isSurfaceHidden('free-tier'),
         icon: <Codicon name="account" size="0.75rem" />,
         id: 'free-tier',
         label: freeTierCopy.providerName,

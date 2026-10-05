@@ -20,6 +20,8 @@
 
 import { THEME_PRESET_PALETTES } from '@hermes/shared'
 
+import { $degramEnabled } from '@/store/degram-flag'
+
 import { skinToDesktopTheme } from './skin'
 import type { DesktopTheme, DesktopThemeTypography } from './types'
 
@@ -441,6 +443,25 @@ export const slateTheme: DesktopTheme = {
   }
 }
 
+/**
+ * DeGram — the DG web tokens (light and dark), default for variant `degram` and selectable like any other skin.
+ *
+ * Typography ships NO `fontUrl`: upstream presets load Google Fonts by URL, DeGram must make no font network
+ * request. Geist, Geist Mono and Oswald come from the bundled woff2 files declared in `src/degram/fonts.css`.
+ * Geist Sans has no Cyrillic subset, so Cyrillic falls through the stack to Segoe UI (UI-SPEC); the stacks end in
+ * the shared system tail, which also keeps the emoji and bundled JetBrains Mono fallbacks every theme carries.
+ */
+export const degramTheme: DesktopTheme = {
+  name: 'degram',
+  label: 'DeGram',
+  description: 'DG ink on canvas, signal red',
+  ...THEME_PRESET_PALETTES.degram,
+  typography: {
+    fontSans: `'Geist', ${SYSTEM_SANS}`,
+    fontMono: `'Geist Mono', ${SYSTEM_MONO}`
+  }
+}
+
 export const BUILTIN_THEMES: Record<string, DesktopTheme> = {
   nous: nousTheme,
   github: githubTheme,
@@ -453,13 +474,15 @@ export const BUILTIN_THEMES: Record<string, DesktopTheme> = {
   ember: emberTheme,
   mono: monoTheme,
   slate: slateTheme,
-  cyberpunk: cyberpunkTheme
+  cyberpunk: cyberpunkTheme,
+  degram: degramTheme
 }
 
 export const BUILTIN_THEME_LIST = Object.values(BUILTIN_THEMES)
 
-/** Skin used when nothing is persisted or the persisted name is retired. */
-export const DEFAULT_SKIN_NAME = 'nous'
+/** Skin used when nothing is persisted or the persisted name is retired. Variant `degram` defaults to its own
+ *  preset; the product fact is published by the preload before any renderer module runs. */
+export const DEFAULT_SKIN_NAME = $degramEnabled.get() ? 'degram' : 'nous'
 
 /** Names that no longer resolve to a skin of their own. A stored pick of one
  *  falls back to DEFAULT_SKIN_NAME, and a cached backend theme under one is

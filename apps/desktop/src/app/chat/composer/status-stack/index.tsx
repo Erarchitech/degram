@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { type Translations, useI18n } from '@/i18n'
 import { todoTree } from '@/lib/todos'
 import { useSessionSlice, useStoreSelector } from '@/lib/use-session-slice'
@@ -143,7 +144,10 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
   // One claimed owner across every mounted composer, so a split view shows the
   // notice once — and a non-owning stack adds no empty row to its card.
   const ownsFreeTierNotice = useFreeTierNoticeOwner()
-  const freeTierNotice = ownsFreeTierNotice && freeTierStripPending(freeTierStatus, freeTierRoute)
+
+  const freeTierNotice =
+    ownsFreeTierNotice && !isSurfaceHidden('free-tier') && freeTierStripPending(freeTierStatus, freeTierRoute)
+
   // Same single owner, one offer at a time: the metrics question waits for the free-tier notice.
   const sharedMetricsConsent = useStore($sharedMetricsConsent)
   const sharedMetricsOffer = ownsFreeTierNotice && !freeTierNotice && sharedMetricsOfferPending(sharedMetricsConsent)
@@ -225,7 +229,7 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
   // Billing wall sits at the very top of the stack — it's the most important
   // thing above the composer when the account is out of credits. Rendered here
   // (not as a composer-disable) so slash commands stay usable.
-  if (billing && sessionId && billing.sessionId === sessionId) {
+  if (billing && sessionId && billing.sessionId === sessionId && !isSurfaceHidden('billing-banner')) {
     sections.push({ key: 'billing', node: <BillingBanner sessionId={sessionId} /> })
   }
 
