@@ -25,8 +25,10 @@ def resolve_verify(base_url: str = ""):
 @contextmanager
 def stream(url: str, *, headers=None, params=None, timeout=10.0, verify=None):
     import httpx
+    from degram_variant.lockdown import block_metadata_egress
     from hermes_cli.urllib_security import url_origin
 
+    block_metadata_egress(url)  # variant degram: no model-metadata probe leaves the process
     origin = url_origin(url)
     private_headers = {name.lower() for name in headers or {} if name.lower() not in {"accept", "user-agent"}}
     private_headers.update({"authorization", "cookie", "proxy-authorization"})

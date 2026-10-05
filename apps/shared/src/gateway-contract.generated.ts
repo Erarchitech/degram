@@ -1234,6 +1234,32 @@ export interface ConnectorPolicySetResult {
   revision: string
   effective: ConnectorPolicyEffectiveUnrestricted | ConnectorPolicyEffectiveDenyAll | ConnectorPolicyEffectiveAllow | ConnectorPolicyEffectiveDeny
 }
+export interface DegramCredentialsSetParams {
+  token: string
+  expiresAt: string | number
+  relayBaseUrl: string
+  user: string
+  company?: string | null
+  project: string
+}
+export interface DegramCredentialsSetResult {
+  ok?: boolean
+  expiresAt: number
+}
+/** Client→server method params / server→client request params. Unknown keys are rejected. */
+export type Params = Record<string, never>
+export interface DegramCredentialsClearResult {
+  ok?: boolean
+}
+export interface DegramCredentialsStatusResult {
+  present: boolean
+  expired?: boolean
+  expiresAt?: number | null
+  relayBaseUrl?: string | null
+  user?: string | null
+  company?: string | null
+  project?: string | null
+}
 /** ``tools/bot_desktop/runtime.py::DesktopStatus`` plus the lease and the profile it speaks for. */
 export interface DisplayStatus {
   profile: string
@@ -2097,8 +2123,6 @@ export interface ProfilesRememberOnboardingResult {
   profile?: string
   target?: string
 }
-/** Client→server method params / server→client request params. Unknown keys are rejected. */
-export type Params = Record<string, never>
 /** ``created`` is false when an existing setup profile was found (and returned untouched). */
 export interface OnboardingEnsureSetupProfileResult {
   name: string
@@ -4964,6 +4988,12 @@ export interface RpcMethods {
   'connectors.tools': { params: ConnectorToolsParams; result: ConnectorToolsResult }
   /** List/add/remove/pause/resume cron jobs in the (optionally profile-scoped) cron store. */
   'cron.manage': { params: CronManageParams; result: CronManageResult }
+  /** Wipe the delegated DG token; the next provider call fails with CREDENTIALS_MISSING. */
+  'degram.credentials.clear': { params: Params; result: DegramCredentialsClearResult }
+  /** Store the delegated DG token in process memory (variant degram only). Errors: CREDENTIALS_INVALID. */
+  'degram.credentials.set': { params: DegramCredentialsSetParams; result: DegramCredentialsSetResult }
+  /** Presence, scope and expiry of the delegated credential; never the token. */
+  'degram.credentials.status': { params: Params; result: DegramCredentialsStatusResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */
   'delegation.pause': { params: DelegationPauseParams; result: DelegationPauseResult }
   /** Running subagent tree plus the spawn pause flag and limits. */
@@ -5427,6 +5457,9 @@ export const RPC_METHODS = [
   'connectors.policy.set',
   'connectors.tools',
   'cron.manage',
+  'degram.credentials.clear',
+  'degram.credentials.set',
+  'degram.credentials.status',
   'delegation.pause',
   'delegation.status',
   'diagnostics.share_nous',

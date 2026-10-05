@@ -817,11 +817,14 @@ include = [
   "hermes_platform.*",
   "pm",
   "pm.*",
+  "degram_variant",
+  "degram_variant.*",
   "tools",
   "tools.*",
 ]
 
 [tool.setuptools.package-data]
+degram_variant = ["config_template.yaml"]
 hermes_cli = [
   "observability/schemas/*.json",
   "data/*.json",

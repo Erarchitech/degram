@@ -716,6 +716,9 @@ def _localhost_to_ipv4(url: str) -> str:
 
 def detect_local_server_type(base_url: str, api_key: str = "") -> Optional[str]:
     """Probe known endpoints: "ollama", "lm-studio", "vllm", "llamacpp", or None (TTL-cached)."""
+    from degram_variant.lockdown import is_degram
+    if is_degram():  # variant degram: the relay is never probed for a local-server personality
+        return None
     import httpx
     # IPv4-resolve BEFORE deriving server/LM Studio URLs and the cache lookup, so localhost and 127.0.0.1 share a cache entry.
     normalized = _localhost_to_ipv4(_normalize_base_url(base_url))
@@ -2255,6 +2258,9 @@ def get_model_context_length(
     # 0. Explicit config override — user knows best
     if isinstance(config_context_length, int) and config_context_length > 0:
         return config_context_length
+    from degram_variant.lockdown import degram_context_length
+    if (fixed := degram_context_length()) is not None:  # variant degram: no catalog/endpoint probes
+        return fixed
     if (provider or "").strip().lower() == "moa":
         ctx = _resolve_moa_context_length(model, custom_providers)
         if ctx is not None:

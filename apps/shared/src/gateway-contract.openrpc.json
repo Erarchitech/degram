@@ -763,6 +763,60 @@
       }
     },
     {
+      "name": "degram.credentials.clear",
+      "summary": "Wipe the delegated DG token; the next provider call fails with CREDENTIALS_MISSING.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/Params"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramCredentialsClearResult"
+        }
+      }
+    },
+    {
+      "name": "degram.credentials.set",
+      "summary": "Store the delegated DG token in process memory (variant degram only). Errors: CREDENTIALS_INVALID.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramCredentialsSetParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramCredentialsSetResult"
+        }
+      }
+    },
+    {
+      "name": "degram.credentials.status",
+      "summary": "Presence, scope and expiry of the delegated credential; never the token.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/Params"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramCredentialsStatusResult"
+        }
+      }
+    },
+    {
       "name": "delegation.pause",
       "summary": "Block/unblock NEW spawns globally (active children keep running); returns the new state.",
       "params": [
@@ -12131,6 +12185,169 @@
           "cancel_at_period_end"
         ],
         "title": "CurrentSubscription",
+        "type": "object"
+      },
+      "DegramCredentialsClearResult": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "DegramCredentialsClearResult",
+        "type": "object"
+      },
+      "DegramCredentialsSetParams": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "relayBaseUrl": {
+            "title": "Relaybaseurl",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          },
+          "company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Company"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expiresAt",
+          "relayBaseUrl",
+          "user",
+          "project"
+        ],
+        "title": "DegramCredentialsSetParams",
+        "type": "object"
+      },
+      "DegramCredentialsSetResult": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "title": "Expiresat",
+            "type": "number"
+          }
+        },
+        "required": [
+          "expiresAt"
+        ],
+        "title": "DegramCredentialsSetResult",
+        "type": "object"
+      },
+      "DegramCredentialsStatusResult": {
+        "additionalProperties": false,
+        "properties": {
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          },
+          "expired": {
+            "default": false,
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expiresat"
+          },
+          "relayBaseUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Relaybaseurl"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User"
+          },
+          "company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Company"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          }
+        },
+        "required": [
+          "present"
+        ],
+        "title": "DegramCredentialsStatusResult",
         "type": "object"
       },
       "DelegationPauseParams": {

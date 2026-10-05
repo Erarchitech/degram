@@ -348,6 +348,9 @@ def _parse_tui_skills_env() -> list[str]:
 def _load_fallback_model():
     """Configured fallback chain via the shared ``get_fallback_chain`` (parity with
     HermesCLI/gateway: ``fallback_providers`` first, legacy ``fallback_model`` merged after)."""
+    from degram_variant.lockdown import is_degram
+    if is_degram():
+        return []  # variant degram: one relay route, no fallback chain (D-16)
     from hermes_cli.fallback_config import get_fallback_chain
     return get_fallback_chain(_load_cfg())
 
