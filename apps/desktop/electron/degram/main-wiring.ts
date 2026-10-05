@@ -84,6 +84,11 @@ export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
     runtime.dgView.setBounds(null)
     window.contentView.addChildView(runtime.dgView.view)
 
+    // D-08: a focus check is the third way an access loss is noticed (after any 401 and the heartbeat).
+    window.on('focus', () => {
+      void runtime.onWindowFocus().catch(() => deps.logger.warn('[degram] focus access check failed'))
+    })
+
     window.on('closed', () => {
       if (current === window) {
         current = null

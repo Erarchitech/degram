@@ -727,6 +727,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     setDgMode: mode => ipcRenderer.invoke(DEGRAM_CHANNELS.setDgMode, mode),
     reloadDg: () => ipcRenderer.invoke(DEGRAM_CHANNELS.reloadDg),
     setDgBounds: bounds => ipcRenderer.invoke(DEGRAM_CHANNELS.setDgBounds, bounds),
+    reportOutcome: code => ipcRenderer.invoke(DEGRAM_CHANNELS.reportOutcome, code),
     openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url)
   }
 })

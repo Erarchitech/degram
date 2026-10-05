@@ -289,6 +289,7 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.setDgMode,
         DEGRAM_CHANNELS.reloadDg,
         DEGRAM_CHANNELS.setDgBounds,
+        DEGRAM_CHANNELS.reportOutcome,
         DEGRAM_CHANNELS.openExternalConfirmed
       ].sort()
     )
@@ -320,6 +321,8 @@ describe('registerDegramIpc', () => {
     await expect(call(DEGRAM_CHANNELS.selectProject, 'x'.repeat(300))).rejects.toThrow(/project/i)
     await expect(call(DEGRAM_CHANNELS.setDgMode, 'bogus')).rejects.toThrow(/mode/i)
     await expect(call(DEGRAM_CHANNELS.setDgBounds, { x: 'a' })).rejects.toThrow(/bounds/i)
+    await expect(call(DEGRAM_CHANNELS.reportOutcome, 'NOT_A_REAL_CODE')).rejects.toThrow(/outcome/i)
+    await expect(call(DEGRAM_CHANNELS.reportOutcome, 7)).rejects.toThrow(/outcome/i)
     await expect(call(DEGRAM_CHANNELS.openExternalConfirmed, 5)).rejects.toThrow(/url/i)
 
     expect(r.rpcCalls).toEqual([])
@@ -336,9 +339,118 @@ describe('registerDegramIpc', () => {
     expect(await call(DEGRAM_CHANNELS.selectProject, 'alpha')).toMatchObject({ ok: true })
     await call(DEGRAM_CHANNELS.setDgMode, 'full')
     await call(DEGRAM_CHANNELS.setDgBounds, null)
+    expect(await call(DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED')).toBe(true)
     expect(await call(DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/')).toBe(true)
     await call(DEGRAM_CHANNELS.signOut)
 
     expect(r.runtime.getState().auth.kind).toBe('signed-out')
+  })
+})
+
+describe('degram runtime: revocation reaches the renderer only after clearing (Task 3)', () => {
+  it('a 401 on the focus check clears credential, scope and view, then sends session-ended and a signed-out state', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+
+    r.sent.length = 0
+    r.log.entries.length = 0
+    r.dg.setMe({ status: 401, body: { detail: { code: 'AUTH_REQUIRED' } } })
+
+    await r.runtime.onWindowFocus()
+
+    const order = [
+      'rpc:degram.credentials.clear',
+      'view.load about:blank',
+      'view.clearStorageData',
+      'view.clearCache',
+      'send:degram:event:session-ended'
+    ].map(entry => r.log.indexOf(entry))
+
+    expect(order.every(index => index >= 0)).toBe(true)
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+
+    // nothing at all reached the renderer before the wipe finished
+    const firstSend = r.log.entries.findIndex(entry => entry.startsWith('send:'))
+
+    expect(firstSend).toBeGreaterThan(r.log.indexOf('view.clearCache'))
+
+    expect(states(r.sent).pop()).toMatchObject({
+      auth: { kind: 'signed-out', memberships: [] },
+      scope: { status: 'no-project', project: null },
+      dg: { page: 'sign-in' }
+    })
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'session-ended' })
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/`)
+    expect(JSON.stringify(r.sent)).not.toContain('alpha')
+  })
+
+  it('losing the membership of the active project purges that scope and sends access-revoked with the empty-project state', async () => {
+    const r = rig({
+      memberships: [
+        { project: 'alpha', company: 'ACME' },
+        { project: 'beta', company: 'ACME' }
+      ]
+    })
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+
+    r.sent.length = 0
+    r.log.entries.length = 0
+    r.dg.setMe(r.dg.signedInMe('beta'))
+
+    await r.runtime.onWindowFocus()
+
+    expect(r.log.indexOf('profiles.purge:alpha')).toBeGreaterThanOrEqual(0)
+    expect(r.log.indexOf('profiles.purge:alpha')).toBeLessThan(r.log.indexOf('send:degram:event:access-revoked'))
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'access-revoked', project: 'alpha', purged: true })
+
+    const last = states(r.sent).pop()
+
+    expect(last.auth.kind).toBe('signed-in')
+    expect(last.scope).toMatchObject({ status: 'no-project', project: null })
+    expect(JSON.stringify(last.scope)).not.toContain('alpha')
+  })
+
+  it('forwards agent outcomes to the scope controller and reports whether the code was an access signal', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+
+    expect(await r.runtime.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'session-ended' })
+    expect(await r.runtime.reportOutcome('NOT_AN_ACCESS_CODE')).toBe(false)
+  })
+
+  it('a dg_session cookie change that turns out to be a lost session also ends it cleanly', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+    r.sent.length = 0
+    r.dg.setMe({ status: 401 })
+
+    await r.runtime.onAuthCookieChanged()
+
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'session-ended' })
+    expect(r.runtime.getState().auth.kind).toBe('signed-out')
+  })
+
+  it('an explicit sign-out is not followed by a session-ended event from the cookie wipe', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+    r.sent.length = 0
+    await r.runtime.signOut()
+
+    // the partition wipe makes the cookie change; DG then answers 401 to the re-check
+    r.dg.setMe({ status: 401 })
+    await r.runtime.onAuthCookieChanged()
+
+    expect(eventsOf(r.sent).filter(e => e.type === 'session-ended')).toEqual([])
   })
 })

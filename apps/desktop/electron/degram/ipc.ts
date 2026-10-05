@@ -15,7 +15,7 @@ import { createDgSession } from './dg-session'
 import type { DgBounds, DgMode, DgView, DgViewDeps, DgViewPage } from './dg-view'
 import { createDgView } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
-import { createScopeController } from './scope'
+import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
 export { DEGRAM_CHANNELS, type DegramChannel } from './channels'
 
@@ -44,6 +44,8 @@ export interface DegramBridge {
   reloadDg: () => Promise<void>
   /** The rectangle (window content coordinates) the DG page occupies; `null` hides the view. */
   setDgBounds: (bounds: DgBounds | null) => Promise<void>
+  /** Forward an operational outcome code the agent reported (for example CREDENTIALS_EXPIRED). */
+  reportOutcome: (code: string) => Promise<boolean>
   /** Open a URL the DG view refused to show in the system browser. Call only from a user action. */
   openExternalConfirmed: (url: string) => Promise<boolean>
 }
@@ -74,6 +76,10 @@ export interface DegramRuntime {
   reloadDg: () => Promise<void>
   setDgBounds: (bounds: DgBounds | null) => void
   openExternalConfirmed: (url: string) => boolean
+  /** An agent outcome code forwarded by the renderer; false when it is not an access signal. */
+  reportOutcome: (code: string) => Promise<boolean>
+  /** The DeGram window gained focus: verify the DG session and the active project's membership. */
+  onWindowFocus: () => Promise<void>
   /** The partition's `dg_session` cookie changed (sign-in finished in the DG page, or ended). */
   onAuthCookieChanged: () => Promise<void>
   dispose: () => void
@@ -225,12 +231,35 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     reloadDg: (): Promise<void> => viewTask(() => dgView.reload()),
     setDgBounds: (bounds: DgBounds | null): void => dgView.setBounds(bounds),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
+    reportOutcome: async (code: string): Promise<boolean> => {
+      const known = await scope.reportOutcome(code)
+
+      publish()
+
+      return known
+    },
+    onWindowFocus: async (): Promise<void> => {
+      await scope.checkAccess('focus')
+      await viewChain
+      publish()
+    },
     onAuthCookieChanged: async (): Promise<void> => {
-      await session.refresh()
+      // A clearing sequence (sign-out, revocation) wipes the cookie itself; its own change event is not news.
+      if (!scope.isSettled()) {
+        return
+      }
+
+      if (session.state().kind === 'signed-in') {
+        await scope.checkAccess('outcome')
+      } else {
+        await session.refresh()
+      }
+
       await viewChain
       publish()
     },
     dispose: (): void => {
+      scope.dispose()
       dgView.destroy()
     }
   }
@@ -283,6 +312,14 @@ function asBounds(value: unknown): DgBounds | null {
   return { x: rect.x as number, y: rect.y as number, width: rect.width as number, height: rect.height as number }
 }
 
+function asOutcome(value: unknown): string {
+  if (typeof value !== 'string' || !AGENT_OUTCOME_CODES.includes(value)) {
+    throw invalid('outcome')
+  }
+
+  return value
+}
+
 function asUrl(value: unknown): string {
   if (typeof value !== 'string' || !value || value.length > 4096) {
     throw invalid('url')
@@ -333,6 +370,10 @@ export function registerDegramIpc(
   ipc.handle(
     DEGRAM_CHANNELS.setDgBounds,
     guarded((bounds: unknown) => runtime.setDgBounds(asBounds(bounds)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.reportOutcome,
+    guarded((code: unknown) => runtime.reportOutcome(asOutcome(code)))
   )
   ipc.handle(
     DEGRAM_CHANNELS.openExternalConfirmed,

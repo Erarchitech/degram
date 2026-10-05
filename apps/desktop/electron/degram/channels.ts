@@ -12,6 +12,7 @@ export const DEGRAM_CHANNELS = {
   setDgMode: 'degram:set-dg-mode',
   reloadDg: 'degram:reload-dg',
   setDgBounds: 'degram:set-dg-bounds',
+  reportOutcome: 'degram:report-outcome',
   openExternalConfirmed: 'degram:open-external-confirmed',
   stateChanged: 'degram:state-changed',
   event: 'degram:event'

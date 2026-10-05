@@ -137,6 +137,30 @@ describe('degram main wiring', () => {
     expect(dg.meCount()).toBe(before + 1)
   })
 
+  it('a window focus checks the DG session; a lost session clears and notifies', async () => {
+    const { wiring, dg } = rig()
+    const w = fakeWindow()
+
+    wiring.attachWindow(w.window as never)
+    await wiring.started()
+    await wiring.runtime.selectProject('alpha')
+
+    const before = dg.meCount()
+
+    w.fire('focus')
+    await new Promise(resolve => setImmediate(resolve))
+    await new Promise(resolve => setImmediate(resolve))
+    expect(dg.meCount()).toBe(before + 1)
+
+    dg.setMe({ status: 401 })
+    wiring.runtime.scope.checkAccess('heartbeat').catch(() => undefined)
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(
+      w.sent.some(s => s.channel === DEGRAM_CHANNELS.event && (s.payload as { type: string }).type === 'session-ended')
+    ).toBe(true)
+  })
+
   it('unmounts the view when the window closes and re-mounts it on a new window without a second start', async () => {
     const { wiring, fake, dg } = rig()
     const first = fakeWindow()

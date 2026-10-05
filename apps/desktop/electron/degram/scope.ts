@@ -17,7 +17,8 @@
 // All collaborators are injected (see test-support.ts for the fakes).
 
 import { relayBaseUrlFor } from './dg-config'
-import type { AuthState, Clock, DgSession, Logger, MintResult } from './dg-session'
+import type { AuthState, Clock, DgSession, Logger, MeResult, MintResult } from './dg-session'
+import { DEGRAM_HEARTBEAT_S, DEGRAM_TOKEN_RENEW_S } from './dg-session'
 
 export interface ScopeKey {
   user: string
@@ -100,7 +101,37 @@ export interface ScopeController {
    * data is repainted ahead of the clearing (T-1301-12-04).
    */
   isSettled: () => boolean
+  /**
+   * Verify the DG session and the active project's membership now (GET /auth/me). Called by the heartbeat
+   * timer, by the window `focus` hook (coalesced within 5 s) and after an agent outcome. A 401 ends the
+   * session, a lost membership purges that scope, a network failure only reports `dg-unreachable`.
+   */
+  checkAccess: (source: CheckSource) => Promise<void>
+  /**
+   * An operational outcome code the agent reported (see AGENT_OUTCOME_CODES). Returns false for a code that
+   * is not an access signal. A soft expiry is never trusted alone: CREDENTIALS_EXPIRED is verified against
+   * /auth/me and re-minted unless DG confirms the session ended.
+   */
+  reportOutcome: (code: string) => Promise<boolean>
+  /** Stop every timer. */
+  dispose: () => void
 }
+
+export type CheckSource = 'heartbeat' | 'focus' | 'outcome'
+
+/** Agent outcomes that signal a change of access. Anything else is not an access signal. */
+const OUTCOMES_END_SESSION = new Set(['DELEGATED_SESSION_ENDED'])
+const OUTCOMES_VERIFY_AND_RENEW = new Set(['CREDENTIALS_EXPIRED', 'DELEGATED_EXPIRED', 'DELEGATED_AUTH_FAILED'])
+const OUTCOMES_REVOKE = new Set(['DELEGATED_SCOPE_CHANGED', 'ACCESS_DENIED'])
+
+export const AGENT_OUTCOME_CODES: readonly string[] = [
+  ...OUTCOMES_END_SESSION,
+  ...OUTCOMES_VERIFY_AND_RENEW,
+  ...OUTCOMES_REVOKE
+]
+
+/** Focus events closer together than this reuse the previous check (no request burst). */
+const FOCUS_MIN_INTERVAL_MS = 5_000
 
 interface OpenScope {
   key: ScopeKey
@@ -121,14 +152,44 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   let epoch = 0
   let state: ScopeState = { ...IDLE, epoch: 0 }
   let current: OpenScope | null = null
+  /** The scope being opened or open (set as soon as membership is confirmed, so a revoke can purge it). */
+  let active: { key: ScopeKey; profile: string | null } | null = null
   /** A signed-in session has been observed since the last clearing. */
   let live = false
   let clearing = false
+  let clearingPromise: Promise<unknown> | null = null
+  let heartbeat: { handle: unknown } | null = null
+  let renewal: { handle: unknown } | null = null
+  let renewPending = false
+  let renewing = false
+  let checking: Promise<void> | null = null
+  let lastCheckAt = Number.NEGATIVE_INFINITY
+  let unreachableReported = false
   const listeners = new Set<(next: ScopeState) => void>()
+
+  const stopHeartbeat = (): void => {
+    if (heartbeat) {
+      deps.clock.clearInterval(heartbeat.handle)
+      heartbeat = null
+    }
+  }
+
+  const stopRenewal = (): void => {
+    if (renewal) {
+      deps.clock.clearInterval(renewal.handle)
+      renewal = null
+    }
+
+    renewPending = false
+  }
 
   session.onAuth(auth => {
     if (auth.kind === 'signed-in') {
       live = true
+
+      if (!heartbeat) {
+        heartbeat = { handle: deps.clock.setInterval(() => void checkAccess('heartbeat'), DEGRAM_HEARTBEAT_S * 1000) }
+      }
     }
   })
 
@@ -154,6 +215,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     const open = current
 
     current = null
+    stopRenewal()
 
     if (open?.handle) {
       try {
@@ -164,33 +226,107 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
   }
 
+  /** Run one clearing sequence at a time; a concurrent trigger waits for it and is skipped (never doubled). */
+  const runClearing = async <T>(body: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }> => {
+    if (clearingPromise) {
+      await clearingPromise
+
+      return { done: false }
+    }
+
+    const running = body()
+
+    clearingPromise = running.catch(() => undefined)
+
+    try {
+      return { done: true, value: await running }
+    } finally {
+      clearingPromise = null
+    }
+  }
+
   /**
-   * The shared clearing sequence: invalidate any in-flight selection, clear the agent credential, close the
-   * scope, then reset the DG view. Completes BEFORE the caller tells the renderer anything.
+   * The shared clearing sequence: invalidate any in-flight selection, clear the agent credential, optionally
+   * release and purge the scope's profile, close the scope, then reset the DG view. Completes BEFORE the
+   * caller tells the renderer anything. Returns whether the profile purge succeeded (null: none requested).
    */
-  const teardown = async (view: { wipe: 'all' | 'tenant' | 'none' }): Promise<void> => {
+  const teardown = async (options: {
+    wipe: 'all' | 'tenant'
+    endsSession: boolean
+    purge?: { key: ScopeKey; profile: string | null }
+  }): Promise<boolean | null> => {
     clearing = true
     epoch += 1
 
+    let purged: boolean | null = null
+
     try {
       await closeCurrent()
+      active = null
+
+      if (options.purge) {
+        purged = true
+
+        try {
+          if (options.purge.profile) {
+            await deps.backend.release(options.purge.profile)
+          }
+
+          await deps.profiles.purge(options.purge.key)
+        } catch {
+          purged = false
+          logger.warn('[degram] could not purge the local profile of a revoked scope')
+        }
+      }
+
       setState({ ...IDLE, epoch })
 
       try {
         await deps.view.reset()
 
-        if (view.wipe === 'all') {
+        if (options.wipe === 'all') {
           await deps.view.clearStorage()
-        } else if (view.wipe === 'tenant') {
+        } else {
           await deps.view.clearStorage({ keepCookies: true })
         }
       } catch {
         logger.warn('[degram] could not fully reset the DG view')
       }
 
-      live = false
+      if (options.endsSession) {
+        live = false
+        stopHeartbeat()
+      }
     } finally {
       clearing = false
+    }
+
+    return purged
+  }
+
+  /** The DG session is gone (401): clear everything, then tell the renderer. */
+  const endSession = async (): Promise<void> => {
+    session.markSignedOut()
+
+    const result = await runClearing(() => teardown({ wipe: 'all', endsSession: true }))
+
+    if (result.done) {
+      deps.emit({ type: 'session-ended' })
+    }
+  }
+
+  /** Access to the active project is gone (403 / membership loss): purge that scope only, then tell the renderer. */
+  const revokeActive = async (): Promise<void> => {
+    const target = active
+
+    if (!target) {
+      return
+    }
+
+    const result = await runClearing(() => teardown({ wipe: 'tenant', endsSession: false, purge: target }))
+
+    if (result.done) {
+      deps.emit({ type: 'access-revoked', project: target.key.project, purged: result.value === true })
     }
   }
 
@@ -210,6 +346,10 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
 
     if (me.kind !== 'signed-in') {
+      if (live) {
+        await endSession()
+      }
+
       return { ok: false, code: 'NOT_SIGNED_IN', state }
     }
 
@@ -224,6 +364,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     const superseded = (): boolean => mine !== epoch
 
     await closeCurrent()
+    active = { key, profile: null }
     setState({ status: 'opening', project, company: membership.company, profile: null, epoch: mine, error: null })
 
     let profile: string
@@ -238,6 +379,10 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
 
     if (superseded()) {
       return fail('SUPERSEDED', false)
+    }
+
+    if (active?.key === key) {
+      active.profile = profile
     }
 
     let handle: BackendHandle
@@ -297,18 +442,162 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
 
     setState({ status: 'ready', project, company: membership.company, profile, epoch: mine, error: null })
+
+    stopRenewal()
+    renewal = { handle: deps.clock.setInterval(() => void renew(), DEGRAM_TOKEN_RENEW_S * 1000) }
     logger.info(`[degram] scope ready for project ${project}`)
 
     return { ok: true, state }
   }
 
   const signOut = async (): Promise<void> => {
-    await session.logout()
-    await teardown({ wipe: 'all' })
+    await runClearing(async () => {
+      await session.logout()
+      await teardown({ wipe: 'all', endsSession: true })
+    })
+  }
+
+  /** Re-mint the delegated token of the open scope and hand it to the agent (timer, or pending retry). */
+  const renew = async (): Promise<void> => {
+    const open = current
+
+    if (!open || !open.handle || renewing) {
+      return
+    }
+
+    renewing = true
+
+    try {
+      const minted: MintResult = await session.mint(open.key.project)
+
+      if (current !== open) {
+        return
+      }
+
+      if (minted.kind === 'ok') {
+        try {
+          await open.handle.call('degram.credentials.set', credentialParams(open.key, minted))
+          renewPending = false
+        } catch {
+          logger.warn('[degram] the agent did not accept the renewed credential; retrying on the next heartbeat')
+          renewPending = true
+        }
+      } else if (minted.kind === 'signed-out') {
+        await endSession()
+      } else if (minted.kind === 'forbidden') {
+        await revokeActive()
+      } else {
+        // unreachable or an unusable reply: keep the current credential and retry on the next heartbeat tick
+        renewPending = true
+      }
+    } finally {
+      renewing = false
+    }
+  }
+
+  const handleMe = async (me: MeResult): Promise<void> => {
+    if (me.kind === 'unreachable') {
+      if (!unreachableReported) {
+        unreachableReported = true
+        deps.emit({ type: 'dg-unreachable' })
+      }
+
+      return
+    }
+
+    if (unreachableReported) {
+      unreachableReported = false
+      deps.emit({ type: 'dg-reachable' })
+    }
+
+    if (me.kind === 'signed-out') {
+      if (live) {
+        await endSession()
+      }
+
+      return
+    }
+
+    const target = active
+
+    if (target) {
+      const membership = me.memberships.find(m => m.project === target.key.project)
+
+      if (!membership || membership.company !== target.key.company) {
+        await revokeActive()
+
+        return
+      }
+    }
+
+    if (renewPending && current) {
+      await renew()
+    }
+  }
+
+  const checkAccess = (source: CheckSource): Promise<void> => {
+    if (!live) {
+      return Promise.resolve()
+    }
+
+    if (checking) {
+      return checking
+    }
+
+    const now = deps.clock.now()
+
+    if (source === 'focus' && now - lastCheckAt < FOCUS_MIN_INTERVAL_MS) {
+      return Promise.resolve()
+    }
+
+    lastCheckAt = now
+
+    checking = session
+      .refresh()
+      .then(handleMe)
+      .catch(() => logger.warn('[degram] access check failed'))
+      .finally(() => {
+        checking = null
+      })
+
+    return checking
+  }
+
+  const reportOutcome = async (code: string): Promise<boolean> => {
+    if (OUTCOMES_END_SESSION.has(code)) {
+      if (live) {
+        await endSession()
+      }
+
+      return true
+    }
+
+    if (OUTCOMES_VERIFY_AND_RENEW.has(code)) {
+      if (live) {
+        renewPending = true
+        await checkAccess('outcome')
+      }
+
+      return true
+    }
+
+    if (OUTCOMES_REVOKE.has(code)) {
+      await revokeActive()
+
+      return true
+    }
+
+    return false
   }
 
   return {
     signOut,
+    checkAccess,
+    reportOutcome,
+    dispose: (): void => {
+      stopHeartbeat()
+      stopRenewal()
+    },
     isSettled: (): boolean => !clearing && !(live && session.state().kind === 'signed-out'),
     getState: (): ScopeState => state,
     onState: (listener): (() => void) => {
