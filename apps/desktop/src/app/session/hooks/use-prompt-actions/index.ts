@@ -4,6 +4,7 @@ import { stripAnsi } from '@hermes/shared/ansi'
 import { useStore } from '@nanostores/react'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 
+import { degramOnStop } from '@/degram/composer-seam'
 import { type ResolvedOwner, transcribeAudio } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { attachmentPathNeedsUpload } from '@/lib/attachment-upload-policy'
@@ -700,6 +701,8 @@ export function usePromptActions({
       setBusy(false)
     }
 
+    // Variant degram: the request state (and a bridge read in flight) clears in this very frame.
+    degramOnStop()
     setAwaitingResponse(false)
     setTurnStartedAt(null)
 

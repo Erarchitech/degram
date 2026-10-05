@@ -5,6 +5,26 @@
 
 type Count = number | string
 
+const RU_PLURAL = new Intl.PluralRules('ru')
+
+/** Russian plural form: one (1, 21, ...), few (2-4, 22-24, ...), many (0, 5-20, ...). */
+function ruPlural(n: number, one: string, few: string, many: string): string {
+  const rule = RU_PLURAL.select(n)
+
+  return rule === 'one' ? one : rule === 'few' ? few : many
+}
+
+/** «0 B» / «12.3 KB» / «1.2 MB»; the ru catalog uses a decimal comma and Cyrillic unit names. */
+function formatSize(bytes: number, locale: 'en' | 'ru'): string {
+  const units = locale === 'ru' ? ['Б', 'КБ', 'МБ'] : ['B', 'KB', 'MB']
+  const value = Math.max(0, bytes)
+  const exp = value < 1024 ? 0 : value < 1024 * 1024 ? 1 : 2
+  const scaled = value / 1024 ** exp
+  const text = exp === 0 ? String(Math.round(scaled)) : scaled.toFixed(1)
+
+  return `${locale === 'ru' ? text.replace('.', ',') : text} ${units[exp]}`
+}
+
 interface TitledCopy {
   title: string
   body: string
@@ -38,6 +58,21 @@ export interface DegramCopy {
     emptySelection: (document: string) => string
     truncated: (kept: Count, total: Count) => string
     missing: (what: string) => string
+    /** Counts with the locale's plural forms (ru: 1 объект / 2 объекта / 5 объектов). Zero is shown, never hidden. */
+    objects: (count: number) => string
+    parameters: (count: number) => string
+    rules: (count: number) => string
+    fragments: (count: number) => string
+    /** Payload size, e.g. «12.3 KB». */
+    size: (bytes: number) => string
+    /** Names of the parts of the payload a read can come back without (the «Missing: …» badge). */
+    parts: { rules: string; selection: string; graph: string; objects: string; parameters: string; bytes: string }
+    cardTitle: string
+    payloadToggle: string
+    payloadLabel: string
+    refresh: string
+    reading: string
+    wholeDefinition: string
   }
   errors: {
     dgUnreachable: string
@@ -55,10 +90,40 @@ export interface DegramCopy {
     accessRevoked: (project: string) => string
     policyDeny: (reason: string) => string
     isolation: (path: string) => string
+    /** Not in the 1301-UI-SPEC table: outcomes the table has no sentence for (see 1301-14-SUMMARY deviations). */
+    credentialsRefresh: string
+    grasshopperBusy: string
+    routesNotLoopback: string
+    setupIncomplete: string
+    lockedAction: string
+    scopeNotSupported: string
+    consentRequired: string
+    unknown: string
   }
-  bridge: { checking: string; revit: string; grasshopper: string }
+  format: { duration: (seconds: number) => string }
+  bridge: {
+    checking: string
+    revit: string
+    grasshopper: string
+    /** Short state label shown next to the bridge name in the strip. */
+    states: {
+      ready: string
+      pinned: string
+      busy: string
+      off: string
+      setupIncomplete: string
+      identityMismatch: string
+    }
+  }
   signIn: { connecting: string }
-  document: { unsaved: string; noIdentity: string; retryRead: string }
+  document: {
+    unsaved: string
+    noIdentity: string
+    retryRead: string
+    refreshList: string
+    unpin: string
+    pickerLabel: string
+  }
   dgPage: { reloadPage: string; reloadAria: string; externalBlocked: string; openInBrowser: string }
   confirm: {
     wholeTitle: string
@@ -119,7 +184,26 @@ export const degramEn: DegramCopy = {
     emptySelection: document =>
       `Nothing is selected in ${document}. Select elements there, or send without a snapshot.`,
     truncated: (kept, total) => `Truncated: ${kept} of ${total}`,
-    missing: what => `Missing: ${what}`
+    missing: what => `Missing: ${what}`,
+    objects: n => `${n} ${n === 1 ? 'object' : 'objects'}`,
+    parameters: n => `${n} ${n === 1 ? 'parameter' : 'parameters'}`,
+    rules: n => `${n} ${n === 1 ? 'rule' : 'rules'}`,
+    fragments: n => `${n} ${n === 1 ? 'fragment' : 'fragments'}`,
+    size: bytes => formatSize(bytes, 'en'),
+    parts: {
+      rules: 'rules',
+      selection: 'selection',
+      graph: 'project graph',
+      objects: 'objects',
+      parameters: 'parameters',
+      bytes: 'size'
+    },
+    cardTitle: 'Context sent to the model',
+    payloadToggle: 'Show the exact payload',
+    payloadLabel: 'Exact payload',
+    refresh: 'Re-read selection',
+    reading: 'Reading',
+    wholeDefinition: 'Whole definition'
   },
   errors: {
     dgUnreachable: "The DG server can't be reached. Check your network or VPN, then retry the request.",
@@ -143,14 +227,40 @@ export const degramEn: DegramCopy = {
     policyDeny: reason =>
       `DG policy doesn't allow sending this data to the model: ${reason}. Confirming won't override it — narrow the context or ask the project owner.`,
     isolation: path =>
-      `DeGram can't start: its data folder overlaps a Hermes profile at ${path}. Move or remove that folder, then start DeGram again.`
+      `DeGram can't start: its data folder overlaps a Hermes profile at ${path}. Move or remove that folder, then start DeGram again.`,
+    credentialsRefresh: 'The DG access token expired and is being renewed. Retry the request.',
+    grasshopperBusy:
+      'Grasshopper is busy (a solution is running or a dialog is open). Wait for it, then retry the request.',
+    routesNotLoopback:
+      "pyRevit Routes aren't limited to this computer (loopback). Set the Routes host to 127.0.0.1 in pyRevit settings, restart Revit, then refresh.",
+    setupIncomplete: "A setup step isn't finished for this application. Check the DeGram install steps, then refresh.",
+    lockedAction: "DeGram doesn't allow this action. Nothing was changed.",
+    scopeNotSupported: "This context scope isn't available for the selected document. Use the selection instead.",
+    consentRequired: 'Sending the whole definition needs your confirmation; nothing was sent. Send again and confirm.',
+    unknown: 'The request failed. Retry it; if it keeps failing, ask the DG operator.'
   },
-  bridge: { checking: 'Checking', revit: 'Revit', grasshopper: 'Grasshopper' },
+  format: { duration: seconds => (seconds >= 120 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)} s`) },
+  bridge: {
+    checking: 'Checking',
+    revit: 'Revit',
+    grasshopper: 'Grasshopper',
+    states: {
+      ready: 'ready',
+      pinned: 'pinned',
+      busy: 'busy',
+      off: 'off',
+      setupIncomplete: 'setup',
+      identityMismatch: 'other file'
+    }
+  },
   signIn: { connecting: 'Connecting to DG' },
   document: {
     unsaved: 'Not saved',
     noIdentity: "Can't be pinned: no document identity",
-    retryRead: 'Retry read'
+    retryRead: 'Retry read',
+    refreshList: 'Refresh the document list',
+    unpin: 'Unpin document',
+    pickerLabel: 'Open documents'
   },
   dgPage: {
     reloadPage: 'Reload page',
@@ -218,7 +328,26 @@ export const degramRu: DegramCopy = {
       'Документ не выбран — запрос использует только данные проекта. Выберите документ, чтобы добавить snapshot.',
     emptySelection: document => `В ${document} ничего не выделено. Выделите элементы или отправьте без snapshot.`,
     truncated: (kept, total) => `Сокращено: ${kept} из ${total}`,
-    missing: what => `Нет данных: ${what}`
+    missing: what => `Нет данных: ${what}`,
+    objects: n => `${n} ${ruPlural(n, 'объект', 'объекта', 'объектов')}`,
+    parameters: n => `${n} ${ruPlural(n, 'параметр', 'параметра', 'параметров')}`,
+    rules: n => `${n} ${ruPlural(n, 'правило', 'правила', 'правил')}`,
+    fragments: n => `${n} ${ruPlural(n, 'фрагмент', 'фрагмента', 'фрагментов')}`,
+    size: bytes => formatSize(bytes, 'ru'),
+    parts: {
+      rules: 'правила',
+      selection: 'выделение',
+      graph: 'граф проекта',
+      objects: 'объекты',
+      parameters: 'параметры',
+      bytes: 'размер'
+    },
+    cardTitle: 'Контекст для модели',
+    payloadToggle: 'Показать точный состав отправки',
+    payloadLabel: 'Точный состав отправки',
+    refresh: 'Перечитать выделение',
+    reading: 'Чтение',
+    wholeDefinition: 'Всё определение'
   },
   errors: {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',
@@ -243,14 +372,40 @@ export const degramRu: DegramCopy = {
     policyDeny: reason =>
       `Политика DG не разрешает отправку этих данных модели: ${reason}. Подтверждение это не отменит — сузьте контекст или обратитесь к владельцу проекта.`,
     isolation: path =>
-      `DeGram не может запуститься: его папка данных пересекается с профилем Hermes в ${path}. Перенесите или удалите эту папку и запустите DeGram снова.`
+      `DeGram не может запуститься: его папка данных пересекается с профилем Hermes в ${path}. Перенесите или удалите эту папку и запустите DeGram снова.`,
+    credentialsRefresh: 'Токен доступа DG истёк и обновляется. Повторите запрос.',
+    grasshopperBusy: 'Grasshopper занят (идёт расчёт или открыт диалог). Дождитесь его и повторите запрос.',
+    routesNotLoopback:
+      'Маршруты pyRevit (Routes) доступны не только с этого компьютера (loopback). Укажите хост Routes 127.0.0.1 в настройках pyRevit, перезапустите Revit и обновите список.',
+    setupIncomplete: 'Для этого приложения не завершена настройка. Проверьте шаги установки DeGram и обновите список.',
+    lockedAction: 'DeGram не разрешает это действие. Ничего не изменено.',
+    scopeNotSupported: 'Этот объём контекста недоступен для выбранного документа. Используйте выделение.',
+    consentRequired:
+      'Отправка всего определения требует вашего подтверждения; ничего не отправлено. Отправьте снова и подтвердите.',
+    unknown: 'Запрос не выполнен. Повторите его; если ошибка повторяется, обратитесь к оператору DG.'
   },
-  bridge: { checking: 'Проверка', revit: 'Revit', grasshopper: 'Grasshopper' },
+  format: { duration: seconds => (seconds >= 120 ? `${Math.round(seconds / 60)} мин` : `${Math.round(seconds)} с`) },
+  bridge: {
+    checking: 'Проверка',
+    revit: 'Revit',
+    grasshopper: 'Grasshopper',
+    states: {
+      ready: 'готов',
+      pinned: 'закреплён',
+      busy: 'занят',
+      off: 'выкл',
+      setupIncomplete: 'настройка',
+      identityMismatch: 'другой файл'
+    }
+  },
   signIn: { connecting: 'Подключение к DG' },
   document: {
     unsaved: 'Не сохранён',
     noIdentity: 'Нельзя закрепить: нет идентификатора документа',
-    retryRead: 'Повторить чтение'
+    retryRead: 'Повторить чтение',
+    refreshList: 'Обновить список документов',
+    unpin: 'Открепить документ',
+    pickerLabel: 'Открытые документы'
   },
   dgPage: {
     reloadPage: 'Перезагрузить страницу',

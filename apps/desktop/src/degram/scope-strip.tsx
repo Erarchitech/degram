@@ -1,7 +1,7 @@
 // scope-strip.tsx — `company · project · document · Revit ● · Grasshopper ●` in the shell statusbar
 // (DGCL-02, 1301-UI-SPEC E1). Visible whenever the user is signed in, so the scope of the next request is never a
-// guess. Company and project come from the bridge; the document and bridge segments are fed by plan 14 through
-// props and read «Выбрать документ» / «Проверка» until their first status arrives.
+// guess. Company and project come from the bridge; the document and bridge segments are fed by plan 14
+// (`ConnectedScopeStrip`) and read «Выбрать документ» / «Проверка» until their first status arrives.
 //
 // Colour: bridge dots are neutral (off/busy/setup-incomplete/identity-mismatch) or ink (ready); the one accent
 // dot is the pinned document. Segment labels ellipsize at 24 characters, bridges never collapse or wrap, and the
@@ -13,6 +13,7 @@ import { OverflowTip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
+import { DocumentPicker } from './document-picker'
 import { ProjectPicker } from './project-picker'
 import { useDegram } from './use-degram-state'
 
@@ -34,8 +35,10 @@ export interface ScopeStripDocument {
 export interface ScopeStripProps {
   document?: ScopeStripDocument | null
   bridges?: { revit?: BridgeSegment; grasshopper?: BridgeSegment }
-  /** Opens the document picker (plan 14). Without it the document segment is plain text. */
+  /** Opens a custom document picker. Without it (and without `documentPicker`) the document segment is plain text. */
   onSelectDocument?: () => void
+  /** The document segment opens the bridge-grouped document picker (plan 14). */
+  documentPicker?: boolean
 }
 
 const CHECKING: BridgeSegment = { status: 'checking' }
@@ -70,7 +73,7 @@ function Bridge({ detail, label, name, status }: { detail?: string; label?: stri
   return detail ? <OverflowTip label={detail}>{body}</OverflowTip> : body
 }
 
-export function ScopeStrip({ bridges, document, onSelectDocument }: ScopeStripProps) {
+export function ScopeStrip({ bridges, document, documentPicker, onSelectDocument }: ScopeStripProps) {
   const { t } = useI18n()
   const copy = t.degram
   const { state } = useDegram()
@@ -103,7 +106,21 @@ export function ScopeStrip({ bridges, document, onSelectDocument }: ScopeStripPr
         </Button>
       </ProjectPicker>
 
-      {onSelectDocument ? (
+      {documentPicker ? (
+        <DocumentPicker>
+          <Button
+            aria-label={`${copy.scope.document}: ${documentLabel}`}
+            className="min-w-0 shrink"
+            size="micro"
+            variant="text"
+          >
+            {document?.pinned && <StatusDot className="bg-ring" tone="muted" />}
+            <OverflowTip label={documentLabel}>
+              <span className={SEGMENT_TEXT}>{documentLabel}</span>
+            </OverflowTip>
+          </Button>
+        </DocumentPicker>
+      ) : onSelectDocument ? (
         <Button
           aria-label={`${copy.scope.document}: ${documentLabel}`}
           className="min-w-0 shrink"

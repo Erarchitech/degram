@@ -18,6 +18,7 @@ import { $chatOnboardingSolo, $chatOnboardingThreadIds } from '@/components/onbo
 import { OnboardingSkip } from '@/components/onboarding-chat/skip'
 import { Button } from '@/components/ui/button'
 import { Slot as ContribSlot } from '@/contrib/react/slot'
+import { useDegramSendBlocked } from '@/degram/composer-seam'
 import { useI18n } from '@/i18n'
 import { chatMessageText } from '@/lib/chat-messages'
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
@@ -415,7 +416,9 @@ export function ChatBar({
   })
 
   const hasComposerPayload = hasText || attachments.length > 0
-  const canSubmit = busy || hasComposerPayload
+  // Variant degram: Send waits for the pinned document's read (and a failed read keeps it off); Stop stays live.
+  const degramSendBlocked = useDegramSendBlocked()
+  const canSubmit = busy || (hasComposerPayload && !degramSendBlocked)
 
   // Steer only makes sense mid-turn, text-only (the gateway can't carry images
   // into a tool result) and never for a slash command (those execute inline).

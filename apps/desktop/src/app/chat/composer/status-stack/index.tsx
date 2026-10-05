@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
+import { DegramComposerSections } from '@/degram/context-card'
 import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { type Translations, useI18n } from '@/i18n'
 import { todoTree } from '@/lib/todos'
@@ -32,6 +33,7 @@ import {
   type StatusGroup,
   stopBackgroundProcess
 } from '@/store/composer-status'
+import { $degramEnabled } from '@/store/degram-flag'
 import { $freeTierRoute, $freeTierStatus, freeTierStripPending } from '@/store/free-tier'
 import { $interfaceMode, shownInMode, type Tiered } from '@/store/interface-mode'
 import { $previewStatusBySession, dismissPreviewArtifact } from '@/store/preview-status'
@@ -138,6 +140,11 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
     Boolean(scrollSessionId && map[scrollSessionId])
   )
 
+  const degramEnabled = useStore($degramEnabled)
+
+  // The composer's own submit, as a text-only call: a retry is a new, explicit Send of the last message.
+  const degramSubmit = useMemo(() => (onSubmit ? (text: string) => onSubmit(text) : undefined), [onSubmit])
+
   const billing = useStore($billingBlock)
   const freeTierStatus = useStore($freeTierStatus)
   const freeTierRoute = useStore($freeTierRoute)
@@ -225,6 +232,12 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
       : []
 
   const sections: { key: string; node: ReactNode }[] = []
+
+  // Variant degram: the failure banner and the Context card — what the next request carries — head the stack, so
+  // the user sees what will be sent before pressing Send (DGCL-07).
+  if (degramEnabled) {
+    sections.push({ key: 'degram-context', node: <DegramComposerSections onSubmit={degramSubmit} /> })
+  }
 
   // Billing wall sits at the very top of the stack — it's the most important
   // thing above the composer when the account is out of credits. Rendered here

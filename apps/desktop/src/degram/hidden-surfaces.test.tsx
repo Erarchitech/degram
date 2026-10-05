@@ -112,7 +112,8 @@ describe('upstream entry points consult the gate', () => {
     ['model-catalog-menu', ['app/shell/model-catalog-menu.tsx']],
     ['fallback-models', ['app/settings/fallback-models-field.tsx']],
     ['update-status', ['app/shell/hooks/use-statusbar-items.tsx']],
-    ['remote-setup', ['app/shell/hooks/use-statusbar-items.tsx', 'app/chat/sidebar/local-device-switch.tsx']]
+    ['remote-setup', ['app/shell/hooks/use-statusbar-items.tsx', 'app/chat/sidebar/local-device-switch.tsx']],
+    ['stock-error-retry', ['components/assistant-ui/thread/assistant-message.tsx']]
   ]
 
   it.each(SITES)('%s', (id, files) => {

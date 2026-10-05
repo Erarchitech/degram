@@ -1,6 +1,7 @@
 import type { PromptSubmitResult } from '@hermes/shared'
 import { type MutableRefObject, useCallback } from 'react'
 
+import { degramPromptSubmit } from '@/degram/composer-seam'
 import { getSession, PROMPT_SUBMIT_REQUEST_TIMEOUT_MS } from '@/hermes'
 import { translateNow, type Translations } from '@/i18n'
 import { type ChatMessage, finalizeInterruptedMessages, textPart } from '@/lib/chat-messages'
@@ -998,8 +999,10 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
             recoverStoredSessionId,
             liveId =>
               withSessionBusyRetry(() =>
-                requestGateway<PromptSubmitResult>(
-                  'prompt.submit',
+                // Variant degram: a pinned document's previewed payload is what `degram.context.send` embeds.
+                // Everywhere else this is the plain `prompt.submit` request (`@/degram/composer-seam`).
+                degramPromptSubmit<PromptSubmitResult>(
+                  requestGateway,
                   submitParams(liveId),
                   PROMPT_SUBMIT_REQUEST_TIMEOUT_MS
                 )

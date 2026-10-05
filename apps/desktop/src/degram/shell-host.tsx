@@ -17,10 +17,13 @@ import { registry } from '@/contrib'
 import { $desktopBoot } from '@/store/boot'
 import { requestFreshSession } from '@/store/profile'
 
+import { registerComposerGate } from './composer-seam'
+import { ConnectedScopeStrip } from './connected-scope-strip'
 import { DegramGate } from './degram-gate'
 import { stopActiveResponse } from './host-actions'
 import { registerDgPage } from './register-dg-page'
-import { ScopeStrip } from './scope-strip'
+import { startTurnEventSync } from './request-lifecycle'
+import { DegramSignOutConfirm } from './sign-out-confirm'
 import {
   type DegramActions,
   DegramActionsContext,
@@ -39,7 +42,7 @@ export function registerScopeStrip(): () => void {
     source: 'core',
     // After the core items (command center, gateways) so the strip reads as the bar's scope.
     order: 900,
-    render: () => <ScopeStrip />
+    render: () => <ConnectedScopeStrip />
   })
 }
 
@@ -62,6 +65,8 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
   useEffect(() => startDegramSync(undefined, actions.startNewChat), [actions])
   useEffect(() => registerScopeStrip(), [])
   useEffect(() => registerDgPage(), [])
+  useEffect(() => registerComposerGate(), [])
+  useEffect(() => startTurnEventSync(), [])
 
   // A refusal that reached the renderer through the boot state (plan 04: HOME_OVERLAP) is shown by the gate,
   // with the full path and no continue action, instead of the stock recovery overlay.
@@ -72,6 +77,7 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
   return (
     <DegramActionsContext.Provider value={actions}>
       <DegramGate />
+      <DegramSignOutConfirm />
       {children}
     </DegramActionsContext.Provider>
   )

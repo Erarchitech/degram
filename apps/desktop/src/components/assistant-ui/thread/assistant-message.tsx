@@ -38,6 +38,8 @@ import { formatElapsed } from '@/components/chat/activity-timer'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
 import { Codicon } from '@/components/ui/codicon'
 import { CopyButton } from '@/components/ui/copy-button'
+import { isSurfaceHidden } from '@/degram/hidden-surfaces'
+import { InterruptedBadge } from '@/degram/interrupted-badge'
 import { useI18n } from '@/i18n'
 import {
   errorRecoveryPlan,
@@ -373,6 +375,18 @@ const StoppedNotice: FC = () => {
 
   if (!stopped) {
     return null
+  }
+
+  // Variant degram: a stopped or failed turn keeps its partial text with the muted «Прервано» badge (UI-SPEC E5).
+  if (isSurfaceHidden('stock-error-retry')) {
+    return (
+      <div
+        className="flex items-center gap-1 px-(--message-text-indent) pt-1"
+        data-slot="aui_assistant-message-stopped"
+      >
+        <InterruptedBadge />
+      </div>
+    )
   }
 
   return (
@@ -829,6 +843,8 @@ const ErrorRecoveryActions: FC = () => {
 
   // One table decides which buttons this failure gets (lib/error-surface.ts).
   const plan = errorRecoveryPlan(surface)
+  // Variant degram: the banner above the composer owns the one manual retry (it re-sends with the context).
+  const retryShown = plan.retry && !isSurfaceHidden('stock-error-retry')
 
   // An expired/revoked OAuth grant (HTTP 401 on nous / openai-codex / ...):
   // the one-click fix is re-running that provider's sign-in, which the
@@ -957,7 +973,7 @@ const ErrorRecoveryActions: FC = () => {
           {copy.errorOpenHermesFolder}
         </button>
       )}
-      {plan.retry && (
+      {retryShown && (
         <ActionBarPrimitive.Reload asChild>
           <button
             className="aui-error-action"
@@ -972,12 +988,12 @@ const ErrorRecoveryActions: FC = () => {
           </button>
         </ActionBarPrimitive.Reload>
       )}
-      {plan.retry && limitReset && (
+      {retryShown && limitReset && (
         <span className="px-1 text-xs text-muted-foreground" data-testid="error-limit-reset">
           {copy.errorLimitResets(limitReset)}
         </span>
       )}
-      {plan.retry && surface?.resetsAt !== undefined && <ScheduledRetryAction resetsAt={surface.resetsAt} />}
+      {retryShown && surface?.resetsAt !== undefined && <ScheduledRetryAction resetsAt={surface.resetsAt} />}
       {plan.switchProvider && inRouter && <SwitchProviderAction label={copy.errorSwitchProvider} />}
       {localFolders && (
         <button className="aui-error-action" onClick={() => void openLogs()} type="button">

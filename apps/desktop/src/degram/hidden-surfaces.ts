@@ -33,7 +33,10 @@ export const HIDDEN_SURFACES = [
   // billing, and the gateway/connection pages (remote setup).
   'model-settings',
   'billing-settings',
-  'gateway-settings'
+  'gateway-settings',
+  // The transcript's own failure card offers a Retry (and a scheduled one) that resubmits without the disclosed
+  // context; DeGram's banner owns the one manual «Повторить запрос» (plan 14).
+  'stock-error-retry'
 ] as const
 
 export type HiddenSurface = (typeof HIDDEN_SURFACES)[number]
