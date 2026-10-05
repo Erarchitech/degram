@@ -19,12 +19,17 @@ const variants = {
     display: 'Hermes Agent',
     kebab: 'hermes-bundled',
     pascal: 'HermesBundled'
-  }
+  },
+  // DeGram (Phase 1301 D-01): the DG work client. A fully separate product:
+  // own name, appId, CLI, protocol, userData and single-instance lock, so it
+  // never shares state with an installed Hermes. Its home is fixed by
+  // electron/degram/isolation.ts, never inherited.
+  degram: { display: 'DeGram', kebab: 'degram', pascal: 'DeGram' }
 }
 
 const variant = process.env.HERMES_DESKTOP_VARIANT || ''
-if (!['', 'light', 'bundled', 'store'].includes(variant)) {
-  throw new Error(`Unknown HERMES_DESKTOP_VARIANT ${variant}. expected one of (empty), light, bundled, store`)
+if (!['', 'light', 'bundled', 'store', 'degram'].includes(variant)) {
+  throw new Error(`Unknown HERMES_DESKTOP_VARIANT ${variant}. expected one of (empty), light, bundled, store, degram`)
 }
 
 // 'store' is a Store-submission packaging identity layered on the bundled
@@ -33,6 +38,7 @@ if (!['', 'light', 'bundled', 'store'].includes(variant)) {
 // MSIX package identity. The Store re-signs on submission.
 const store = variant === 'store'
 const light = variant === 'light'
+const degram = variant === 'degram'
 const name = variants[store ? 'bundled' : (variant || '')]
 
 // The electron-updater feed channel this build PUBLISHES to. A canary
@@ -40,12 +46,13 @@ const name = variants[store ? 'bundled' : (variant || '')]
 // stable tags write latest.yml / light.yml. Keyed on the payload tag so
 // the one release workflow serves both channels — a canary build can
 // never overwrite the stable feed file, and vice versa.
-const canary = /\+canary\.20\d{6}T\d{6}Z$/.test(process.env.HERMES_PAYLOAD_TAG || '')
+// DeGram has no release feed (D-03), so ambient canary/commit selectors never apply.
+const canary = !degram && /\+canary\.20\d{6}T\d{6}Z$/.test(process.env.HERMES_PAYLOAD_TAG || '')
 
 // Nonstable installs own their package family and local desktop state. The
 // seven-character commit suffix also names the CLI and fits MSIX's name cap.
 const buildCommitEnv = process.env.HERMES_BUILD_COMMIT || ''
-const buildCommit = /^[a-f0-9]{40}$/.test(buildCommitEnv) ? buildCommitEnv.slice(0, 7) : null
+const buildCommit = !degram && /^[a-f0-9]{40}$/.test(buildCommitEnv) ? buildCommitEnv.slice(0, 7) : null
 const displayName = buildCommit
   ? `${name.display} ${buildCommit}`
   : canary
@@ -54,7 +61,7 @@ const displayName = buildCommit
 
 const kebabSuffix = buildCommit ? `-${buildCommit}` : canary ? '-canary' : ''
 const pascalSuffix = buildCommit ? `Commit${buildCommit}` : canary ? 'Canary' : ''
-const cliName = `${light ? 'hermes-light' : 'hermes'}${kebabSuffix}`
+const cliName = degram ? 'degram' : `${light ? 'hermes-light' : 'hermes'}${kebabSuffix}`
 if (store && (canary || buildCommit)) {
   throw new Error('Store packaging is only eligible for stable releases')
 }
@@ -65,15 +72,16 @@ if (store && (canary || buildCommit)) {
 const identity = {
   store,
   light,
+  degram,
   displayName,
-  appId: `com.nousresearch.${name.kebab}${kebabSuffix}`,
-  // Store and commit builds do not publish a release feed.
-  channel: store || buildCommit ? null : light ? (canary ? 'light-canary' : 'light') : (canary ? 'canary' : 'latest'),
+  appId: degram ? 'com.erarchitech.degram' : `com.nousresearch.${name.kebab}${kebabSuffix}`,
+  // Store, commit and DeGram builds do not publish a release feed.
+  channel: store || buildCommit || degram ? null : light ? (canary ? 'light-canary' : 'light') : (canary ? 'canary' : 'latest'),
   appNamePascal: `${name.pascal}${pascalSuffix}`,
   artifactNamePascal: name.pascal,
   windowsExecutableName: kebabSuffix ? cliName : displayName,
   cliName,
-  msixAppIdWithOrg: `NousResearch.${name.pascal}${pascalSuffix}`,
+  msixAppIdWithOrg: `${degram ? 'Erarchitech' : 'NousResearch'}.${name.pascal}${pascalSuffix}`,
   ...(store
     ? {
         storeMsix: {

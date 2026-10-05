@@ -32,13 +32,24 @@ export function platformDefaultHermesHome(home, env = process.env, platform = pr
   return path.posix.join(home, '.hermes') + suffix
 }
 
-export function resolveDesktopUserData(defaultPath, env = process.env) {
+export function resolveDesktopUserData(defaultPath, env = process.env, fixedUserData = undefined) {
+  // DeGram (Phase 1301 D-02) passes the userData it already resolved and
+  // validated (electron/degram/isolation.ts). No env override may move it.
+  if (fixedUserData) {
+    return fixedUserData
+  }
   return env.HERMES_DESKTOP_USER_DATA_DIR
     ? path.resolve(env.HERMES_DESKTOP_USER_DATA_DIR)
     : defaultPath + (env.HERMES_DATA_DIR_SUFFIX || '')
 }
 
-export function resolveDesktopHermesHome({ home, env = process.env, platform = process.platform, directoryExists = () => false, readWindowsHome = () => null }) {
+export function resolveDesktopHermesHome({ home, env = process.env, platform = process.platform, directoryExists = () => false, readWindowsHome = () => null, fixedHome = undefined }) {
+  // DeGram (Phase 1301 D-02): the home is fixed by electron/degram/isolation.ts
+  // and returned before any env, registry or legacy ~/.hermes lookup, so no
+  // inherited Hermes home source can reach it.
+  if (fixedHome) {
+    return fixedHome
+  }
   const paths = platform === 'win32' ? path.win32 : path.posix
   if (env.HERMES_HOME) {
     return normalizeHermesHomeRoot(env.HERMES_HOME, paths)

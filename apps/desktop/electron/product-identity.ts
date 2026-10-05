@@ -33,8 +33,24 @@ export function applyDesktopIdentity(
     setPath(name: 'userData', value: string): void
     setName(name: string): void
   },
-  identity: Readonly<ProductIdentity> = PRODUCT_IDENTITY
+  identity: Readonly<ProductIdentity> = PRODUCT_IDENTITY,
+  degramUserData?: string
 ): string | null {
+  // DeGram (Phase 1301 D-01/D-02) always pins userData to the directory the
+  // isolation resolver validated: its own userData and single-instance lock,
+  // never a Hermes one. There is no env or default fallback to guess from.
+  if (identity.degram) {
+    if (!degramUserData) {
+      throw new Error('DeGram identity requires the userData path resolved by electron/degram/isolation.ts')
+    }
+
+    mkdirSync(degramUserData, { recursive: true })
+    app.setPath('userData', degramUserData)
+    app.setName(identity.displayName)
+
+    return identity.displayName
+  }
+
   if (!identity.token && identity.appNamePascal === identity.artifactNamePascal) {
     return null
   }

@@ -215,6 +215,16 @@ import {
 } from './dashboard-token'
 import { resolveDashboardWebDist } from './dashboard-web-dist'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
+import {
+  assertNoHermesOverlap,
+  deepLinkProtocols,
+  DegramIsolationError,
+  type DegramPathInputs,
+  type DegramPaths,
+  degramProcessEnv,
+  isolatedBackendRequired,
+  resolveDegramPaths
+} from './degram/isolation'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
 import {
@@ -697,10 +707,45 @@ import { isPackagedInstallPath as isPackagedInstallPathUnderRoots } from './work
 import { readWslWindowsClipboardImage } from './wsl-clipboard-image'
 import { resolvePickerDefaultPath, setActiveGatewayProfile, setWslBridgeProfileState } from './wsl-path-bridge'
 
-const IDENTITY_APP_NAME: string | null = applyDesktopIdentity(app)
+// DeGram (Phase 1301 D-02): the home and userData are fixed under
+// %LOCALAPPDATA%\DeGram and validated BEFORE anything reads HERMES_HOME or pins
+// userData. Inherited Hermes home sources are ignored (they are only overlap
+// candidates); an overlap fails closed and never falls back to another home.
+let DEGRAM_PATHS: DegramPaths | null = null
+
+if (PRODUCT_IDENTITY.degram) {
+  const degramInputs: DegramPathInputs = {
+    env: process.env,
+    homedir: os.homedir(),
+    readRegistry: (): string | null => (process.platform === 'win32' ? readWindowsUserEnvVar('HERMES_HOME') : null)
+  }
+
+  DEGRAM_PATHS = resolveDegramPaths(degramInputs)
+
+  try {
+    assertNoHermesOverlap(DEGRAM_PATHS, degramInputs)
+  } catch (error) {
+    const isolationError: DegramIsolationError | Error = error instanceof Error ? error : new Error(String(error))
+    console.error(
+      `[degram] boot refused (${isolationError instanceof DegramIsolationError ? isolationError.code : 'UNKNOWN'}): ${isolationError.message}`
+    )
+    app.exit(1)
+    throw isolationError
+  }
+
+  // Every child and every process.env.HERMES_HOME reader inherits the fixed home,
+  // and the host-backend attach is off (see ISOLATED_BACKEND below).
+  const degramEnv: NodeJS.ProcessEnv = degramProcessEnv(process.env, DEGRAM_PATHS)
+  process.env.HERMES_HOME = degramEnv.HERMES_HOME
+  process.env.HERMES_DESKTOP_ISOLATED_BACKEND = degramEnv.HERMES_DESKTOP_ISOLATED_BACKEND
+  delete process.env.HERMES_DESKTOP_USER_DATA_DIR
+  delete process.env.HERMES_DATA_DIR_SUFFIX
+}
+
+const IDENTITY_APP_NAME: string | null = applyDesktopIdentity(app, PRODUCT_IDENTITY, DEGRAM_PATHS?.userData)
 const USER_DATA_OVERRIDE: string | undefined = process.env.HERMES_DESKTOP_USER_DATA_DIR
 
-if (USER_DATA_OVERRIDE || process.env.HERMES_DATA_DIR_SUFFIX) {
+if (!PRODUCT_IDENTITY.degram && (USER_DATA_OVERRIDE || process.env.HERMES_DATA_DIR_SUFFIX)) {
   const resolvedUserData: string = resolveDesktopUserData(app.getPath('userData'))
   fs.mkdirSync(resolvedUserData, { recursive: true })
   app.setPath('userData', resolvedUserData)
@@ -1260,8 +1305,13 @@ if (process.env.HERMES_DESKTOP_TMPDIR) {
 const HERMES_HOME: string = resolveDesktopHermesHome({
   home: app.getPath('home'),
   directoryExists,
-  readWindowsHome: (): string | null => readWindowsUserEnvVar('HERMES_HOME')
+  readWindowsHome: (): string | null => readWindowsUserEnvVar('HERMES_HOME'),
+  // DeGram: the validated fixed home, returned before any env/registry/legacy lookup.
+  fixedHome: DEGRAM_PATHS?.home
 })
+
+// Product-derived window title: DeGram never presents itself as Hermes.
+const APP_WINDOW_TITLE: string = PRODUCT_IDENTITY.degram ? PRODUCT_IDENTITY.displayName : 'Hermes'
 
 // #77311: `desktop.electron_flags` and the renderer heap ceiling
 // (`desktop.renderer_max_old_space_mb`) used to reach Chromium only through
@@ -12716,7 +12766,8 @@ async function prepareProfileRenameRequest(request) {
 
 // ── Attach-first: one backend per HOST (multiplex-only) ───────────────────
 // Escape hatch: a dedicated, private backend for this app instead of the host's.
-const ISOLATED_BACKEND = process.env.HERMES_DESKTOP_ISOLATED_BACKEND === '1'
+// DeGram (D-02) is always isolated: it never attaches to a running host Hermes backend.
+const ISOLATED_BACKEND = isolatedBackendRequired(PRODUCT_IDENTITY, process.env)
 const ATTACHED_LIVENESS_POLL_MS = 15_000
 let attachedBackendMonitor: NodeJS.Timeout | null = null
 let hostSpawnReservation: SpawnReservation | null = null
@@ -13825,7 +13876,7 @@ function spawnSecondaryWindow({
     height: SESSION_WINDOW_MIN_HEIGHT,
     minWidth: SESSION_WINDOW_MIN_WIDTH,
     minHeight: SESSION_WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: APP_WINDOW_TITLE,
     titleBarStyle: 'hidden',
     titleBarOverlay: getTitleBarOverlayOptions(),
     trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -13930,7 +13981,7 @@ function spawnBrowserWindow(tabId) {
     height: BROWSER_WINDOW_HEIGHT,
     minWidth: BROWSER_WINDOW_MIN_WIDTH,
     minHeight: BROWSER_WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: APP_WINDOW_TITLE,
     titleBarStyle: 'hidden',
     titleBarOverlay: getTitleBarOverlayOptions(),
     trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -14042,7 +14093,7 @@ function createInstanceWindow(
     ...nextInstanceBounds(source),
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: APP_WINDOW_TITLE,
     titleBarStyle: 'hidden',
     titleBarOverlay: getTitleBarOverlayOptions(),
     trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -15127,7 +15178,7 @@ function createWindow() {
     ),
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: APP_WINDOW_TITLE,
     // Frameless title bar on every platform so the renderer can paint the
     // "hide sidebar" button (and other left-side titlebar tools) flush with
     // the top edge — matching the macOS layout where the traffic lights sit
@@ -19175,9 +19226,10 @@ ipcMain.handle('hermes:vscode-theme:search', async (_event, query) => searchMark
 // running app. Three delivery paths: macOS 'open-url',
 // Win/Linux running-app 'second-instance' (argv), Win/Linux cold-start argv.
 // ---------------------------------------------------------------------------
-const HERMES_PROTOCOL = DEV_SERVER ? 'hermes-dev' : 'hermes'
+const DEEPLINK_PROTOCOLS = deepLinkProtocols(PRODUCT_IDENTITY, Boolean(DEV_SERVER))
+const HERMES_PROTOCOL = DEEPLINK_PROTOCOLS.primary
 /** Schemes accepted when parsing inbound URLs (dev accepts both). */
-const DEEPLINK_SCHEMES = DEV_SERVER ? ['hermes-dev', 'hermes'] : ['hermes']
+const DEEPLINK_SCHEMES = DEEPLINK_PROTOCOLS.accepted
 let _pendingDeepLink = null
 let _rendererReadyForDeepLink = false
 // Set by sendOpenUpdatesRequested() when the renderer cannot hear it yet.

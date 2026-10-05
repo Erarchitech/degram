@@ -3,6 +3,8 @@ interface ProductIdentity {
   light: boolean
   /** True for a Store-submission build (Windows Store packaging identity). */
   store: boolean
+  /** True for the DeGram variant (Phase 1301): isolated home, no updater. */
+  degram: boolean
   /** Display name. e.g. "Hermes Light" */
   displayName: string
   /** OS-level app identity. e.g. "com.nousresearch.hermes-light" */
