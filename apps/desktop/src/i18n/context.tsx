@@ -2,7 +2,7 @@ import { applyDocumentLocale, isRecord } from '@hermes/shared/i18n'
 import { useStore } from '@nanostores/react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import { degramFirstRunLocale } from '@/degram/i18n'
+import { degramFirstRunLocale } from '@/degram/first-run-locale'
 import { getHermesConfigRecord, type HermesConfigRecord, retainConfigReadOrigin, saveHermesConfig } from '@/hermes'
 
 import { TRANSLATIONS } from './catalog'

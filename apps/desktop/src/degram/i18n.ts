@@ -3,8 +3,6 @@
 // `defineLocale` (ru.ts). fr, de, es and the other overlays fall back to English by design (UI-SPEC: "fr/de/es
 // receive the English text"), so a missing translation can never render a blank.
 
-import { $degramEnabled } from '@/store/degram-flag'
-
 type Count = number | string
 
 interface TitledCopy {
@@ -281,13 +279,4 @@ export const degramRu: DegramCopy = {
     searchProjects: 'Поиск проектов',
     isolationTitle: 'Изоляция среды выполнения'
   }
-}
-
-/**
- * The locale a first run of variant `degram` starts in (UI-SPEC: "Russian is the first-run locale"). `null` for
- * every other variant, so the standard Hermes resolution (saved choice, then OS locale, then English) is
- * untouched. A saved `display.language` always wins: callers consult this only when nothing was saved.
- */
-export function degramFirstRunLocale(): 'ru' | null {
-  return $degramEnabled.get() ? 'ru' : null
 }
