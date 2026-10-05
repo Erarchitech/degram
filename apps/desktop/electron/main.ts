@@ -215,6 +215,7 @@ import {
 } from './dashboard-token'
 import { resolveDashboardWebDist } from './dashboard-web-dist'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
+import { degramBackendEnv } from './degram/dg-config'
 import {
   assertNoHermesOverlap,
   deepLinkProtocols,
@@ -741,6 +742,31 @@ if (PRODUCT_IDENTITY.degram) {
   process.env.HERMES_DESKTOP_ISOLATED_BACKEND = degramEnv.HERMES_DESKTOP_ISOLATED_BACKEND
   delete process.env.HERMES_DESKTOP_USER_DATA_DIR
   delete process.env.HERMES_DATA_DIR_SUFFIX
+}
+
+/**
+ * DeGram (Phase 1301-12, D-01/D-02): the env every agent backend of this product is spawned with
+ * (HERMES_DEGRAM=1, the fixed degram home, DEGRAM_PYTHON / DEGRAM_REVIT_MCP_DIR when they resolve).
+ * Empty for every other product, so the stock spawn env is unchanged.
+ */
+function degramSpawnEnv(): NodeJS.ProcessEnv {
+  if (!PRODUCT_IDENTITY.degram || !DEGRAM_PATHS) {
+    return {}
+  }
+
+  return degramBackendEnv({
+    env: process.env,
+    home: DEGRAM_PATHS.home,
+    readFile: (file: string): string | null => {
+      try {
+        return fs.readFileSync(file, 'utf8')
+      } catch {
+        return null
+      }
+    },
+    exists: (file: string): boolean => fs.existsSync(file),
+    resourcesPath: process.resourcesPath
+  })
 }
 
 const IDENTITY_APP_NAME: string | null = applyDesktopIdentity(app, PRODUCT_IDENTITY, DEGRAM_PATHS?.userData)
@@ -12395,6 +12421,7 @@ async function runPoolBackendStart(
           ...profileBackendParentEnv({ hermesHome: HERMES_HOME, profile }),
           HERMES_HOME,
           ...backend.env,
+          ...degramSpawnEnv(),
           // Pin the gateway's tool/terminal cwd to the same directory we chose for
           // the child process. Inherited TERMINAL_CWD (or a stale config bridge)
           // can still point at the install dir even when spawn cwd is home.
@@ -13313,6 +13340,7 @@ async function runHermesStart({ supervisorRecovery = false }: { supervisorRecove
             // can't reliably do that, so we set it inline for every spawn.
             HERMES_HOME,
             ...backend.env,
+            ...degramSpawnEnv(),
             TERMINAL_CWD: hermesCwd,
             HERMES_DASHBOARD_SESSION_TOKEN: token,
             // Marks this dashboard backend as desktop-spawned so it runs the cron
