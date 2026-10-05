@@ -570,7 +570,11 @@ hermes-acp = "acp_adapter.entry:main"
 # build with --all-extras and pass --no-extra for each of these, so their
 # closures never ship. KittenTTS pulls torch, transformers and spaCy through
 # misaki[en]: installed when the user picks it, not preinstalled.
-opt-in-extras = ["kittentts"]
+# DeGram (Phase 1301-15): `silk` (pilk, a C extension) and `daytona` (obstore, a Rust
+# extension) have no Windows wheel for the payload interpreter (CPython 3.14), so a payload
+# build on a PC without a C/Rust toolchain would fail on them; neither belongs to the
+# read-only DeGram agent.
+opt-in-extras = ["kittentts", "silk", "daytona"]
 
 # Per-extra platform gates (settled 2026-09-02): an extra listed here is
 # only installable on platforms matching the marker. pm consults this
