@@ -182,9 +182,12 @@ def _chunk(delta, finish=None, usage=None):
 class FakeRelay:
     """Records every request (headers, parsed body). Answers SSE, or ``error_body`` with ``status`` when != 200."""
 
-    def __init__(self, status: int = 200, error_body: Any = None):
+    def __init__(self, status: int = 200, error_body: Any = None, script: list[dict] | None = None,
+                 error_headers: dict | None = None):
         self.requests: list[dict] = []
         self.status = status
+        self.error_headers = error_headers or {}
+        self.script = list(script or [])  # one entry per chat POST: {"text": ..., "tool": name} (tool call)
         self.error_body = error_body if error_body is not None else {"error": {"message": "relay says no"}}
         relay = self
 
@@ -207,15 +210,25 @@ class FakeRelay:
                     payload = json.dumps(relay.error_body).encode()
                     self.send_response(relay.status)
                     self.send_header("content-type", "application/json")
+                    for key, value in relay.error_headers.items():
+                        self.send_header(key, value)
                     self.send_header("content-length", str(len(payload)))
                     self.end_headers()
                     self.wfile.write(payload)
                     return
+                step = relay.script.pop(0) if relay.script else {"text": "hello"}
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.end_headers()
-                self.wfile.write(_chunk({"role": "assistant", "content": "hello"}))
-                self.wfile.write(_chunk({}, "stop", {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}))
+                self.wfile.write(_chunk({"role": "assistant", "content": step.get("text", "")}))
+                usage = {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
+                if step.get("tool"):
+                    call = {"index": 0, "id": "call_1", "type": "function",
+                            "function": {"name": step["tool"], "arguments": "{}"}}
+                    self.wfile.write(_chunk({"tool_calls": [call]}))
+                    self.wfile.write(_chunk({}, "tool_calls", usage))
+                else:
+                    self.wfile.write(_chunk({}, "stop", usage))
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
 

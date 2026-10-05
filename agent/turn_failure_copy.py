@@ -423,6 +423,9 @@ def nonretryable_copy(
     classified: Any, *, provider: Any, model: Any, summary: str, prefix_suggestion: Optional[str] = None,
 ) -> str:
     """Chat copy for a terminal non-retryable rejection (auth, model missing, TLS, generic 4xx)."""
+    from degram_variant.provider import named_outcome_copy  # variant degram: a named relay outcome is its own copy
+    if (named := named_outcome_copy(summary)) is not None:
+        return named
     label = provider_label_for(provider)
     if getattr(classified, "is_auth", False):
         from agent.error_surface import auth_kind

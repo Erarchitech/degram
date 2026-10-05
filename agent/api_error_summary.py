@@ -158,6 +158,9 @@ class ApiErrorSummaryMixin:
         Cloudflare HTML pages → ``<title>``; network/DNS failures (even SDK-wrapped) → offline hint; else
         truncated str(error).
         """
+        from degram_variant.provider import relay_error_summary  # variant degram: a named relay outcome leads
+        if (named := relay_error_summary(error)) is not None:
+            return named
         raw = str(error)
 
         current: Optional[BaseException] = error

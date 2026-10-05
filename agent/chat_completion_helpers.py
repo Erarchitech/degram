@@ -3795,6 +3795,9 @@ class _StreamingCall(StreamingWaitMonitor):
         """
         if getattr(self.agent, "_interrupt_requested", False):
             return False
+        from degram_variant.lockdown import is_degram
+        if is_degram():  # variant degram: a failed relay call is never re-issued automatically (1300 D-10, D-18)
+            return False
         status = _extract_status_code(e)
         if status is None or status < 500 or self.deltas_were_sent["yes"]:
             return False
