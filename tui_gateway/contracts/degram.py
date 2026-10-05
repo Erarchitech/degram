@@ -62,6 +62,10 @@ class DegramOutcomeFields(Result):
     bridgeState: str | None = None
 
 
+class DegramDocumentsListParams(Params):
+    app: str | None = None  # one bridge only (the picker loads each group independently); null lists every bridge
+
+
 class DegramDocumentsListResult(DegramOutcomeFields):
     groups: JsonValue = None  # [{app, state, documents: [{app, name, path, unsaved, identity, pinned}], code?, reason?}]
     pinned: JsonValue = None
@@ -117,8 +121,8 @@ class DegramContextCancelResult(DegramOutcomeFields):
     cancelled: int = 0
 
 
-method("degram.documents.list", params=Params, result=DegramDocumentsListResult,
-       doc="Open documents of every reachable CAD bridge with a state per bridge; pins nothing.")
+method("degram.documents.list", params=DegramDocumentsListParams, result=DegramDocumentsListResult,
+       doc="Open documents of every reachable CAD bridge (or of one bridge: app) with a state per bridge; pins nothing.")
 method("degram.documents.pin", params=DegramDocumentsPinParams, result=DegramDocumentsPinResult,
        doc="Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY.")
 method("degram.context.preview", params=DegramContextPreviewParams, result=DegramContextPreviewResult,

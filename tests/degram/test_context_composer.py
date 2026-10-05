@@ -286,6 +286,18 @@ class TestRpc:
         assert sent["result"]["status"] == "ok" and sent["result"]["submit"] == {"status": "streaming"}
         assert submitted[0]["session_id"] == "s1" and submitted[0]["text"].startswith(view["payload"])
 
+    def test_list_can_ask_one_bridge_only(self, rt):
+        """Plan 1301-14: the picker loads each bridge group independently, one call per application."""
+        only = self.rpc("degram.documents.list", {"app": "grasshopper"})["result"]
+        assert only["status"] == "ok" and [g["app"] for g in only["groups"]] == ["grasshopper"]
+        assert only["groups"][0]["documents"], "the GH group carries its open document"
+        everything = self.rpc("degram.documents.list")["result"]
+        assert len(everything["groups"]) >= 1 and "grasshopper" in {g["app"] for g in everything["groups"]}
+
+    def test_list_for_an_unknown_bridge_is_a_bad_request(self, rt):
+        reply = self.rpc("degram.documents.list", {"app": "rhino-mesh"})
+        assert reply["error"]["data"]["code"] == "BAD_REQUEST"
+
     def test_a_stale_preview_is_a_named_rpc_error(self, rt):
         self.rpc("degram.documents.pin", GH_PIN)
         view = self.rpc("degram.context.preview", {"scope": "selection"})["result"]

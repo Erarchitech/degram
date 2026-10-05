@@ -872,12 +872,12 @@
     },
     {
       "name": "degram.documents.list",
-      "summary": "Open documents of every reachable CAD bridge with a state per bridge; pins nothing.",
+      "summary": "Open documents of every reachable CAD bridge (or of one bridge: app) with a state per bridge; pins nothing.",
       "params": [
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/Params"
+            "$ref": "#/components/schemas/DegramDocumentsListParams"
           }
         }
       ],
@@ -12833,6 +12833,25 @@
           "present"
         ],
         "title": "DegramCredentialsStatusResult",
+        "type": "object"
+      },
+      "DegramDocumentsListParams": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          }
+        },
+        "title": "DegramDocumentsListParams",
         "type": "object"
       },
       "DegramDocumentsListResult": {

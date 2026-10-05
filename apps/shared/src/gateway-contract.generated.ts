@@ -1260,6 +1260,9 @@ export interface DegramCredentialsStatusResult {
   company?: string | null
   project?: string | null
 }
+export interface DegramDocumentsListParams {
+  app?: string | null
+}
 export interface DegramDocumentsListResult {
   status: string
   code?: string | null
@@ -5071,8 +5074,8 @@ export interface RpcMethods {
   'degram.credentials.set': { params: DegramCredentialsSetParams; result: DegramCredentialsSetResult }
   /** Presence, scope and expiry of the delegated credential; never the token. */
   'degram.credentials.status': { params: Params; result: DegramCredentialsStatusResult }
-  /** Open documents of every reachable CAD bridge with a state per bridge; pins nothing. */
-  'degram.documents.list': { params: Params; result: DegramDocumentsListResult }
+  /** Open documents of every reachable CAD bridge (or of one bridge: app) with a state per bridge; pins nothing. */
+  'degram.documents.list': { params: DegramDocumentsListParams; result: DegramDocumentsListResult }
   /** Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY. */
   'degram.documents.pin': { params: DegramDocumentsPinParams; result: DegramDocumentsPinResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */

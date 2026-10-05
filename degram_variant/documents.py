@@ -60,10 +60,13 @@ class DocumentsService:
         return self._sources[app]
 
     # -- picker ----------------------------------------------------------------------------------
-    def list(self, cancel: CancelToken | None = None) -> dict[str, Any]:
+    def list(self, cancel: CancelToken | None = None, app: str | None = None) -> dict[str, Any]:
+        """Open documents per bridge. ``app`` limits the listing to one bridge (the picker loads each group on its
+        own); an unknown name raises ``ValueError`` like ``source``."""
         groups = []
         pinned = self.pinned
-        for app, source in self._sources.items():
+        sources = {app: self.source(app)} if app is not None else self._sources
+        for app, source in sources.items():
             group: dict[str, Any] = {"app": app, "state": "ready", "documents": []}
             try:
                 documents = source.list_documents(cancel)

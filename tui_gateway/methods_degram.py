@@ -90,7 +90,9 @@ def _(rid, params: dict) -> dict:
     token = rt.cancels.new("documents.list")
     try:
         with token.active():
-            return _ok(rid, {"status": "ok", **rt.documents.list(token)})
+            return _ok(rid, {"status": "ok", **rt.documents.list(token, params.get("app"))})
+    except ValueError as exc:
+        return _degram_err(rid, 4400, "BAD_REQUEST", str(exc))
     except BridgeError as exc:
         return _outcome(rid, exc)
     finally:
