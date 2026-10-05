@@ -88,3 +88,42 @@ export function createProfilesCli(deps: ProfilesCliDeps): {
     }
   }
 }
+
+export interface ProfilesInterpreterInputs {
+  /** The bundled agent payload (packaged build), or null. */
+  payload: { storePython: string; repoDir: string; sitePackages: string } | null
+  /** The resolved Hermes backend launch (`resolveHermesBackend([])`), or null. */
+  backend: { command: string | null; args: string[]; env: NodeJS.ProcessEnv } | null
+  /** `path.delimiter` of the host. */
+  delimiter: string
+  /** The scrubbed desktop backend environment the payload python runs with. */
+  baseEnv: NodeJS.ProcessEnv
+}
+
+/**
+ * Which interpreter runs `python -m degram_variant.profiles`: the bundled payload's python with the payload
+ * code first on PYTHONPATH, or the python of a source checkout (a backend launched as `python -m ...`).
+ * A launcher shim (a console script, not an interpreter) cannot run `-m`, so it yields null rather than a
+ * command that would fail in a confusing way.
+ */
+export function resolveProfilesInvocation(
+  inputs: ProfilesInterpreterInputs
+): { command: string; env: NodeJS.ProcessEnv } | null {
+  if (inputs.payload) {
+    return {
+      command: inputs.payload.storePython,
+      env: {
+        ...inputs.baseEnv,
+        PYTHONPATH: [inputs.payload.repoDir, inputs.payload.sitePackages].join(inputs.delimiter)
+      }
+    }
+  }
+
+  const backend = inputs.backend
+
+  if (backend?.command && backend.args[0] === '-m') {
+    return { command: backend.command, env: backend.env }
+  }
+
+  return null
+}

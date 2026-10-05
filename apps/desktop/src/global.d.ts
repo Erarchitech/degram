@@ -3,6 +3,7 @@ import type { HermesSkin } from '@hermes/shared/skin'
 import type { TranslucencyState } from '@hermes/shared/translucency'
 
 import type { ScreenshotApi } from '../electron/command-screenshot-types'
+import type { DegramBridge } from '../electron/degram/ipc'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
 import type { HermesNotification } from '../electron/notification-types'
@@ -668,6 +669,8 @@ declare global {
       // renderer can still open the FindBar when the OS compositor has
       // already grabbed the chord (#81727, e.g. Pop!_OS / GNOME).
       onOpenFindBarRequested: (callback: () => void) => () => void
+      /** DeGram capability bridge (Phase 1301-12). Present on every build; only meaningful when `degramEnabled`. */
+      degram?: DegramBridge
     }
   }
 }

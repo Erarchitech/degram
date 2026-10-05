@@ -1,4 +1,4 @@
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
+import { type ChildProcess, execFile, execFileSync, spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -30,7 +30,8 @@ import {
   screen,
   session,
   shell,
-  systemPreferences
+  systemPreferences,
+  WebContentsView
 } from 'electron'
 import type { Session } from 'electron'
 
@@ -215,7 +216,9 @@ import {
 } from './dashboard-token'
 import { resolveDashboardWebDist } from './dashboard-web-dist'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
-import { degramBackendEnv } from './degram/dg-config'
+import { DEGRAM_DG_PARTITION, degramBackendEnv, resolveDgOrigin } from './degram/dg-config'
+import { createNetPartitionFetch } from './degram/dg-session'
+import { createGatewayRpc } from './degram/gateway-rpc'
 import {
   assertNoHermesOverlap,
   deepLinkProtocols,
@@ -227,6 +230,8 @@ import {
   resolveDegramPaths,
   updateMenuEntries
 } from './degram/isolation'
+import { createDegramMainWiring, type DegramMainWiring } from './degram/main-wiring'
+import { createProfilesCli, resolveProfilesInvocation } from './degram/profiles-cli'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
 import {
@@ -15197,6 +15202,117 @@ function closeQuickEntryWindow() {
   quickEntryWindow = null
 }
 
+// DeGram (Phase 1301-12): sign-in partition, embedded DG view, delegated-token lifecycle and project scope.
+// Built lazily on the first window and only for the DeGram identity; every other product never reaches it.
+let degramWiring: DegramMainWiring | null | undefined
+
+function ensureDegramWiring(): DegramMainWiring | null {
+  if (degramWiring !== undefined) {
+    return degramWiring
+  }
+
+  degramWiring = null
+
+  if (!PRODUCT_IDENTITY.degram || !DEGRAM_PATHS) {
+    return null
+  }
+
+  const degramHome: string = DEGRAM_PATHS.home
+  let origin: string
+
+  try {
+    origin = resolveDgOrigin({
+      env: process.env,
+      home: degramHome,
+      readFile: (file: string): string | null => {
+        try {
+          return fs.readFileSync(file, 'utf8')
+        } catch {
+          return null
+        }
+      }
+    }).origin
+  } catch (error) {
+    // Fail closed: an invalid DG origin must not fall back to another server.
+    rememberLog(`[degram] ${error instanceof Error ? error.message : 'invalid DG configuration'}`)
+
+    return null
+  }
+
+  const dgSession: Session = session.fromPartition(DEGRAM_DG_PARTITION)
+  const gatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never })
+
+  const profiles = createProfilesCli({
+    home: degramHome,
+    run: async (args: string[]) => {
+      const backend = await resolveHermesBackend([]).catch(() => null)
+
+      const invocation = resolveProfilesInvocation({
+        payload: bundledPayload(process.resourcesPath),
+        backend,
+        delimiter: path.delimiter,
+        baseEnv: buildDesktopBackendEnv()
+      })
+
+      if (!invocation) {
+        return {
+          code: null,
+          stdout: '',
+          stderr: JSON.stringify({ error: 'no Python interpreter for the profile CLI' })
+        }
+      }
+
+      return new Promise(resolve => {
+        execFile(
+          invocation.command,
+          args,
+          hiddenWindowsChildOptions({ env: invocation.env, encoding: 'utf8', timeout: 60_000, maxBuffer: 1_048_576 }),
+          (error, stdout, stderr) => {
+            const code: number | null = error ? (typeof error.code === 'number' ? error.code : 1) : 0
+
+            resolve({ code, stdout: String(stdout), stderr: String(stderr) })
+          }
+        )
+      })
+    }
+  })
+
+  degramWiring = createDegramMainWiring({
+    origin,
+    fetch: createNetPartitionFetch({ net: electronNet as never, session: dgSession as never }),
+    clock: {
+      now: (): number => Date.now(),
+      setInterval: (fn: () => void, ms: number): unknown => {
+        const handle = setInterval(fn, ms)
+
+        handle.unref?.()
+
+        return handle
+      },
+      clearInterval: (handle: any): void => clearInterval(handle)
+    },
+    logger: { info: rememberLog, warn: rememberLog, error: rememberLog },
+    createView: webPreferences => new WebContentsView({ webPreferences: { ...webPreferences } }) as never,
+    openExternal: (url: string): unknown => openExternalUrl(url),
+    profiles,
+    backend: {
+      ensure: async (profile: string) => {
+        await ensureBackend(profile)
+
+        return {
+          call: async (method: string, params: unknown): Promise<unknown> =>
+            gatewayRpc(await freshGatewayWsUrl(profile), method, params)
+        }
+      },
+      release: (profile: string): Promise<void> => teardownPoolBackendAndWait(profile)
+    },
+    ipcMain,
+    cookieSession: dgSession
+  })
+
+  return degramWiring
+}
+
 function createWindow() {
   const icon = getAppIconPath()
   const savedWindowState = readWindowState()
@@ -15234,6 +15350,7 @@ function createWindow() {
   const createdMainWindow = mainWindow
   minimizeToTray.registerWindow(createdMainWindow, { closeToTray: true })
   registerChatWindow(createdMainWindow)
+  ensureDegramWiring()?.attachWindow(createdMainWindow as never)
   const defaultRoute = desktopProfilePreferences.getDefault()
 
   if (defaultRoute) {

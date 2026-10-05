@@ -35,6 +35,7 @@ export type DegramEvent =
   | { type: 'access-revoked'; project: string; purged: boolean }
   | { type: 'external-link-blocked'; url: string }
   | { type: 'dg-unreachable' }
+  | { type: 'dg-reachable' }
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
 
@@ -79,7 +80,7 @@ export interface ScopeDeps {
   /** The embedded DG web view: state reset and partition storage wipe. */
   view: {
     reset: () => Promise<void> | void
-    clearStorage: () => Promise<void> | void
+    clearStorage: (options?: { keepCookies?: boolean }) => Promise<void> | void
   }
 }
 
@@ -87,6 +88,18 @@ export interface ScopeController {
   getState: () => ScopeState
   onState: (listener: (state: ScopeState) => void) => () => void
   selectProject: (project: string) => Promise<SelectResult>
+  /**
+   * End the DG session on purpose: POST /auth/logout through the partition, then clear the agent credential,
+   * close the scope, wipe the partition storage and blank the DG view. Local scope profiles are kept (their
+   * history stays hidden until a fresh sign-in confirms membership, D-19).
+   */
+  signOut: () => Promise<void>
+  /**
+   * False while a clearing sequence is running or a lost session has been observed but not yet cleared.
+   * A caller that mirrors state to the renderer must not publish while this is false, so no stale project
+   * data is repainted ahead of the clearing (T-1301-12-04).
+   */
+  isSettled: () => boolean
 }
 
 interface OpenScope {
@@ -108,7 +121,16 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   let epoch = 0
   let state: ScopeState = { ...IDLE, epoch: 0 }
   let current: OpenScope | null = null
+  /** A signed-in session has been observed since the last clearing. */
+  let live = false
+  let clearing = false
   const listeners = new Set<(next: ScopeState) => void>()
+
+  session.onAuth(auth => {
+    if (auth.kind === 'signed-in') {
+      live = true
+    }
+  })
 
   const setState = (next: Partial<ScopeState>): void => {
     state = { ...state, ...next }
@@ -139,6 +161,36 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       } catch {
         logger.warn('[degram] could not clear the agent credential of the previous scope')
       }
+    }
+  }
+
+  /**
+   * The shared clearing sequence: invalidate any in-flight selection, clear the agent credential, close the
+   * scope, then reset the DG view. Completes BEFORE the caller tells the renderer anything.
+   */
+  const teardown = async (view: { wipe: 'all' | 'tenant' | 'none' }): Promise<void> => {
+    clearing = true
+    epoch += 1
+
+    try {
+      await closeCurrent()
+      setState({ ...IDLE, epoch })
+
+      try {
+        await deps.view.reset()
+
+        if (view.wipe === 'all') {
+          await deps.view.clearStorage()
+        } else if (view.wipe === 'tenant') {
+          await deps.view.clearStorage({ keepCookies: true })
+        }
+      } catch {
+        logger.warn('[degram] could not fully reset the DG view')
+      }
+
+      live = false
+    } finally {
+      clearing = false
     }
   }
 
@@ -250,7 +302,14 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     return { ok: true, state }
   }
 
+  const signOut = async (): Promise<void> => {
+    await session.logout()
+    await teardown({ wipe: 'all' })
+  }
+
   return {
+    signOut,
+    isSettled: (): boolean => !clearing && !(live && session.state().kind === 'signed-out'),
     getState: (): ScopeState => state,
     onState: (listener): (() => void) => {
       listeners.add(listener)

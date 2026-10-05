@@ -24,6 +24,7 @@ const launchFlags: { degram?: boolean; localModels?: boolean; guestOnboarding?: 
 const localSkin = ipcRenderer.sendSync('hermes:skin:local')
 
 import { unwrapExpectedNotFound } from './api-expected-404'
+import { DEGRAM_CHANNELS } from './degram/channels'
 
 contextBridge.exposeInMainWorld('hermesDesktop', {
   glassSupported: translucencySupport?.glass === true,
@@ -703,5 +704,29 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     ipcRenderer.on('hermes:open-find-bar', listener)
 
     return () => ipcRenderer.removeListener('hermes:open-find-bar', listener)
+  },
+  // DeGram (Phase 1301-12): the narrow capability bridge to DG sign-in, the embedded DG page and the
+  // project scope. Typed in src/global.d.ts. There is deliberately NO getter for any credential: the
+  // delegated token lives in main and the agent process only.
+  degram: {
+    getState: () => ipcRenderer.invoke(DEGRAM_CHANNELS.getState),
+    onState: callback => {
+      const listener = (_event, state) => callback(state)
+      ipcRenderer.on(DEGRAM_CHANNELS.stateChanged, listener)
+
+      return () => ipcRenderer.removeListener(DEGRAM_CHANNELS.stateChanged, listener)
+    },
+    onEvent: callback => {
+      const listener = (_event, event) => callback(event)
+      ipcRenderer.on(DEGRAM_CHANNELS.event, listener)
+
+      return () => ipcRenderer.removeListener(DEGRAM_CHANNELS.event, listener)
+    },
+    selectProject: project => ipcRenderer.invoke(DEGRAM_CHANNELS.selectProject, project),
+    signOut: () => ipcRenderer.invoke(DEGRAM_CHANNELS.signOut),
+    setDgMode: mode => ipcRenderer.invoke(DEGRAM_CHANNELS.setDgMode, mode),
+    reloadDg: () => ipcRenderer.invoke(DEGRAM_CHANNELS.reloadDg),
+    setDgBounds: bounds => ipcRenderer.invoke(DEGRAM_CHANNELS.setDgBounds, bounds),
+    openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url)
   }
 })

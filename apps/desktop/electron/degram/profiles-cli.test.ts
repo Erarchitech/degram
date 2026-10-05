@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createProfilesCli, ProfilesCliError } from './profiles-cli'
+import { createProfilesCli, ProfilesCliError, resolveProfilesInvocation } from './profiles-cli'
 
 const HOME = 'C:\\Users\\u\\AppData\\Local\\DeGram\\home'
 
@@ -74,5 +74,45 @@ describe('createProfilesCli', () => {
     await expect(
       createProfilesCli({ run, home: HOME }).ensure({ user: 'a', company: null, project: 'p' })
     ).rejects.toThrow(/no profile name/)
+  })
+})
+
+describe('resolveProfilesInvocation', () => {
+  const baseEnv = { PATH: 'p' }
+
+  it('prefers the bundled payload python with the payload code first on PYTHONPATH', () => {
+    const out = resolveProfilesInvocation({
+      payload: { storePython: '/app/python', repoDir: '/app/repo', sitePackages: '/app/site' },
+      backend: { command: '/other/python', args: ['-m', 'hermes_cli.main'], env: {} },
+      delimiter: ';',
+      baseEnv
+    })
+
+    expect(out).toEqual({ command: '/app/python', env: { PATH: 'p', PYTHONPATH: '/app/repo;/app/site' } })
+  })
+
+  it('uses the interpreter of a source checkout backend', () => {
+    const env = { PYTHONPATH: '/src' }
+
+    expect(
+      resolveProfilesInvocation({
+        payload: null,
+        backend: { command: '/src/.venv/python', args: ['-m', 'hermes_cli.main'], env },
+        delimiter: ';',
+        baseEnv
+      })
+    ).toEqual({ command: '/src/.venv/python', env })
+  })
+
+  it('refuses a launcher shim, which cannot run python -m', () => {
+    expect(
+      resolveProfilesInvocation({
+        payload: null,
+        backend: { command: '/bin/hermes', args: ['serve'], env: {} },
+        delimiter: ';',
+        baseEnv
+      })
+    ).toBeNull()
+    expect(resolveProfilesInvocation({ payload: null, backend: null, delimiter: ';', baseEnv })).toBeNull()
   })
 })
