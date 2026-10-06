@@ -586,6 +586,12 @@ def expose_cli(project_root: Path | None = None, *, create: bool = True) -> dict
     Before dependency sync succeeds, create=False maintains only commands we
     already own, without loading application config or enabling new exposure.
     """
+    # Variant degram owns no user-facing command: the Windows branch below runs before the
+    # bundled-payload skip and would put a DeGram `hermes` first in the user PATH (Phase 1301 F-07).
+    from degram_variant.lockdown import is_degram
+
+    if is_degram():
+        return {"ok": True, "skipped": "degram-owns-no-command"}
     # Resolved before the platform branch: the Windows path needs it too.
     from pm.paths import install_root
 
