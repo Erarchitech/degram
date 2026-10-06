@@ -65,6 +65,17 @@ test('degram builder config: identity, protocol and no release feed', () => {
   assert.equal(config.extraMetadata.desktopName, 'com.erarchitech.degram')
 })
 
+// electron-builder derives the exe CompanyName, the default LegalCopyright and the NSIS
+// uninstall Publisher from package `author`, merged with extraMetadata. DeGram is not a
+// Nous Research product; the stock variants keep the upstream vendor.
+test('degram exe vendor is Erarchitech, not Nous Research', () => {
+  assert.equal(loadConfig('degram').extraMetadata.author, 'Erarchitech')
+
+  for (const variant of [undefined, 'bundled', 'light', 'store']) {
+    assert.equal(loadConfig(variant).extraMetadata.author, undefined, `variant ${variant ?? '(default)'}`)
+  }
+})
+
 test('degram builds an unsigned NSIS target with the bundled Python payload (D-04)', () => {
   const config = loadConfig('degram')
   assert.deepEqual(config.win.target, ['nsis'])

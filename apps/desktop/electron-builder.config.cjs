@@ -114,6 +114,9 @@ module.exports = {
     // shipped stable default, but isolate nonstable userData from first access.
     // A stable-branded channel has no token and keeps stable's userData.
     ...((channelRequest && token) || appNamePascal !== artifactNamePascal ? { productName: displayName } : {}),
+    // The exe CompanyName, default LegalCopyright and NSIS uninstall Publisher
+    // derive from `author`; DeGram is not shipped by the upstream vendor.
+    ...(degram ? { author: 'Erarchitech' } : {}),
     desktopName: appId
   },
   directories: {
