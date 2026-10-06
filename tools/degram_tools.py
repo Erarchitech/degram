@@ -107,15 +107,25 @@ def _project_graph(args: dict, **_kw) -> str:
         except DegramCredentialsError as exc:
             raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
         dg = runtime.get().dg
-        graph = dg.get_graph()
         missing: list[dict[str, Any]] = []
+        # Gap G-1: rules and graph are read independently. A graph that is unavailable or too large no longer hides
+        # the rules; each failed read is disclosed in ``missing``. A refused graph read (ACCESS_DENIED) still ends
+        # the call, and so does a failure of both reads.
         try:
             rules = dg.get_rules()
+            rules_error: BridgeError | None = None
         except BridgeError as exc:
             if exc.code not in (DG_UNAVAILABLE, ACCESS_DENIED):
                 raise
-            rules = []
-            missing.append({"what": "rules", "reason": exc.code})
+            rules, rules_error = [], exc
+            missing.append({"what": "rules", "reason": exc.code, "detail": exc.reason or exc.code})
+        try:
+            graph = dg.get_graph()
+        except BridgeError as exc:
+            if exc.code != DG_UNAVAILABLE or rules_error is not None:
+                raise
+            graph = {"nodes": [], "rels": []}
+            missing.append({"what": "graph", "reason": exc.code, "detail": exc.reason or exc.code})
         result = bounded_graph(graph, rules, info.project, SNAPSHOT_LIMITS["max_bytes"])
         if missing:
             result["missing"] = missing

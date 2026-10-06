@@ -25,7 +25,7 @@ class DgClient:
     def __init__(self, store: DegramCredentials | None = None) -> None:
         self._store = store or _credentials
 
-    def _get(self, route: str, cancel: CancelToken | None) -> Any:
+    def _get(self, route: str, cancel: CancelToken | None, query: str = "") -> Any:
         if route not in READ_ROUTES:
             raise BridgeError(DG_UNAVAILABLE, "ROUTE_NOT_ALLOWED", f"DG route {route!r} is not readable by DeGram.")
         check(cancel)
@@ -34,7 +34,7 @@ class DgClient:
             token = self._store.api_key_provider()
         except DegramCredentialsError as exc:
             raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
-        url = f"{info.relay_base_url}/{route}/{quote(info.project, safe='')}"
+        url = f"{info.relay_base_url}/{route}/{quote(info.project, safe='')}{query}"
         try:
             with httpx.Client(timeout=TIMEOUT, follow_redirects=False) as client:
                 with client.stream("GET", url, headers={"Authorization": f"Bearer {token}",
@@ -70,7 +70,9 @@ class DgClient:
         return [{"ruleId": str(r.get("ruleId", "")), "text": str(r.get("text", ""))} for r in rules if isinstance(r, dict)]
 
     def get_graph(self, cancel: CancelToken | None = None) -> dict[str, Any]:
-        data = self._get("graph", cancel)
+        # Gap G-1: the compact read caps each property value server-side and sorts validation records last, so a
+        # project with validation history fits MAX_RESPONSE_BYTES and keeps its ontology and rules in the node cap.
+        data = self._get("graph", cancel, "?compact=true")
         if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
             raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG graph answer has no node list.")
         return {"nodes": data["nodes"], "rels": data.get("rels") if isinstance(data.get("rels"), list) else []}

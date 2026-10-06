@@ -280,7 +280,7 @@ class TestDegramToolset:
         out = self._call("degram_project_graph")
         assert out["status"] == "ok" and out["project"] == PROJECT
         assert out["graph"]["nodes"][0]["id"] == "n1" and out["rules"][0]["ruleId"] == "R_URB_HEIGHT_MAX_75_V"
-        assert sorted(dg.paths()) == [f"/data-service/graph/{PROJECT}", f"/data-service/rules/{PROJECT}"]
+        assert sorted(dg.paths()) == [f"/data-service/graph/{PROJECT}?compact=true", f"/data-service/rules/{PROJECT}"]
         assert all(r["headers"]["Authorization"] == f"Bearer {TOKEN}" for r in dg.requests)
 
     def test_project_graph_takes_no_project_argument(self, rt):
@@ -302,4 +302,31 @@ class TestDegramToolset:
         out = self._call("degram_project_graph")
         assert out["status"] == "error" and out["code"] == "ACCESS_DENIED"
         dg.routes[f"/data-service/graph/{PROJECT}"] = (500, {"detail": "boom"})
+        dg.routes[f"/data-service/rules/{PROJECT}"] = (500, {"detail": "boom"})
         assert self._call("degram_project_graph")["code"] == "DG_UNAVAILABLE"
+
+    def test_rules_are_returned_when_the_graph_is_unavailable(self, rt, dg):
+        # Gap G-1: the rules are read on their own; a failed graph read is disclosed, not fatal.
+        dg.routes[f"/data-service/graph/{PROJECT}"] = (500, {"detail": "boom"})
+        out = self._call("degram_project_graph")
+        assert out["status"] == "ok" and out["rules"][0]["ruleId"] == "R_URB_HEIGHT_MAX_75_V"
+        assert out["graph"] == {"nodes": [], "rels": []}
+        assert {"what": "graph", "reason": "DG_UNAVAILABLE", "detail": "HTTP_500"} in out["missing"]
+
+    def test_rules_are_returned_when_the_graph_answer_is_too_large(self, rt, dg, monkeypatch):
+        from degram_variant import dg_client
+        from .conftest import RULES
+        cap = len(json.dumps(RULES).encode()) + 256  # the rules answer fits, the graph answer does not
+        monkeypatch.setattr(dg_client, "MAX_RESPONSE_BYTES", cap)
+        big = {"nodes": [{"id": f"n{i}", "labels": ["ValidationEntity"], "props": {}} for i in range(500)], "rels": []}
+        dg.routes[f"/data-service/graph/{PROJECT}"] = (200, big)
+        out = self._call("degram_project_graph")
+        assert out["status"] == "ok" and out["rules"] and out["graph"]["nodes"] == []
+        assert {"what": "graph", "reason": "DG_UNAVAILABLE", "detail": "RESPONSE_TOO_LARGE"} in out["missing"]
+
+    def test_rules_failure_alone_keeps_the_graph_and_discloses_it(self, rt, dg):
+        dg.routes[f"/data-service/rules/{PROJECT}"] = (500, {"detail": "boom"})
+        out = self._call("degram_project_graph")
+        assert out["status"] == "ok" and out["graph"]["nodes"][0]["id"] == "n1" and out["rules"] == []
+        assert {"what": "rules", "reason": "DG_UNAVAILABLE", "detail": "HTTP_500"} in out["missing"]
+

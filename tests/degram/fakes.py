@@ -138,7 +138,8 @@ class FakeGh:
 
 
 class FakeDg:
-    """A loopback DG backend. ``routes`` maps an exact path to ``(status, body)``; records every request."""
+    """A loopback DG backend. ``routes`` maps a path (query string ignored) to ``(status, body)``; records every
+    request with its full path, query included."""
 
     def __init__(self, routes: dict[str, tuple[int, Any]] | None = None):
         self.routes: dict[str, tuple[int, Any]] = dict(routes or {})
@@ -151,7 +152,7 @@ class FakeDg:
 
             def do_GET(self):
                 dg.requests.append({"method": "GET", "path": self.path, "headers": dict(self.headers)})
-                status, body = dg.routes.get(self.path, (404, {"detail": {"code": "NOT_FOUND"}}))
+                status, body = dg.routes.get(self.path.split("?", 1)[0], (404, {"detail": {"code": "NOT_FOUND"}}))
                 payload = json.dumps(body).encode()
                 self.send_response(status)
                 self.send_header("content-type", "application/json")
