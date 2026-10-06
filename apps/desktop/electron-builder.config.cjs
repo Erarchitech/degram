@@ -115,10 +115,13 @@ module.exports = {
     // A stable-branded channel has no token and keeps stable's userData.
     ...((channelRequest && token) || appNamePascal !== artifactNamePascal ? { productName: displayName } : {}),
     // The exe CompanyName, default LegalCopyright and NSIS uninstall Publisher
-    // derive from `author`; DeGram is not shipped by the upstream vendor.
-    // DeGram's own pilot version (F-05): bump the patch for every installer
-    // build and never reuse a number; the shared package.json stays 0.0.0.
-    ...(degram ? { author: 'Erarchitech', version: '0.1.0' } : {}),
+    // derive from `author.name` (an object: this override merges after
+    // package.json's string author was normalized); DeGram is not shipped by
+    // the upstream vendor. DeGram's own pilot version (F-05): bump the patch
+    // for every installer build and never reuse a number; the shared
+    // package.json stays 0.0.0 and scripts/bundles/desktop.py passes no
+    // version override for degram.
+    ...(degram ? { author: { name: 'Erarchitech' }, version: '0.1.0' } : {}),
     desktopName: appId
   },
   directories: {

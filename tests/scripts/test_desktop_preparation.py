@@ -317,3 +317,45 @@ def test_degram_is_selectable_on_the_bundle_cli_and_other_variants_are_untouched
                             work=tmp_path / "work", cache=tmp_path / "cache", bundle_env={})
 
     assert "degram" in desktop.VARIANTS
+
+
+def test_degram_packages_its_committed_icons_over_the_flavored_render(tmp_path):
+    """F-04: a commit build renders upstream's red commit-badge art into products/icons and stages it over
+    apps/desktop/assets while packaging, so DeGram shipped the Nous icon. Variant degram lays its committed
+    files over that render; render-only outputs (web, MSIX tiles) stay as rendered."""
+    import importlib.util
+    from scripts.bundles.desktop import DEGRAM_ICON_FILES, ROOT, degram_icon_overlay
+
+    spec = importlib.util.spec_from_file_location("gdi", ROOT / "apps/desktop/scripts/generate_degram_icons.py")
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    desktop_root = ROOT / "apps/desktop"
+    assert sorted(DEGRAM_ICON_FILES) == sorted(
+        f"apps/desktop/{path.relative_to(desktop_root).as_posix()}" for path in generator.outputs())
+
+    repo, icons = tmp_path / "repo", tmp_path / "products/icons"
+    for rel in DEGRAM_ICON_FILES:
+        for root, data in ((repo, b"degram " + rel.encode()), (icons, b"commit badge")):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(data)
+    (icons / "apps/desktop/assets/appx").mkdir(parents=True)
+    (icons / "apps/desktop/assets/appx/Square44x44Logo.png").write_bytes(b"rendered tile")
+    (icons / "web/favicon.ico").parent.mkdir(parents=True)
+    (icons / "web/favicon.ico").write_bytes(b"rendered web")
+
+    degram_icon_overlay(repo, icons)
+
+    for rel in DEGRAM_ICON_FILES:
+        assert (icons / rel).read_bytes() == b"degram " + rel.encode()
+    assert (icons / "apps/desktop/assets/appx/Square44x44Logo.png").read_bytes() == b"rendered tile"
+    assert (icons / "web/favicon.ico").read_bytes() == b"rendered web"
+
+
+def test_degram_keeps_its_configured_version(tmp_path):
+    """F-05: the driver's -c.extraMetadata.version override (the target pyproject version, 0.0.0 for a commit
+    build) beat the degram config's own pilot version; variant degram passes no override."""
+    from scripts.bundles.desktop import package_version_args
+
+    assert package_version_args("degram", "0.0.0") == []
+    for variant in ("bundled", "store", "light"):
+        assert package_version_args(variant, "1.2.3") == ["-c.extraMetadata.version=1.2.3"]

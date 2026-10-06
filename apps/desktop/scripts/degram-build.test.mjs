@@ -67,9 +67,11 @@ test('degram builder config: identity, protocol and no release feed', () => {
 
 // electron-builder derives the exe CompanyName, the default LegalCopyright and the NSIS
 // uninstall Publisher from package `author`, merged with extraMetadata. DeGram is not a
-// Nous Research product; the stock variants keep the upstream vendor.
+// Nous Research product; the stock variants keep the upstream vendor. AppInfo reads `author.name`:
+// package.json's string author is normalized to an object on read, but an extraMetadata override is
+// merged after that, so a plain string would leave companyName empty (seen in the 0.0.0 rebuild).
 test('degram exe vendor is Erarchitech, not Nous Research', () => {
-  assert.equal(loadConfig('degram').extraMetadata.author, 'Erarchitech')
+  assert.deepEqual(loadConfig('degram').extraMetadata.author, { name: 'Erarchitech' })
 
   for (const variant of [undefined, 'bundled', 'light', 'store']) {
     assert.equal(loadConfig(variant).extraMetadata.author, undefined, `variant ${variant ?? '(default)'}`)

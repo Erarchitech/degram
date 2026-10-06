@@ -25,6 +25,33 @@ def package_targets(platform: str, variant: str) -> list[str]:
     return {"win32": win, "darwin": ["--mac", "dmg", "zip"], "linux": ["--linux", "AppImage"]}[platform]
 
 
+# DeGram's committed artwork (Phase 1301 F-04), the outputs of
+# apps/desktop/scripts/generate_degram_icons.py. A commit build renders the
+# upstream red commit-badge art into products/icons and stages it over the
+# workspace while packaging; degram lays these committed files over that render.
+DEGRAM_ICON_FILES = (
+    "apps/desktop/assets/icon.png", "apps/desktop/assets/icon-dark.png",
+    "apps/desktop/assets/icon.ico", "apps/desktop/assets/icon-dark.ico",
+    "apps/desktop/assets/icon-mac.png",
+    "apps/desktop/assets/icon.icns", "apps/desktop/assets/icon-dark.icns",
+    "apps/desktop/public/apple-touch-icon.png",
+    "apps/desktop/public/nous-girl.png", "apps/desktop/public/nous-girl-dark.png",
+)
+
+
+def degram_icon_overlay(repo: Path, icons: Path) -> None:
+    """Replace the rendered desktop artwork with DeGram's committed files."""
+    for relative in DEGRAM_ICON_FILES:
+        target = icons / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(repo / relative, target)
+
+
+def package_version_args(variant: str, version: str) -> list[str]:
+    """DeGram keeps the pilot version its builder config sets (F-05); others take the request's."""
+    return [] if variant == "degram" else [f"-c.extraMetadata.version={version}"]
+
+
 def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     print("bundle: " + subprocess.list2cmdline(argv), flush=True)
     subprocess.run(argv, cwd=cwd, env=env, check=True)
@@ -108,7 +135,7 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
     desktop = repo / "apps/desktop"
     targets = package_targets(sys.platform, variant)
     package_args = ["--prepared", str(prepared.packager), "--native-deps", str(prepared.native),
-                    *targets, f"-c.extraMetadata.version={request.version}"]
+                    *targets, *package_version_args(variant, request.version)]
     run([node, "scripts/run-electron-builder.mjs", "--validate-only", *package_args, *builder_args],
         cwd=desktop, env=env)
     run([node, "scripts/build/node-deps.mjs", "--source", str(repo), "--reuse", "--no-install",
@@ -118,6 +145,8 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
     icons = products / "icons"
     run([str(prepared.icon_python), "-I", str(repo / "scripts/generate_icons.py"),
          "--source", str(repo), "--out", str(icons)], cwd=repo, env=env)
+    if variant == "degram":
+        degram_icon_overlay(repo, icons)
     if variant != "light":
         run([node, "scripts/build/tui.mjs", "--source", str(repo), "--out", str(products / "tui")], cwd=repo, env=env)
         run([node, "scripts/build/web.mjs", "--source", str(repo), "--icons", str(products / "icons"),
