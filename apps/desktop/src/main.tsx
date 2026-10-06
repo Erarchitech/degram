@@ -26,6 +26,7 @@ import App from './app'
 import { RootErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { RootTooltipProvider } from './components/ui/tooltip'
+import { applyProductWindowTitle } from './degram/window-title'
 import { ProfileI18nProvider as I18nProvider } from './i18n/profile-provider'
 import { installClipboardShim } from './lib/clipboard'
 import { queryClient } from './lib/query-client'
@@ -49,9 +50,7 @@ if (import.meta.env.MODE !== 'production' || import.meta.env.VITE_PERF_PROBE ===
 
 const winParam = new URLSearchParams(window.location.search).get('win')
 
-if (winParam === 'hud') {
-  document.title = 'Hermes HUD'
-}
+applyProductWindowTitle(document, window.hermesDesktop?.degramEnabled === true, winParam)
 
 // The `?win=` kinds whose Electron window is `transparent: true` and so paints
 // nothing but its own surface over the user's desktop. `secondary` (a session
