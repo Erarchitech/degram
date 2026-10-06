@@ -4,7 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDgSession, DEGRAM_HEARTBEAT_S, DEGRAM_TOKEN_RENEW_S } from './dg-session'
 import { type BackendHandle, createScopeController, type DegramEvent, type ScopeKey } from './scope'
-import { createFakeClock, createFakeDg, createLog, TOKEN_A, TOKEN_B } from './test-support'
+import {
+  createFakeClock,
+  createFakeDg,
+  createFakePairing,
+  createLog,
+  PAIRING_TOKEN,
+  TOKEN_A,
+  TOKEN_B
+} from './test-support'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -38,7 +46,10 @@ function profileFor(scope: ScopeKey): string {
   return `scope-${scope.user}-${scope.company ?? 'none'}-${scope.project}`
 }
 
-function rig(memberships: { project: string; company?: string | null; role?: string }[] = [{ project: 'alpha' }]): Rig {
+function rig(
+  memberships: { project: string; company?: string | null; role?: string }[] = [{ project: 'alpha' }],
+  pairing?: ReturnType<typeof createFakePairing>
+): Rig {
   const dg = createFakeDg()
   const clock = createFakeClock()
   const log = createLog()
@@ -72,7 +83,7 @@ function rig(memberships: { project: string; company?: string | null; role?: str
     }
   })
 
-  const session = createDgSession({ origin: dg.origin, fetch: dg.fetch, clock, logger })
+  const session = createDgSession({ origin: dg.origin, fetch: dg.fetch, clock, logger, pairing })
 
   const out = {
     dg,
@@ -784,5 +795,107 @@ describe('dispose', () => {
     r.scope.dispose()
 
     expect(r.clock.activeIntervals()).toBe(0)
+  })
+})
+
+describe('DeGram pairing as the credential source (Phase 1301-17, D-25, D-27)', () => {
+  const exchanges = (r: Rig): number => r.dg.requests.filter(q => q.url.endsWith('/auth/degram/exchange')).length
+
+  it('a stored pairing mints through the exchange and the agent gets the same credential shape', async () => {
+    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result.ok).toBe(true)
+    expect(r.dg.exchangeCount()).toBe(1)
+    expect(r.dg.mintCount()).toBe(0)
+    expect(r.rpcCalls[0]).toMatchObject({
+      method: 'degram.credentials.set',
+      params: { user: 'alice', company: 'ACME', project: 'alpha' }
+    })
+    expect(String(r.rpcCalls[0]!.params.token)).toMatch(/^dgd_PAIRED-/)
+  })
+
+  it('renewal keeps using the pairing every 600 s', async () => {
+    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
+
+    await openAlpha(r)
+    await r.clock.advance(RENEW_MS)
+
+    expect(exchanges(r)).toBe(1)
+    expect(r.dg.mintCount()).toBe(0)
+  })
+
+  it('a revoked pairing at selection reports PAIRING_REVOKED, purges nothing and keeps the DG sign-in', async () => {
+    const pairing = createFakePairing(PAIRING_TOKEN)
+    const r = rig(undefined, pairing)
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'PAIRING_REVOKED' })
+    expect(r.events).toEqual([{ type: 'pairing-revoked' }])
+    expect(r.purged).toEqual([])
+    expect(r.session.state().kind).toBe('signed-in')
+    expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set')).toEqual([])
+    expect(pairing.get()).toBeNull()
+  })
+
+  it('a pairing revoked while the scope is open closes the scope on the next renewal, without a purge or sign-out', async () => {
+    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
+
+    await openAlpha(r)
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    await r.clock.advance(RENEW_MS)
+
+    expect(r.log.entries).toContain(CLEAR_ALPHA)
+    expect(r.scope.getState()).toMatchObject({ status: 'no-project', project: null })
+    expect(r.events).toEqual([{ type: 'pairing-revoked' }])
+    expect(r.purged).toEqual([])
+    expect(r.storageClears).toBe(0)
+    expect(r.session.state().kind).toBe('signed-in')
+  })
+
+  it('DELEGATED_SESSION_ENDED from a pairing credential checks the pairing instead of signing the user out', async () => {
+    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
+
+    await openAlpha(r)
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+
+    expect(await r.scope.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
+    expect(r.events).toEqual([{ type: 'pairing-revoked' }])
+    expect(r.scope.getState().status).toBe('no-project')
+    expect(r.session.state().kind).toBe('signed-in')
+  })
+
+  it('DELEGATED_SESSION_ENDED from a pairing credential that is still live re-mints and keeps the scope', async () => {
+    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
+
+    await openAlpha(r)
+
+    expect(await r.scope.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
+    expect(r.events).toEqual([])
+    expect(r.scope.getState().status).toBe('ready')
+    expect(r.rpcCalls.map(c => c.method)).toEqual(['degram.credentials.set'])
+  })
+
+  it('a pairing of another DG user never reaches the agent', async () => {
+    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
+    r.dg.setExchange(request => ({
+      status: 201,
+      body: {
+        token: 'dgd_BOB',
+        project: JSON.parse(request.body ?? '{}').project,
+        company: 'ACME',
+        expiresAt: '2030-01-01T00:15:00Z',
+        expiresInSeconds: 900,
+        username: 'bob'
+      }
+    }))
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'MINT_FAILED' })
+    expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set')).toEqual([])
   })
 })

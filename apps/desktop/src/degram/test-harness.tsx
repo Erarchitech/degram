@@ -35,7 +35,8 @@ export function makeState(
       ]
     },
     scope: over.scope ?? { ...noScope },
-    dg: over.dg ?? { mode: 'graph', page: 'dg', reachable: true }
+    dg: over.dg ?? { mode: 'graph', page: 'dg', reachable: true },
+    pairing: over.pairing ?? { status: 'none', company: null, available: true }
   }
 }
 
@@ -72,7 +73,9 @@ export function install(initial: DegramState): Harness {
     reloadDg: vi.fn(async () => undefined),
     setDgBounds: vi.fn(async () => undefined),
     reportOutcome: vi.fn(async () => true),
-    openExternalConfirmed: vi.fn(async () => true)
+    openExternalConfirmed: vi.fn(async () => true),
+    setPairing: vi.fn(async () => ({ ok: true }) as never),
+    clearPairing: vi.fn(async () => undefined)
   }
 
   ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = { degram: bridge, degramEnabled: true }

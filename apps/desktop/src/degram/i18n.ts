@@ -146,6 +146,22 @@ export interface DegramCopy {
     searchProjects: string
     isolationTitle: string
   }
+  /** The "Connection to DG" panel: the DeGram pairing token from the DG Connectors tab (Phase 1301-17). */
+  pairing: {
+    title: string
+    body: string
+    fieldLabel: string
+    connect: string
+    disconnect: string
+    stored: string
+    connected: (user: string, company: string | null) => string
+    revoked: string
+    mismatch: (user: string) => string
+    invalid: string
+    unavailable: string
+    failed: string
+    disconnectHint: string
+  }
 }
 
 export const degramEn: DegramCopy = {
@@ -289,6 +305,23 @@ export const degramEn: DegramCopy = {
     document: 'Document',
     searchProjects: 'Search projects',
     isolationTitle: 'Runtime isolation'
+  },
+  pairing: {
+    title: 'Connection to DG',
+    body: 'Paste the pairing token you created on the DG Connectors tab (DeGram card). DeGram keeps it encrypted on this computer and uses it to act as you on the project you choose.',
+    fieldLabel: 'Pairing token',
+    connect: 'Connect',
+    disconnect: 'Disconnect',
+    stored: 'Paired. The token is used when you open a project.',
+    connected: (user, company) => `Connected as ${user}${company ? ` · ${company}` : ''}.`,
+    revoked: 'This pairing was revoked in DG. Create a new pairing on the Connectors tab and paste it here.',
+    mismatch: user => `This pairing belongs to another DG user than ${user}. Paste a pairing you created yourself.`,
+    invalid: "That isn't a DeGram pairing token. Copy it again from the DG Connectors tab; it starts with dgp_.",
+    unavailable:
+      "This computer can't encrypt the pairing token, so DeGram can't keep it. Signing in with DG keeps working.",
+    failed: "The pairing couldn't be saved. Retry; if it keeps failing, restart DeGram.",
+    disconnectHint:
+      'Disconnecting forgets the token on this computer. To end it everywhere, revoke it on the DG Connectors tab.'
   }
 }
 
@@ -433,5 +466,23 @@ export const degramRu: DegramCopy = {
     document: 'Документ',
     searchProjects: 'Поиск проектов',
     isolationTitle: 'Изоляция среды выполнения'
+  },
+  pairing: {
+    title: 'Подключение к DG',
+    body: 'Вставьте токен сопряжения, созданный во вкладке Connectors в DG (карточка DeGram). DeGram хранит его зашифрованным на этом компьютере и действует от вашего имени в выбранном проекте.',
+    fieldLabel: 'Токен сопряжения',
+    connect: 'Подключить',
+    disconnect: 'Отключить',
+    stored: 'Сопряжение сохранено. Токен используется при открытии проекта.',
+    connected: (user, company) => `Подключено: ${user}${company ? ` · ${company}` : ''}.`,
+    revoked: 'Сопряжение отозвано в DG. Создайте новое во вкладке Connectors и вставьте его сюда.',
+    mismatch: user =>
+      `Это сопряжение принадлежит другому пользователю DG, а не ${user}. Вставьте сопряжение, созданное вами.`,
+    invalid: 'Это не токен сопряжения DeGram. Скопируйте его снова во вкладке Connectors в DG; он начинается с dgp_.',
+    unavailable:
+      'Этот компьютер не может зашифровать токен сопряжения, поэтому DeGram не может его хранить. Вход через DG продолжает работать.',
+    failed: 'Не удалось сохранить сопряжение. Повторите; если ошибка повторяется, перезапустите DeGram.',
+    disconnectHint:
+      'Отключение удаляет токен с этого компьютера. Чтобы погасить его везде, отзовите его во вкладке Connectors в DG.'
   }
 }

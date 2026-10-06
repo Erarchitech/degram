@@ -7,9 +7,16 @@
 //   GET  /data-service/auth/me              signed-in detection, memberships, heartbeat
 //   POST /data-service/auth/delegated-token mint the 15-minute agent token (cookie + X-DG-CSRF: 1)
 //   POST /data-service/auth/logout          end the DG session
+//   POST /data-service/auth/degram/exchange trade the stored pairing token for the same agent token
+//
+// Phase 1301-17 (D-25, D-27): when a DeGram pairing token is stored (pairing-store.ts), `mint` exchanges
+// it with `Authorization: Bearer dgp_...` instead of the cookie mint; the DG sign-in itself stays (D-27).
+// A revoked pairing clears the store and reports `pairing-revoked`, never a silent cookie fallback, and a
+// pairing of another user than the signed-in one is refused.
 //
 // The delegated token returned by a mint is handed to the caller and never stored here, logged, or put
-// in the state object. Everything outside this file is injected so the suite runs without Electron.
+// in the state object. Nor is the pairing token. Everything outside this file is injected so the suite
+// runs without Electron.
 
 import { DEGRAM_DG_PARTITION } from './dg-config'
 
@@ -67,17 +74,42 @@ export type MeResult =
   | { kind: 'signed-out'; status: number }
   | { kind: 'unreachable' }
 
+export type MintSource = 'session' | 'pairing'
+
 export type MintResult =
-  | { kind: 'ok'; token: string; expiresAt: string; project: string; company: string | null }
+  | { kind: 'ok'; token: string; expiresAt: string; project: string; company: string | null; source: MintSource }
   | { kind: 'signed-out'; status: number }
+  | { kind: 'pairing-revoked' }
   | { kind: 'forbidden'; status: number; code: string | null }
   | { kind: 'unreachable' }
   | { kind: 'error'; status: number; code: string | null }
+
+/**
+ * `none`: no pairing stored. `stored`: stored, not exchanged yet. `connected`: the last exchange succeeded.
+ * `revoked`: DG refused the pairing (the store was cleared). `mismatch`: it belongs to another DG user.
+ */
+export type PairingStatus = 'none' | 'stored' | 'connected' | 'revoked' | 'mismatch'
+
+export interface PairingView {
+  status: PairingStatus
+  /** The company of the last successful exchange. */
+  company: string | null
+}
+
+/** The part of pairing-store.ts the session reads. */
+export interface PairingSource {
+  get: () => string | null
+  clear: () => void
+}
 
 export interface DgSession {
   state: () => AuthState
   refresh: () => Promise<MeResult>
   mint: (project: string) => Promise<MintResult>
+  pairing: () => PairingView
+  /** Re-read whether a pairing is stored (after the runtime set or cleared it). */
+  notePairingChanged: () => void
+  onPairing: (listener: (view: PairingView) => void) => () => void
   logout: () => Promise<void>
   /** Forget the sign-in locally (a 401 was observed, or logout ran). */
   markSignedOut: () => void
@@ -89,6 +121,8 @@ export interface DgSessionDeps {
   fetch: PartitionFetch
   clock: Clock
   logger: Logger
+  /** The stored DeGram pairing (Phase 1301-17). Absent: the cookie mint only. */
+  pairing?: PairingSource
 }
 
 function parseJson(text: string): unknown {
@@ -143,6 +177,20 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
   let state: AuthState = { kind: 'unknown', username: null, isAdmin: false, memberships: [] }
   const listeners = new Set<(next: AuthState) => void>()
   let inFlight: Promise<MeResult> | null = null
+  const pairingListeners = new Set<(view: PairingView) => void>()
+  let pairingView: PairingView = { status: deps.pairing?.get() ? 'stored' : 'none', company: null }
+
+  const setPairing = (next: PairingView): void => {
+    if (next.status === pairingView.status && next.company === pairingView.company) {
+      return
+    }
+
+    pairingView = next
+
+    for (const listener of [...pairingListeners]) {
+      listener(pairingView)
+    }
+  }
 
   const setState = (next: AuthState): void => {
     state = next
@@ -212,7 +260,101 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
     return inFlight
   }
 
+  /** Parse a 201 delegated-token answer; null when it is unusable. */
+  const parseMinted = (
+    body: unknown,
+    project: string,
+    source: MintSource
+  ): Extract<MintResult, { kind: 'ok' }> | null => {
+    const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : null
+
+    if (
+      !record ||
+      typeof record.token !== 'string' ||
+      !record.token.startsWith('dgd_') ||
+      typeof record.expiresAt !== 'string' ||
+      !record.expiresAt
+    ) {
+      return null
+    }
+
+    return {
+      kind: 'ok',
+      token: record.token,
+      expiresAt: record.expiresAt,
+      project: typeof record.project === 'string' ? record.project : project,
+      company: typeof record.company === 'string' ? record.company : null,
+      source
+    }
+  }
+
+  const exchange = async (project: string, pairing: string): Promise<MintResult> => {
+    let response: PartitionResponse
+
+    try {
+      response = await deps.fetch({
+        method: 'POST',
+        url: url('/auth/degram/exchange'),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pairing}` },
+        body: JSON.stringify({ project })
+      })
+    } catch {
+      logger.warn('[degram] DG unreachable during the pairing exchange')
+
+      return { kind: 'unreachable' }
+    }
+
+    const body = parseJson(response.body)
+
+    if (response.status === 401) {
+      // Revoked on the Connectors tab, a password change, or the user is gone (D-25).
+      deps.pairing?.clear()
+      setPairing({ status: 'revoked', company: null })
+      logger.warn('[degram] DG refused the stored pairing; it was removed')
+
+      return { kind: 'pairing-revoked' }
+    }
+
+    if (response.status === 403) {
+      return { kind: 'forbidden', status: 403, code: errorCode(body) }
+    }
+
+    if (response.status >= 500 || response.status === 429) {
+      logger.warn(`[degram] the pairing exchange answered ${response.status}`)
+
+      return { kind: 'unreachable' }
+    }
+
+    const minted = response.status === 201 || response.status === 200 ? parseMinted(body, project, 'pairing') : null
+
+    if (!minted) {
+      logger.warn(`[degram] the pairing exchange returned an unusable reply (${response.status})`)
+
+      return { kind: 'error', status: response.status, code: errorCode(body) }
+    }
+
+    const owner = (body as { username?: unknown }).username
+
+    if (typeof owner !== 'string' || !state.username || owner !== state.username) {
+      // D-27 keeps the DG sign-in: the agent acts as the user DeGram shows, never as another one.
+      setPairing({ status: 'mismatch', company: null })
+      logger.warn('[degram] the stored pairing belongs to another DG user; it was not used')
+
+      return { kind: 'error', status: response.status, code: 'PAIRING_USER_MISMATCH' }
+    }
+
+    setPairing({ status: 'connected', company: minted.company })
+
+    return minted
+  }
+
   const mint = async (project: string): Promise<MintResult> => {
+    const pairing = deps.pairing?.get() ?? null
+
+    if (pairing) {
+      return exchange(project, pairing)
+    }
+
     let response: PartitionResponse
 
     try {
@@ -244,28 +386,15 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
       return { kind: 'unreachable' }
     }
 
-    const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : null
+    const minted = response.status === 201 || response.status === 200 ? parseMinted(body, project, 'session') : null
 
-    if (
-      (response.status !== 201 && response.status !== 200) ||
-      !record ||
-      typeof record.token !== 'string' ||
-      !record.token.startsWith('dgd_') ||
-      typeof record.expiresAt !== 'string' ||
-      !record.expiresAt
-    ) {
+    if (!minted) {
       logger.warn(`[degram] delegated-token mint returned an unusable reply (${response.status})`)
 
       return { kind: 'error', status: response.status, code: errorCode(body) }
     }
 
-    return {
-      kind: 'ok',
-      token: record.token,
-      expiresAt: record.expiresAt,
-      project: typeof record.project === 'string' ? record.project : project,
-      company: typeof record.company === 'string' ? record.company : null
-    }
+    return minted
   }
 
   const markSignedOut = (): void => {
@@ -288,6 +417,17 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
     mint,
     logout,
     markSignedOut,
+    pairing: (): PairingView => pairingView,
+    notePairingChanged: (): void => {
+      setPairing({ status: deps.pairing?.get() ? 'stored' : 'none', company: null })
+    },
+    onPairing: (listener): (() => void) => {
+      pairingListeners.add(listener)
+
+      return (): void => {
+        pairingListeners.delete(listener)
+      }
+    },
     onAuth: (listener): (() => void) => {
       listeners.add(listener)
 

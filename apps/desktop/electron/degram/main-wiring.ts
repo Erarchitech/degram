@@ -65,6 +65,7 @@ export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
     openExternal: deps.openExternal,
     profiles: deps.profiles,
     backend: deps.backend,
+    pairing: deps.pairing,
     send: (channel, payload) => live()?.webContents.send(channel, payload)
   })
 

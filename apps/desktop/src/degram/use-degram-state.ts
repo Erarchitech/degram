@@ -156,6 +156,12 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
       $degram.set({ ...$degram.get(), painted: true })
 
       return
+
+    case 'pairing-revoked':
+      // Phase 1301-17: the scope closed; the pairing panel in the project choice asks for a new token.
+      notify({ kind: 'warning', message: translateNow('degram.pairing.revoked') })
+
+      return
   }
 }
 

@@ -14,6 +14,9 @@ export const DEGRAM_CHANNELS = {
   setDgBounds: 'degram:set-dg-bounds',
   reportOutcome: 'degram:report-outcome',
   openExternalConfirmed: 'degram:open-external-confirmed',
+  // Phase 1301-17 (D-25): the pairing token crosses IPC once, renderer to main; nothing returns it.
+  setPairing: 'degram:pairing:set',
+  clearPairing: 'degram:pairing:clear',
   stateChanged: 'degram:state-changed',
   event: 'degram:event'
 } as const

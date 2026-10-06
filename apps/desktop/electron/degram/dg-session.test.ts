@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createDgSession, createNetPartitionFetch, type NetLike, type PartitionRequest } from './dg-session'
-import { createFakeClock, createFakeDg, TOKEN_A } from './test-support'
+import { createFakeClock, createFakeDg, createFakePairing, PAIRING_TOKEN, TOKEN_A } from './test-support'
 
 function build() {
   const dg = createFakeDg()
@@ -242,5 +242,132 @@ describe('createNetPartitionFetch (Electron net adapter)', () => {
     const doFetch = createNetPartitionFetch({ net, session: { cookies: { get: async () => [] } } })
 
     await expect(doFetch({ method: 'GET', url: 'http://dg.test/x' })).rejects.toThrow('boom')
+  })
+})
+
+describe('createDgSession: pairing exchange (Phase 1301-17, D-25, D-27)', () => {
+  function paired(token: string | null = PAIRING_TOKEN) {
+    const dg = createFakeDg()
+    const clock = createFakeClock()
+    const pairing = createFakePairing(token)
+
+    const logger = {
+      info: vi.fn<(...args: unknown[]) => void>(),
+      warn: vi.fn<(...args: unknown[]) => void>(),
+      error: vi.fn<(...args: unknown[]) => void>()
+    }
+
+    const session = createDgSession({ origin: dg.origin, fetch: dg.fetch, clock, logger, pairing })
+    dg.setMe(dg.signedInMe('alpha'))
+
+    return { dg, pairing, logger, session }
+  }
+
+  it('with a stored pairing, mint exchanges it with a Bearer header and no cookie mint', async () => {
+    const { dg, session } = paired()
+    await session.refresh()
+
+    const minted = await session.mint('alpha')
+
+    expect(minted).toMatchObject({ kind: 'ok', project: 'alpha', company: 'ACME', source: 'pairing' })
+    expect(dg.mintCount()).toBe(0)
+    expect(dg.exchangeCount()).toBe(1)
+
+    const request = dg.requests.find(r => r.url.endsWith('/auth/degram/exchange'))
+
+    expect(request).toMatchObject({ method: 'POST', url: `${dg.origin}/data-service/auth/degram/exchange` })
+    expect(request?.headers?.Authorization).toBe(`Bearer ${PAIRING_TOKEN}`)
+    expect(request?.headers?.['X-DG-CSRF']).toBeUndefined()
+    expect(JSON.parse(request?.body ?? '{}')).toEqual({ project: 'alpha' })
+    expect(session.pairing()).toEqual({ status: 'connected', company: 'ACME' })
+  })
+
+  it('without a pairing the D-05 cookie mint applies unchanged', async () => {
+    const { dg, session } = paired(null)
+    await session.refresh()
+
+    const minted = await session.mint('alpha')
+
+    expect(minted).toMatchObject({ kind: 'ok', source: 'session' })
+    expect(dg.exchangeCount()).toBe(0)
+    expect(dg.mintCount()).toBe(1)
+    expect(session.pairing().status).toBe('none')
+  })
+
+  it('a 401 PAIRING_AUTH_FAILED clears the store and reports the revoked state; no cookie fallback', async () => {
+    const { dg, pairing, session } = paired()
+    await session.refresh()
+    dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    const seen: string[] = []
+    session.onPairing(p => seen.push(p.status))
+
+    expect(await session.mint('alpha')).toEqual({ kind: 'pairing-revoked' })
+    expect(pairing.get()).toBeNull()
+    expect(pairing.cleared()).toBe(1)
+    expect(dg.mintCount()).toBe(0)
+    expect(session.pairing().status).toBe('revoked')
+    expect(seen).toEqual(['revoked'])
+  })
+
+  it('a pairing of another user than the signed-in one is refused and kept for the user to replace', async () => {
+    const { dg, pairing, session } = paired()
+    await session.refresh()
+    dg.setExchange(request => ({
+      status: 201,
+      body: {
+        token: 'dgd_OTHER-USER',
+        project: JSON.parse(request.body ?? '{}').project,
+        company: 'ACME',
+        expiresAt: '2030-01-01T00:15:00Z',
+        expiresInSeconds: 900,
+        username: 'bob'
+      }
+    }))
+
+    expect(await session.mint('alpha')).toEqual({ kind: 'error', status: 201, code: 'PAIRING_USER_MISMATCH' })
+    expect(session.pairing().status).toBe('mismatch')
+    expect(pairing.get()).toBe(PAIRING_TOKEN)
+  })
+
+  it('a 403 is forbidden (membership), a network failure unreachable, a 5xx unreachable', async () => {
+    const { dg, session } = paired()
+    await session.refresh()
+
+    dg.setExchange({ status: 403, body: { detail: { code: 'PROJECT_FORBIDDEN' } } })
+    expect(await session.mint('alpha')).toEqual({ kind: 'forbidden', status: 403, code: 'PROJECT_FORBIDDEN' })
+
+    dg.setExchange('network-error')
+    expect(await session.mint('alpha')).toEqual({ kind: 'unreachable' })
+
+    dg.setExchange({ status: 503 })
+    expect(await session.mint('alpha')).toEqual({ kind: 'unreachable' })
+    expect(session.pairing().status).toBe('stored')
+  })
+
+  it('notePairingChanged reflects a newly stored or cleared pairing', () => {
+    const { pairing, session } = paired(null)
+
+    expect(session.pairing().status).toBe('none')
+    pairing.set(PAIRING_TOKEN)
+    session.notePairingChanged()
+    expect(session.pairing().status).toBe('stored')
+    pairing.clear()
+    session.notePairingChanged()
+    expect(session.pairing()).toEqual({ status: 'none', company: null })
+  })
+
+  it('never logs the pairing token or the exchanged token', async () => {
+    const { dg, logger, session } = paired()
+    await session.refresh()
+    await session.mint('alpha')
+    dg.setExchange({ status: 500 })
+    await session.mint('alpha')
+    dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    await session.mint('alpha')
+
+    const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls, logger.error.mock.calls])
+
+    expect(logged).not.toContain('dgp_')
+    expect(logged).not.toContain('dgd_')
   })
 })

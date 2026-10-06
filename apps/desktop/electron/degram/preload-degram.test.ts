@@ -66,7 +66,9 @@ it('exposes a typed degram namespace with exactly the capability bridge and no t
       'reloadDg',
       'setDgBounds',
       'reportOutcome',
-      'openExternalConfirmed'
+      'openExternalConfirmed',
+      'setPairing',
+      'clearPairing'
     ].sort()
   )
 
@@ -89,6 +91,8 @@ it('maps every method to its degram: channel and passes the argument through', a
   await degram.setDgBounds(null)
   await degram.reportOutcome('CREDENTIALS_EXPIRED')
   await degram.openExternalConfirmed('https://example.test/')
+  await degram.setPairing('dgp_x')
+  await degram.clearPairing()
 
   expect(host.invoke.mock.calls).toEqual([
     [DEGRAM_CHANNELS.getState],
@@ -99,7 +103,9 @@ it('maps every method to its degram: channel and passes the argument through', a
     [DEGRAM_CHANNELS.setDgBounds, { x: 1, y: 2, width: 3, height: 4 }],
     [DEGRAM_CHANNELS.setDgBounds, null],
     [DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED'],
-    [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/']
+    [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/'],
+    [DEGRAM_CHANNELS.setPairing, 'dgp_x'],
+    [DEGRAM_CHANNELS.clearPairing]
   ])
 })
 

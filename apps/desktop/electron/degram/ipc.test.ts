@@ -3,11 +3,25 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createDegramRuntime, DEGRAM_CHANNELS, type DegramRuntime, registerDegramIpc } from './ipc'
 import type { BackendHandle, ScopeKey } from './scope'
-import { createFakeClock, createFakeDg, createFakeViewFactory, createLog, TOKEN_A } from './test-support'
+import {
+  createFakeClock,
+  createFakeDg,
+  createFakePairing,
+  createFakeViewFactory,
+  createLog,
+  PAIRING_TOKEN,
+  TOKEN_A
+} from './test-support'
 
 type Sent = { channel: string; payload: unknown }
 
-function rig(options: { signedIn?: boolean; memberships?: { project: string; company?: string | null }[] } = {}) {
+function rig(
+  options: {
+    signedIn?: boolean
+    memberships?: { project: string; company?: string | null }[]
+    pairing?: ReturnType<typeof createFakePairing> | null
+  } = {}
+) {
   const log = createLog()
   const dg = createFakeDg()
   const clock = createFakeClock()
@@ -58,6 +72,7 @@ function rig(options: { signedIn?: boolean; memberships?: { project: string; com
       }
     },
     backend: { ensure: async () => handle, release: async () => undefined },
+    pairing: options.pairing === null ? undefined : (options.pairing ?? createFakePairing()),
     send: (channel, payload) => {
       log.push(`send:${channel}${channel === DEGRAM_CHANNELS.event ? `:${(payload as { type: string }).type}` : ''}`)
       sent.push({ channel, payload })
@@ -312,7 +327,9 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.reloadDg,
         DEGRAM_CHANNELS.setDgBounds,
         DEGRAM_CHANNELS.reportOutcome,
-        DEGRAM_CHANNELS.openExternalConfirmed
+        DEGRAM_CHANNELS.openExternalConfirmed,
+        DEGRAM_CHANNELS.setPairing,
+        DEGRAM_CHANNELS.clearPairing
       ].sort()
     )
 
@@ -474,5 +491,87 @@ describe('degram runtime: revocation reaches the renderer only after clearing (T
     await r.runtime.onAuthCookieChanged()
 
     expect(eventsOf(r.sent).filter(e => e.type === 'session-ended')).toEqual([])
+  })
+})
+
+describe('DeGram pairing over IPC (Phase 1301-17, D-25)', () => {
+  function register(runtime: DegramRuntime) {
+    const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+
+    registerDegramIpc(
+      { handle: (channel, handler) => void handlers.set(channel, handler as never) },
+      runtime,
+      () => true
+    )
+
+    return handlers
+  }
+
+  const event = { sender: 'main' }
+
+  it('state carries the pairing status and never the token', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+
+    expect(r.runtime.getState().pairing).toEqual({ status: 'none', company: null, available: true })
+
+    const handlers = register(r.runtime)
+    const result = await handlers.get(DEGRAM_CHANNELS.setPairing)!(event, PAIRING_TOKEN)
+
+    expect(result).toEqual({ ok: true })
+    expect(r.runtime.getState().pairing.status).toBe('stored')
+    expect(JSON.stringify(r.sent)).not.toContain(PAIRING_TOKEN)
+    expect(JSON.stringify(r.runtime.getState())).not.toContain('dgp_')
+    expect(JSON.stringify(result)).not.toContain('dgp_')
+  })
+
+  it('validates the token before it reaches the store', async () => {
+    const pairing = createFakePairing()
+    const r = rig({ pairing })
+    const handlers = register(r.runtime)
+
+    for (const bad of ['', 'dgd_' + 'A'.repeat(43), 'dgp_short', 7, null, `dgp_${'A'.repeat(300)}`]) {
+      await expect(handlers.get(DEGRAM_CHANNELS.setPairing)!(event, bad)).rejects.toThrow(/invalid pairing/)
+    }
+
+    expect(pairing.get()).toBeNull()
+  })
+
+  it('clearPairing forgets the stored token and the state returns to none', async () => {
+    const pairing = createFakePairing(PAIRING_TOKEN)
+    const r = rig({ pairing })
+    const handlers = register(r.runtime)
+
+    expect(r.runtime.getState().pairing.status).toBe('stored')
+    await handlers.get(DEGRAM_CHANNELS.clearPairing)!(event)
+
+    expect(pairing.get()).toBeNull()
+    expect(r.runtime.getState().pairing.status).toBe('none')
+  })
+
+  it('without a pairing store the feature reports unavailable and refuses to store', async () => {
+    const r = rig({ pairing: null })
+    const handlers = register(r.runtime)
+
+    expect(r.runtime.getState().pairing).toEqual({ status: 'none', company: null, available: false })
+    expect(await handlers.get(DEGRAM_CHANNELS.setPairing)!(event, PAIRING_TOKEN)).toEqual({
+      ok: false,
+      code: 'ENCRYPTION_UNAVAILABLE'
+    })
+  })
+
+  it('a revoked pairing is published as the revoked state and announced once', async () => {
+    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
+
+    await r.runtime.start()
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+
+    const result = await r.runtime.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'PAIRING_REVOKED' })
+    expect(r.runtime.getState().pairing.status).toBe('revoked')
+    expect(eventsOf(r.sent).filter(e => e.type === 'pairing-revoked')).toHaveLength(1)
+    expect(states(r.sent).at(-1).pairing.status).toBe('revoked')
   })
 })

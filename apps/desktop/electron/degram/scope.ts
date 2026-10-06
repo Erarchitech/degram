@@ -10,6 +10,10 @@
 //   6. hand it to the agent with degram.credentials.set (BEFORE the renderer may create a session),
 //   7. report the scope ready.
 //
+// Phase 1301-17 (D-25, D-27): step 5 exchanges a stored DeGram pairing token instead of the cookie mint
+// when one is stored (dg-session.ts). A pairing refused by DG closes the scope with `pairing-revoked`: the
+// DG sign-in, the local history and the DG view stay, since neither the session nor the membership ended.
+//
 // The delegated token exists only in this call chain and in the agent process memory: it is not part of
 // any state object, event, log line or file. The renderer starts a fresh chat session when it sees a
 // new scope epoch; a session is never carried across scopes.
@@ -17,7 +21,7 @@
 // All collaborators are injected (see test-support.ts for the fakes).
 
 import { relayBaseUrlFor } from './dg-config'
-import type { AuthState, Clock, DgSession, Logger, MeResult, MintResult } from './dg-session'
+import type { AuthState, Clock, DgSession, Logger, MeResult, MintResult, MintSource } from './dg-session'
 import { DEGRAM_HEARTBEAT_S, DEGRAM_TOKEN_RENEW_S } from './dg-session'
 
 export interface ScopeKey {
@@ -37,6 +41,8 @@ export type DegramEvent =
   | { type: 'external-link-blocked'; url: string }
   | { type: 'dg-unreachable' }
   | { type: 'dg-reachable' }
+  /** DG refused the stored pairing (revoked on the Connectors tab); the scope closed, the sign-in stays. */
+  | { type: 'pairing-revoked' }
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
 
@@ -61,6 +67,7 @@ export type ScopeErrorCode =
   | 'CREDENTIALS_REJECTED'
   | 'ACCESS_DENIED'
   | 'MINT_FAILED'
+  | 'PAIRING_REVOKED'
 
 export type SelectResult = { ok: true; state: ScopeState } | { ok: false; code: ScopeErrorCode; state: ScopeState }
 
@@ -137,6 +144,8 @@ interface OpenScope {
   key: ScopeKey
   profile: string
   handle: BackendHandle | null
+  /** Where the agent's current credential came from. */
+  source: MintSource
 }
 
 const IDLE: Omit<ScopeState, 'epoch'> = {
@@ -315,6 +324,18 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
   }
 
+  /**
+   * DG refused the stored pairing: close the open scope (agent credential cleared first) and tell the renderer.
+   * No purge, no view wipe, no sign-out: the session and the membership are intact (D-27).
+   */
+  const pairingEnded = async (): Promise<void> => {
+    epoch += 1
+    await closeCurrent()
+    active = null
+    setState({ ...IDLE, epoch })
+    deps.emit({ type: 'pairing-revoked' })
+  }
+
   /** Access to the active project is gone (403 / membership loss): purge that scope only, then tell the renderer. */
   const revokeActive = async (): Promise<void> => {
     const target = active
@@ -405,6 +426,13 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       return fail('SUPERSEDED', false)
     }
 
+    if (minted.kind === 'pairing-revoked') {
+      active = null
+      deps.emit({ type: 'pairing-revoked' })
+
+      return fail('PAIRING_REVOKED', false)
+    }
+
     if (minted.kind !== 'ok') {
       const code: ScopeErrorCode =
         minted.kind === 'unreachable'
@@ -418,7 +446,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       return fail(code, false)
     }
 
-    current = { key, profile, handle }
+    current = { key, profile, handle, source: minted.source }
 
     try {
       await handle.call('degram.credentials.set', credentialParams(key, minted))
@@ -477,6 +505,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       if (minted.kind === 'ok') {
         try {
           await open.handle.call('degram.credentials.set', credentialParams(open.key, minted))
+          open.source = minted.source
           renewPending = false
         } catch {
           logger.warn('[degram] the agent did not accept the renewed credential; retrying on the next heartbeat')
@@ -484,6 +513,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
         }
       } else if (minted.kind === 'signed-out') {
         await endSession()
+      } else if (minted.kind === 'pairing-revoked') {
+        await pairingEnded()
       } else if (minted.kind === 'forbidden') {
         await revokeActive()
       } else {
@@ -565,6 +596,14 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
 
   const reportOutcome = async (code: string): Promise<boolean> => {
     if (OUTCOMES_END_SESSION.has(code)) {
+      // A pairing credential's parent is the pairing, not the DG session: ask DG about the pairing (one
+      // re-mint) instead of signing the user out. A refused pairing closes the scope (pairingEnded).
+      if (current?.source === 'pairing') {
+        await renew()
+
+        return true
+      }
+
       if (live) {
         await endSession()
       }

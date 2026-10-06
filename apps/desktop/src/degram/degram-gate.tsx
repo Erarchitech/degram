@@ -13,6 +13,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { useI18n } from '@/i18n'
 
 import { IsolationBootFailure } from './isolation-boot-failure'
+import { PairingPanel } from './pairing-panel'
 import { ProjectPicker } from './project-picker'
 import { DgConnecting, DgUnreachable, SignInState } from './sign-in-state'
 import { refreshDegramState, useDegram } from './use-degram-state'
@@ -71,6 +72,7 @@ export function ProjectChoice() {
             <Button variant="secondary">{copy.cta.chooseProject}</Button>
           </ProjectPicker>
         )}
+        <PairingPanel />
       </div>
     </div>
   )

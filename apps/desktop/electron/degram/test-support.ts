@@ -102,6 +102,9 @@ export function createFakeDg(options: FakeDgOptions = {}): {
   setMe: (responder: Responder) => void
   setMint: (responder: Responder) => void
   setLogout: (responder: Responder) => void
+  /** POST /data-service/auth/degram/exchange (Phase 1301-17). */
+  setExchange: (responder: Responder) => void
+  exchangeCount: () => number
   mintCount: () => number
   meCount: () => number
   signedInMe: (project: string, company?: string | null, role?: string) => FakeDgResponse
@@ -132,6 +135,25 @@ export function createFakeDg(options: FakeDgOptions = {}): {
   }
 
   let logout: Responder = { status: 204 }
+  let exchangeCalls = 0
+
+  let exchange: Responder = (request): FakeDgResponse => {
+    tokenSeq += 1
+
+    const project = (JSON.parse(request.body ?? '{}') as { project?: string }).project ?? ''
+
+    return {
+      status: 201,
+      body: {
+        token: `dgd_PAIRED-${tokenSeq}-never-leaks`,
+        project,
+        company: 'ACME',
+        expiresAt: new Date(Date.UTC(2030, 0, 1, 0, 15, 0)).toISOString().replace('.000Z', 'Z'),
+        expiresInSeconds: 900,
+        username: 'alice'
+      }
+    }
+  }
 
   const respond = (responder: Responder, request: PartitionRequest): PartitionResponse => {
     if (responder === 'network-error') {
@@ -164,6 +186,12 @@ export function createFakeDg(options: FakeDgOptions = {}): {
       return respond(mint, request)
     }
 
+    if (request.method === 'POST' && url.pathname === '/data-service/auth/degram/exchange') {
+      exchangeCalls += 1
+
+      return respond(exchange, request)
+    }
+
     if (request.method === 'POST' && url.pathname === '/data-service/auth/logout') {
       return respond(logout, request)
     }
@@ -184,6 +212,10 @@ export function createFakeDg(options: FakeDgOptions = {}): {
     setLogout: (responder): void => {
       logout = responder
     },
+    setExchange: (responder): void => {
+      exchange = responder
+    },
+    exchangeCount: (): number => exchangeCalls,
     mintCount: (): number => mintCalls,
     meCount: (): number => meCalls,
     signedInMe: (project, company = 'ACME', role = 'viewer'): FakeDgResponse => ({
@@ -326,5 +358,42 @@ export function createFakeViewFactory(log?: { push: (entry: string) => void }): 
     },
     preferences: () => prefs,
     created: () => count
+  }
+}
+
+// ─── Pairing source fake (Phase 1301-17) ────────────────────────────────────────────────────────────
+
+export const PAIRING_TOKEN = `dgp_${'P'.repeat(43)}`
+
+/** An in-memory stand-in for pairing-store.ts. */
+export function createFakePairing(initial: string | null = null): {
+  get: () => string | null
+  has: () => boolean
+  set: (
+    token: string
+  ) => { ok: true } | { ok: false; code: 'PAIRING_INVALID' | 'ENCRYPTION_UNAVAILABLE' | 'WRITE_FAILED' }
+  clear: () => void
+  cleared: () => number
+} {
+  let token = initial
+  let clears = 0
+
+  return {
+    get: () => token,
+    has: () => token !== null,
+    set: next => {
+      if (!next.startsWith('dgp_')) {
+        return { ok: false, code: 'PAIRING_INVALID' }
+      }
+
+      token = next
+
+      return { ok: true }
+    },
+    clear: () => {
+      token = null
+      clears += 1
+    },
+    cleared: () => clears
   }
 }
