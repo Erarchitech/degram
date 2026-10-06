@@ -347,9 +347,12 @@ def prepare_in_worker(request: BuildRequest) -> Path:
         cwd=request.source, env=env)
     payload = None
     if request.variant != "light":
+        from scripts.bundles.native import DEGRAM_EXCLUDED_EXTRAS
+
         payload = prepare_native(out=request.source / "apps/desktop/build/agent-payload", ref=request.commit,
                                  source=request.source, cache=Path(env["UV_CACHE_DIR"]),
-                                 tools=request.cache / "tools", env=env)
+                                 tools=request.cache / "tools", env=env,
+                                 exclude_extras=DEGRAM_EXCLUDED_EXTRAS if request.variant == "degram" else ())
     require_source(request.source, request.commit)
     prepared = PreparedDesktop.record(request, python=python, node=node, icon_python=icon_python,
                                       native=native, packager=packager / "prepared.json", payload=payload,

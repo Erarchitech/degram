@@ -52,9 +52,68 @@ def _arch_guard(store_dir: Path) -> list[str]:
 
 
 
-from pm.uv_cache_prune import lock_package_names, prune_uv_cache_to_lock
+from pm.uv_cache_prune import lock_package_names, prune_uv_cache_dists, prune_uv_cache_to_lock
 
-__all__ = ["prune_uv_cache_to_lock", "lock_package_names", "stage_uv_cache"]
+__all__ = ["prune_uv_cache_to_lock", "prune_uv_cache_dists", "lock_package_names", "stage_uv_cache",
+           "DEGRAM_EXCLUDED_EXTRAS", "degram_extras", "excluded_distributions"]
+
+# DeGram (Phase 1301 finding F-11): extras whose SDKs the degram variant can never use (TTS is not registered,
+# D-22; the model is reached only through the DG relay, D-16). Their deeply nested modules also push payload
+# paths past the 260-character limit of the NSIS installer at the default per-user install directory.
+DEGRAM_EXCLUDED_EXTRAS = ("tts-premium", "mistral")
+
+
+def _optional_dependencies(pyproject: Path) -> dict[str, list[str]]:
+    import tomllib
+
+    data = tomllib.loads(Path(pyproject).read_text(encoding="utf-8"))
+    return data["project"]["optional-dependencies"]
+
+
+def _self_extras(requirements: list[str]) -> set[str]:
+    import re
+
+    found: set[str] = set()
+    for req in requirements:
+        match = re.match(r"\s*hermes-agent\[([^\]]+)\]", req)
+        if match:
+            found |= {part.strip() for part in match.group(1).split(",")}
+    return found
+
+
+def degram_extras(pyproject: Path, excluded: tuple[str, ...] = DEGRAM_EXCLUDED_EXTRAS) -> list[str]:
+    """Every declared extra except ``excluded``. Refuses when an excluded extra is missing or when a kept
+    (meta) extra pulls one back in, so the exclusion cannot silently stop working."""
+    extras = _optional_dependencies(pyproject)
+    missing = [name for name in excluded if name not in extras]
+    if missing:
+        raise ValueError(f"excluded extras are not declared: {missing}")
+    kept = sorted(name for name in extras if name not in excluded)
+    for name in kept:
+        seen: set[str] = set()
+        stack = [name]
+        while stack:
+            for sub in _self_extras(extras.get(stack.pop(), [])):
+                if sub in excluded:
+                    raise ValueError(f"extra {name!r} pulls excluded extra {sub!r}")
+                if sub not in seen:
+                    seen.add(sub)
+                    stack.append(sub)
+    return kept
+
+
+def excluded_distributions(pyproject: Path, excluded: tuple[str, ...]) -> set[str]:
+    """Distribution names the excluded extras require directly (their wheels are dropped from the cache)."""
+    import re
+
+    extras = _optional_dependencies(pyproject)
+    names: set[str] = set()
+    for name in excluded:
+        for req in extras.get(name, []):
+            match = re.match(r"\s*([A-Za-z0-9_.-]+)", req)
+            if match and match.group(1) != "hermes-agent":
+                names.add(match.group(1).lower().replace("_", "-"))
+    return names
 
 
 def stage_uv_cache(source: Path, destination: Path) -> None:
@@ -140,7 +199,8 @@ def prune_staged_store(store_dir: Path, names: list[str]) -> None:
 
 
 def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
-                   tools: Path | None = None, env: dict | None = None) -> Path:
+                   tools: Path | None = None, env: dict | None = None,
+                   exclude_extras: tuple[str, ...] = ()) -> Path:
     """Prepare final payload dependencies inside the caller's isolated PM process.
 
     The caller supplies its compiler environment; only the full standalone
@@ -156,11 +216,12 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         prepared_path(out).unlink(missing_ok=True)
         (out / "manifest.json").unlink(missing_ok=True)
         return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
-                               cache=Path(cache).resolve(), tools=tools, env=env)
+                               cache=Path(cache).resolve(), tools=tools, env=env,
+                               exclude_extras=tuple(exclude_extras))
 
 
 def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
-                    tools: Path | None, env: dict | None) -> Path:
+                    tools: Path | None, env: dict | None, exclude_extras: tuple[str, ...] = ()) -> Path:
     from pm import paths
     from pm.package import InstallError
 
@@ -224,10 +285,17 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     from pm import build_environment
 
     # Cold native wheels need a larger budget than interactive installs.
-    build_environment(source=repo_dir, python=python_bin, out=venv_dir,
-                      env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
-                      timeout=2 * 60 * 60)
-    print("✓ venv (all extras, on the staged interpreter)")
+    if exclude_extras:
+        extras = degram_extras(repo_dir / "pyproject.toml", exclude_extras)
+        build_environment(source=repo_dir, python=python_bin, out=venv_dir,
+                          env=env, cache=cache, extras=extras, all_extras=False, sealed=True, explicit=True,
+                          timeout=2 * 60 * 60)
+        print(f"✓ venv ({len(extras)} extras, without {', '.join(exclude_extras)}, on the staged interpreter)")
+    else:
+        build_environment(source=repo_dir, python=python_bin, out=venv_dir,
+                          env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
+                          timeout=2 * 60 * 60)
+        print("✓ venv (all extras, on the staged interpreter)")
 
     # Inventory the staged interpreter before publishing the bundle contract.
     from pm.features import installed_extras, write_features
@@ -248,6 +316,10 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         print(f"  uv-cache: copying {src_cache} → payload...", flush=True)
         stage_uv_cache(src_cache, payload_cache)
         pruned = prune_uv_cache_to_lock(payload_cache, repo_dir)
+        if exclude_extras:
+            dropped = prune_uv_cache_dists(payload_cache, excluded_distributions(repo_dir / "pyproject.toml",
+                                                                                 exclude_extras))
+            print(f"✓ uv-cache: dropped {dropped} entries of the excluded extras", flush=True)
         print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
     else:
         raise InstallError("uv-cache", "runtime dependency cache is missing")

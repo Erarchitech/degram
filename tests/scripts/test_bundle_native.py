@@ -630,3 +630,53 @@ def test_native_dispatch_child_environment(tmp_path, monkeypatch, cache_source, 
     assert (cache / "reused").read_text(encoding="utf-8-sig") == "xx"
     assert all(not home.exists() for home in homes)
     assert dict(os.environ) == before
+
+
+# -- DeGram variant payload (Phase 1301 finding F-11) ------------------------
+
+
+def test_degram_extras_drop_only_the_excluded_sdks_and_nothing_pulls_them_back():
+    from pathlib import Path as _Path
+    repo = _Path(__file__).resolve().parents[2]
+    extras = native.degram_extras(repo / "pyproject.toml")
+    assert "tts-premium" not in extras and "mistral" not in extras
+    assert {"all", "mcp", "web"} <= set(extras)
+    import tomllib
+    declared = set(tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"])
+    assert set(extras) == declared - set(native.DEGRAM_EXCLUDED_EXTRAS)
+
+
+def test_degram_extras_refuse_a_meta_extra_that_pulls_an_excluded_one(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "hermes-agent"\n[project.optional-dependencies]\n'
+        'tts-premium = ["elevenlabs==1"]\nmistral = ["mistralai==2"]\n'
+        'all = ["hermes-agent[tts-premium]"]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="tts-premium"):
+        native.degram_extras(tmp_path / "pyproject.toml")
+
+
+def test_staged_cache_drops_named_dists_and_keeps_the_rest(tmp_path):
+    cache = tmp_path / "cache"
+    for bucket, dist_info in (("a1", "elevenlabs-1.59.0.dist-info"), ("a2", "mistralai-2.4.8.dist-info"),
+                              ("a3", "keep_me-1.0.0.dist-info")):
+        path = cache / "archive-v0" / bucket / dist_info
+        path.parent.mkdir(parents=True)
+        path.write_text("", encoding="utf-8")
+    for entry in ("elevenlabs", "mistralai", "keep-me"):
+        (cache / "wheels-v6" / "pypi" / entry).mkdir(parents=True)
+    unknown = cache / "archive-v0" / "unknownbucket"
+    unknown.mkdir(parents=True)
+    pruned = native.prune_uv_cache_dists(cache, {"elevenlabs", "mistralai"})
+    assert pruned == 4
+    assert not (cache / "archive-v0" / "a1").exists() and not (cache / "archive-v0" / "a2").exists()
+    assert (cache / "archive-v0" / "a3").is_dir() and unknown.is_dir()
+    assert not (cache / "wheels-v6" / "pypi" / "elevenlabs").exists()
+    assert (cache / "wheels-v6" / "pypi" / "keep-me").is_dir()
+
+
+def test_excluded_extras_name_their_distributions():
+    from pathlib import Path as _Path
+    repo = _Path(__file__).resolve().parents[2]
+    assert native.excluded_distributions(repo / "pyproject.toml", native.DEGRAM_EXCLUDED_EXTRAS) == {"elevenlabs", "mistralai"}

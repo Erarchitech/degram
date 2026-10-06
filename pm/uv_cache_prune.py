@@ -30,6 +30,18 @@ def prune_uv_cache_to_lock(cache: Path, source_repo: Path) -> int:
     entry count for the build log.
     """
     keep = lock_package_names(source_repo)
+    return _prune(cache, lambda name: name not in keep)
+
+
+def prune_uv_cache_dists(cache: Path, drop: set[str]) -> int:
+    """Delete cache entries of the named dists (a variant that ships without some
+    extras must not ship their wheels either). Same layout rules as
+    ``prune_uv_cache_to_lock``; returns the pruned entry count."""
+    names = {n.lower().replace("_", "-") for n in drop}
+    return _prune(cache, lambda name: name in names)
+
+
+def _prune(cache: Path, should_drop) -> int:
     dist_info = re.compile(r"([A-Za-z0-9_.]+?)-\d[^-]*\.dist-info")
 
     def dist_name(bucket: Path) -> str | None:
@@ -46,14 +58,14 @@ def prune_uv_cache_to_lock(cache: Path, source_repo: Path) -> int:
             if not bucket.is_dir():
                 continue
             name = dist_name(bucket)
-            if name is not None and name not in keep:
+            if name is not None and should_drop(name):
                 shutil.rmtree(bucket, ignore_errors=True)
                 pruned += 1
     for family_dir in (*cache.glob("wheels-v*/pypi"), *cache.glob("sdists-v*/pypi")):
         if not family_dir.is_dir():
             continue
         for entry in family_dir.iterdir():
-            if entry.is_dir() and entry.name.lower().replace("_", "-") not in keep:
+            if entry.is_dir() and should_drop(entry.name.lower().replace("_", "-")):
                 shutil.rmtree(entry, ignore_errors=True)
                 pruned += 1
     return pruned
