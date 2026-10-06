@@ -76,6 +76,19 @@ test('degram exe vendor is Erarchitech, not Nous Research', () => {
   }
 })
 
+// F-05: DeGram carries its own pilot version (0.x, patch +1 per installer build, never
+// reused) through extraMetadata, which electron-builder applies to app.getVersion(), the
+// exe version resource and the installer filename. The shared package.json stays 0.0.0.
+test('degram has its own semver pilot version; stock variants keep package.json', () => {
+  const version = loadConfig('degram').extraMetadata.version
+  assert.match(version, /^0\.\d+\.\d+$/)
+  assert.notEqual(version, '0.0.0')
+
+  for (const variant of [undefined, 'bundled', 'light', 'store']) {
+    assert.equal(loadConfig(variant).extraMetadata.version, undefined, `variant ${variant ?? '(default)'}`)
+  }
+})
+
 test('degram builds an unsigned NSIS target with the bundled Python payload (D-04)', () => {
   const config = loadConfig('degram')
   assert.deepEqual(config.win.target, ['nsis'])

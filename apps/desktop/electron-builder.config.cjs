@@ -116,7 +116,9 @@ module.exports = {
     ...((channelRequest && token) || appNamePascal !== artifactNamePascal ? { productName: displayName } : {}),
     // The exe CompanyName, default LegalCopyright and NSIS uninstall Publisher
     // derive from `author`; DeGram is not shipped by the upstream vendor.
-    ...(degram ? { author: 'Erarchitech' } : {}),
+    // DeGram's own pilot version (F-05): bump the patch for every installer
+    // build and never reuse a number; the shared package.json stays 0.0.0.
+    ...(degram ? { author: 'Erarchitech', version: '0.1.0' } : {}),
     desktopName: appId
   },
   directories: {
