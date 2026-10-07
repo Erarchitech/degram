@@ -330,3 +330,38 @@ class TestDegramToolset:
         assert out["status"] == "ok" and out["graph"]["nodes"][0]["id"] == "n1" and out["rules"] == []
         assert {"what": "rules", "reason": "DG_UNAVAILABLE", "detail": "HTTP_500"} in out["missing"]
 
+
+
+class TestProjectGraphFitsTheToolBudget:
+    """Gap G-1 (live, 2026-10-07): the agent spills any tool result above its per-result threshold to a file
+    and shows the model a 1,500-char preview; DeGram has no file tool, so a spilled graph lost the rules."""
+
+    def _call(self):
+        from tools.registry import registry
+        import tools.degram_tools  # noqa: F401
+        return registry.dispatch("degram_project_graph", {})
+
+    def test_result_stays_under_the_agent_threshold_and_rules_come_first(self, rt, dg):
+        from tools.budget_config import DEFAULT_BUDGET
+        big = {"nodes": [{"id": f"n{i}", "labels": ["ValidationEntity"], "props": {"x": "y" * 1500}} for i in range(400)],
+               "rels": []}
+        rules = {"project": PROJECT, "rules": [{"ruleId": f"R_{i}", "text": "t" * 300} for i in range(30)]}
+        dg.routes[f"/data-service/graph/{PROJECT}"] = (200, big)
+        dg.routes[f"/data-service/rules/{PROJECT}"] = (200, rules)
+        raw = self._call()
+        assert len(raw) < DEFAULT_BUDGET.resolve_threshold("degram_project_graph")
+        out = json.loads(raw)
+        assert list(out)[:3] == ["status", "project", "rules"]
+        assert [r["ruleId"] for r in out["rules"]] == [f"R_{i}" for i in range(30)]
+        assert any(t["what"] == "nodes" and t["kept"] < 400 for t in out["truncation"])
+
+    def test_oversized_rules_are_cut_last_and_disclosed(self, rt, dg):
+        from tools.budget_config import DEFAULT_BUDGET
+        rules = {"project": PROJECT, "rules": [{"ruleId": f"R_{i}", "text": "t" * 1900} for i in range(200)]}
+        dg.routes[f"/data-service/rules/{PROJECT}"] = (200, rules)
+        raw = self._call()
+        assert len(raw) < DEFAULT_BUDGET.resolve_threshold("degram_project_graph")
+        out = json.loads(raw)
+        assert out["graph"]["nodes"] == []
+        cut = next(t for t in out["truncation"] if t["what"] == "rules")
+        assert cut["total"] == 200 and 0 < cut["kept"] == len(out["rules"]) < 200

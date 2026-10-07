@@ -23,6 +23,17 @@ from tools.registry import no_cache_check_fn, registry
 _NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 GRAPH_NODE_LIMIT = 200
 GRAPH_REL_LIMIT = 400
+# Gap G-1 (live 2026-10-07): the agent replaces a tool result above its per-result threshold (100K chars by
+# default, lower for small context windows) by a 1,500-char preview and a spillover file, and DeGram has no file
+# tool. The graph answer therefore stays well under that threshold, measured in characters of the final JSON.
+GRAPH_RESULT_SHARE = 0.6
+
+
+def _result_budget(max_bytes: int) -> int:
+    from tools.budget_config import DEFAULT_BUDGET
+
+    threshold = DEFAULT_BUDGET.resolve_threshold("degram_project_graph")
+    return int(min(max_bytes, threshold * GRAPH_RESULT_SHARE))
 
 
 @no_cache_check_fn
@@ -60,39 +71,47 @@ def _document_snapshot(args: dict, **_kw) -> str:
 
 
 def bounded_graph(graph: dict[str, Any], rules: list[dict[str, Any]], project: str, max_bytes: int) -> dict[str, Any]:
-    """The project graph cut to ``GRAPH_NODE_LIMIT`` nodes, ``GRAPH_REL_LIMIT`` relationships and ``max_bytes``, with the
-    cut disclosed. Relationships are kept only between kept nodes."""
+    """The rules and the project graph within ``GRAPH_NODE_LIMIT`` nodes, ``GRAPH_REL_LIMIT`` relationships and a
+    character budget below the agent's tool-result threshold (``_result_budget``), every cut disclosed. Rules come
+    first in the answer and are cut last: graph nodes go first, then rules from the end. Relationships are kept only
+    between kept nodes."""
     nodes = [n for n in graph.get("nodes") or [] if isinstance(n, dict)]
     rels = [r for r in graph.get("rels") or [] if isinstance(r, dict)]
+    budget = _result_budget(max_bytes)
 
-    def build(count: int) -> dict[str, Any]:
-        kept_nodes = nodes[:count]
+    def build(rule_count: int, node_count: int) -> dict[str, Any]:
+        kept_nodes = nodes[:node_count]
         ids = {n.get("id") for n in kept_nodes}
         kept_rels = [r for r in rels if r.get("source") in ids and r.get("target") in ids][:GRAPH_REL_LIMIT]
         truncation = []
-        if count < len(nodes):
-            truncation.append({"what": "nodes", "kept": count, "total": len(nodes)})
+        if rule_count < len(rules):
+            truncation.append({"what": "rules", "kept": rule_count, "total": len(rules)})
+        if node_count < len(nodes):
+            truncation.append({"what": "nodes", "kept": node_count, "total": len(nodes)})
         if len(kept_rels) < len(rels):
             truncation.append({"what": "rels", "kept": len(kept_rels), "total": len(rels)})
-        return {"status": "ok", "project": project, "graph": {"nodes": kept_nodes, "rels": kept_rels},
-                "rules": rules, "truncation": truncation}
+        return {"status": "ok", "project": project, "rules": rules[:rule_count],
+                "graph": {"nodes": kept_nodes, "rels": kept_rels}, "truncation": truncation}
 
     def size(value: dict[str, Any]) -> int:
-        return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+        return len(json.dumps(value, ensure_ascii=False)) + 512  # headroom for the "missing" list
 
-    count = min(len(nodes), GRAPH_NODE_LIMIT)
-    result = build(count)
-    if size(result) > max_bytes:
-        lo, hi = 0, count
+    def largest(fits, hi: int) -> int:
+        lo = 0
         while lo < hi:
             mid = (lo + hi + 1) // 2
-            if size(build(mid)) <= max_bytes:
+            if fits(mid):
                 lo = mid
             else:
                 hi = mid - 1
-        count = lo
-        result = build(count)
-    return result
+        return lo
+
+    node_cap = min(len(nodes), GRAPH_NODE_LIMIT)
+    if size(build(len(rules), node_cap)) <= budget:
+        return build(len(rules), node_cap)
+    if size(build(len(rules), 0)) <= budget:
+        return build(len(rules), largest(lambda n: size(build(len(rules), n)) <= budget, node_cap))
+    return build(largest(lambda r: size(build(r, 0)) <= budget, len(rules)), 0)
 
 
 def _project_graph(args: dict, **_kw) -> str:
