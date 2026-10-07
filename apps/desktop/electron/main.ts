@@ -13871,6 +13871,7 @@ const minimizeToTray = createMinimizeToTray({
   // activation (show + focus), not the ambient showInactive path.
   restoreMainWindow: () =>
     ensureMainWindow(mainWindow, { isReady: app.isReady(), createWindow, focusWindow: activateWindow }),
+  productName: APP_WINDOW_TITLE,
   isQuittingForHandoff: () => isQuittingForHandoff,
   log: rememberLog
 })
@@ -15714,7 +15715,7 @@ function createWindow() {
         const exit = details?.exitCode === undefined ? '' : `, exit code ${String(details.exitCode)}`
         rememberLog(`[renderer:main] renderer terminated while live (reason=${reason}${exit}); surfacing recovery page`)
         void loadRendererLoadErrorPage(mainWindow, {
-          title: 'Hermes desktop UI was terminated',
+          title: `${APP_WINDOW_TITLE} desktop UI was terminated`,
           errorDescription:
             `The desktop UI process was terminated unexpectedly (reason: ${reason}${exit}). ` +
             'Your sessions and the background gateway are unaffected — reload to continue.',

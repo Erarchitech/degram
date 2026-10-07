@@ -12,6 +12,8 @@ interface Options {
   preferencesPath: string
   getIconPath: () => string | undefined
   restoreMainWindow: () => void
+  /** The product name in the tray tooltip and menu (DeGram in variant degram, Phase 1301). */
+  productName?: string
   isQuittingForHandoff: () => boolean
   log: (message: string) => void
 }
@@ -183,13 +185,15 @@ export function createMinimizeToTray(options: Options) {
             height: process.platform === 'darwin' ? 18 : 24
           })
         )
-        tray.setToolTip('Hermes')
+        const product = options.productName ?? 'Hermes'
+
+        tray.setToolTip(product)
         tray.setContextMenu(
           Menu.buildFromTemplate([
-            { label: 'Show Hermes', click: restore },
+            { label: `Show ${product}`, click: restore },
             { type: 'separator' },
             // Do not bypass the ordinary active-work confirmation or teardown.
-            { label: 'Quit Hermes', click: () => app.quit() }
+            { label: `Quit ${product}`, click: () => app.quit() }
           ])
         )
 

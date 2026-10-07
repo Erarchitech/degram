@@ -52,6 +52,19 @@ const winParam = new URLSearchParams(window.location.search).get('win')
 
 applyProductWindowTitle(document, window.hermesDesktop?.degramEnabled === true, winParam)
 
+// DeGram shows no Hermes name (Phase 1301): rebrand interface text and labels as they render.
+if (window.hermesDesktop?.degramEnabled === true) {
+  void import('./degram/brand').then(({ startDomRebrand }) => {
+    const start = () => startDomRebrand(document.body)
+
+    if (document.body) {
+      start()
+    } else {
+      document.addEventListener('DOMContentLoaded', start, { once: true })
+    }
+  })
+}
+
 // The `?win=` kinds whose Electron window is `transparent: true` and so paints
 // nothing but its own surface over the user's desktop. `secondary` (a session
 // window) and `browser` are ordinary opaque windows and are deliberately not

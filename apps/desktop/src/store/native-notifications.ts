@@ -1,9 +1,11 @@
 import { atom } from 'nanostores'
 
+import { rebrandText } from '@/degram/brand'
 import { translateNow } from '@/i18n'
 import { type HermesOpenTarget, resolveHermesOpenPath } from '@/lib/hermes-open-target'
 import { persistString, storedString } from '@/lib/storage'
 
+import { $degramEnabled } from './degram-flag'
 import { recordFeatureToggle } from './desktop-metrics'
 import { $gateway } from './gateway'
 import { withinNativeNotifyBaseline } from './notify-baseline'
@@ -242,12 +244,15 @@ export function dispatchNativeNotification(input: NativeNotificationInput): bool
   }
 
   const namedKey = input.sessionId ? NAMED_TITLE_KEYS[input.kind] : undefined
-  const title = namedKey && input.sessionId ? withSessionLabel(namedKey, input.sessionId) : input.title
+  const rawTitle = namedKey && input.sessionId ? withSessionLabel(namedKey, input.sessionId) : input.title
+  // DeGram shows no Hermes name (Phase 1301), the OS notification included.
+  const brand = (text: string | undefined) => (text && $degramEnabled.get() ? rebrandText(text) : text)
+  const title = brand(rawTitle) ?? rawTitle
 
   void window.hermesDesktop?.notify({
     actions: input.actions,
     activate: input.activate,
-    body: input.body,
+    body: brand(input.body),
     focusSessionId: input.sessionId ? (storedSessionIdForRuntimeId(input.sessionId) ?? undefined) : undefined,
     icon: input.icon,
     kind: input.kind,

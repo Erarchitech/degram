@@ -24,6 +24,9 @@ import {
 } from '@hermes/shared/i18n'
 import { atom } from 'nanostores'
 
+import { rebrandCatalog } from '@/degram/brand'
+import { $degramEnabled } from '@/store/degram-flag'
+
 import { isBundledLocale, TRANSLATIONS } from './catalog'
 import type { Locale, Translations } from './types'
 
@@ -241,6 +244,11 @@ export function resolveTranslations(locale: Locale): Translations {
         adaptStringOverrides(value, entry.translations) as TranslationOverride<Translations>
       )
     }
+  }
+
+  // DeGram shows no Hermes name (Phase 1301): every resolved catalog string and message result is rebranded.
+  if ($degramEnabled.get()) {
+    value = rebrandCatalog(value)
   }
 
   resolved.set(locale, { version, value })
