@@ -3,7 +3,9 @@ import { useStore } from '@nanostores/react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { degramFirstRunLocale } from '@/degram/first-run-locale'
+import { degramLocaleConfigClient } from '@/degram/locale-config'
 import { getHermesConfigRecord, type HermesConfigRecord, retainConfigReadOrigin, saveHermesConfig } from '@/hermes'
+import { $degramEnabled } from '@/store/degram-flag'
 
 import { TRANSLATIONS } from './catalog'
 import {
@@ -23,7 +25,7 @@ export interface I18nConfigClient {
   saveConfig: (config: HermesConfigRecord) => Promise<{ ok: boolean }>
 }
 
-const defaultConfigClient: I18nConfigClient = {
+const hermesConfigClient: I18nConfigClient = {
   getConfig: () => {
     if (typeof window === 'undefined' || !window.hermesDesktop?.api) {
       return Promise.resolve({})
@@ -96,9 +98,14 @@ export interface I18nProviderProps {
   scopeKey?: string
 }
 
+/** Variant degram keeps the language out of the locked backend config (degram/locale-config.ts). */
+function defaultConfigClient(): I18nConfigClient {
+  return $degramEnabled.get() ? degramLocaleConfigClient : hermesConfigClient
+}
+
 export function I18nProvider({
   children,
-  configClient = defaultConfigClient,
+  configClient = defaultConfigClient(),
   initialLocale,
   scopeKey
 }: I18nProviderProps) {
