@@ -643,7 +643,10 @@ def test_degram_extras_drop_only_the_excluded_sdks_and_nothing_pulls_them_back()
     assert {"all", "mcp", "web"} <= set(extras)
     import tomllib
     declared = set(tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"])
-    assert set(extras) == declared - set(native.DEGRAM_EXCLUDED_EXTRAS)
+    from pm.features import opt_in_extras
+    opt_in = set(opt_in_extras(repo))
+    assert opt_in and not (opt_in & set(extras)), "opt-in extras (native sdists like silk) never ship"
+    assert set(extras) == declared - opt_in - set(native.DEGRAM_EXCLUDED_EXTRAS)
 
 
 def test_degram_extras_refuse_a_meta_extra_that_pulls_an_excluded_one(tmp_path):

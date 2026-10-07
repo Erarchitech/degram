@@ -82,13 +82,17 @@ def _self_extras(requirements: list[str]) -> set[str]:
 
 
 def degram_extras(pyproject: Path, excluded: tuple[str, ...] = DEGRAM_EXCLUDED_EXTRAS) -> list[str]:
-    """Every declared extra except ``excluded``. Refuses when an excluded extra is missing or when a kept
+    """What an all-extras bundle installs (every declared extra minus the opt-in ones, see
+    ``pm.features.opt_in_extras``) except ``excluded``. Refuses when an excluded extra is missing or when a kept
     (meta) extra pulls one back in, so the exclusion cannot silently stop working."""
+    from pm.features import opt_in_extras
+
     extras = _optional_dependencies(pyproject)
     missing = [name for name in excluded if name not in extras]
     if missing:
         raise ValueError(f"excluded extras are not declared: {missing}")
-    kept = sorted(name for name in extras if name not in excluded)
+    opt_in = set(opt_in_extras(Path(pyproject).parent))
+    kept = sorted(name for name in extras if name not in excluded and name not in opt_in)
     for name in kept:
         seen: set[str] = set()
         stack = [name]
