@@ -41,6 +41,13 @@ def prune_uv_cache_dists(cache: Path, drop: set[str]) -> int:
     return _prune(cache, lambda name: name in names)
 
 
+def prune_uv_cache_to_dists(cache: Path, keep: set[str]) -> int:
+    """Delete cache entries of every dist outside ``keep`` (a slim payload ships wheels only for what its venv
+    actually installed, so an offline rebuild of that same set still resolves)."""
+    names = {n.lower().replace("_", "-") for n in keep}
+    return _prune(cache, lambda name: name not in names)
+
+
 def _prune(cache: Path, should_drop) -> int:
     dist_info = re.compile(r"([A-Za-z0-9_.]+?)-\d[^-]*\.dist-info")
 

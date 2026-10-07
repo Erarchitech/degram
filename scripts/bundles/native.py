@@ -52,15 +52,20 @@ def _arch_guard(store_dir: Path) -> list[str]:
 
 
 
-from pm.uv_cache_prune import lock_package_names, prune_uv_cache_dists, prune_uv_cache_to_lock
+from pm.uv_cache_prune import (lock_package_names, prune_uv_cache_dists, prune_uv_cache_to_dists,
+                               prune_uv_cache_to_lock)
 
-__all__ = ["prune_uv_cache_to_lock", "prune_uv_cache_dists", "lock_package_names", "stage_uv_cache",
-           "DEGRAM_EXCLUDED_EXTRAS", "degram_extras", "excluded_distributions"]
+__all__ = ["prune_uv_cache_to_lock", "prune_uv_cache_dists", "prune_uv_cache_to_dists", "lock_package_names",
+           "stage_uv_cache", "DEGRAM_EXTRAS", "degram_extras", "degram_tool_names", "installed_distributions"]
 
-# DeGram (Phase 1301 finding F-11): extras whose SDKs the degram variant can never use (TTS is not registered,
-# D-22; the model is reached only through the DG relay, D-16). Their deeply nested modules also push payload
-# paths past the 260-character limit of the NSIS installer at the default per-user install directory.
-DEGRAM_EXCLUDED_EXTRAS = ("tts-premium", "mistral")
+# DeGram payload (Phase 1301, F-11 and the owner's size decision 2026-10-07). The degram agent registers only
+# clarify, todo, the degram toolset and the Revit MCP tools (D-22) and reaches the model only through the DG relay
+# (D-16), so the payload carries exactly what that needs: the core dependencies plus these extras (web: the
+# `serve` backend; mcp: the Revit MCP client; acp, cron, pty, vision: hooks the core imports), the required PM tools
+# (non-optional: a missing one would report "install out of sync" on every start) plus Python, and a uv-cache
+# holding only the wheels the venv installed. Everything else (llama.cpp, Chromium, git, messaging, cloud sandboxes,
+# speech SDKs) is never usable in variant degram.
+DEGRAM_EXTRAS = ("acp", "cron", "mcp", "pty", "vision", "web")
 
 
 def _optional_dependencies(pyproject: Path) -> dict[str, list[str]]:
@@ -70,53 +75,36 @@ def _optional_dependencies(pyproject: Path) -> dict[str, list[str]]:
     return data["project"]["optional-dependencies"]
 
 
-def _self_extras(requirements: list[str]) -> set[str]:
-    import re
-
-    found: set[str] = set()
-    for req in requirements:
-        match = re.match(r"\s*hermes-agent\[([^\]]+)\]", req)
-        if match:
-            found |= {part.strip() for part in match.group(1).split(",")}
-    return found
-
-
-def degram_extras(pyproject: Path, excluded: tuple[str, ...] = DEGRAM_EXCLUDED_EXTRAS) -> list[str]:
-    """What an all-extras bundle installs (every declared extra minus the opt-in ones, see
-    ``pm.features.opt_in_extras``) except ``excluded``. Refuses when an excluded extra is missing or when a kept
-    (meta) extra pulls one back in, so the exclusion cannot silently stop working."""
+def degram_extras(pyproject: Path, wanted: tuple[str, ...] = DEGRAM_EXTRAS) -> list[str]:
+    """The degram extras, checked against the project: each must be declared and none may be opt-in (opt-in
+    extras, e.g. silk, need native builds and never ship)."""
     from pm.features import opt_in_extras
 
-    extras = _optional_dependencies(pyproject)
-    missing = [name for name in excluded if name not in extras]
+    declared = _optional_dependencies(pyproject)
+    missing = [name for name in wanted if name not in declared]
     if missing:
-        raise ValueError(f"excluded extras are not declared: {missing}")
-    opt_in = set(opt_in_extras(Path(pyproject).parent))
-    kept = sorted(name for name in extras if name not in excluded and name not in opt_in)
-    for name in kept:
-        seen: set[str] = set()
-        stack = [name]
-        while stack:
-            for sub in _self_extras(extras.get(stack.pop(), [])):
-                if sub in excluded:
-                    raise ValueError(f"extra {name!r} pulls excluded extra {sub!r}")
-                if sub not in seen:
-                    seen.add(sub)
-                    stack.append(sub)
-    return kept
+        raise ValueError(f"degram extras are not declared: {missing}")
+    opt_in = sorted(set(wanted) & set(opt_in_extras(Path(pyproject).parent)))
+    if opt_in:
+        raise ValueError(f"degram extras must not be opt-in: {opt_in}")
+    return sorted(set(wanted))
 
 
-def excluded_distributions(pyproject: Path, excluded: tuple[str, ...]) -> set[str]:
-    """Distribution names the excluded extras require directly (their wheels are dropped from the cache)."""
+def degram_tool_names(names: list[str]) -> list[str]:
+    """PM tools of a degram payload: the required (non-optional) ones, internal ones (uv) and Python."""
+    return [n for n in names if n == "python" or not get_package(n).optional]
+
+
+def installed_distributions(venv_dir: Path) -> set[str]:
+    """Normalized dist names installed in ``venv_dir`` (from its *.dist-info directories)."""
     import re
 
-    extras = _optional_dependencies(pyproject)
+    pattern = re.compile(r"([A-Za-z0-9_.]+?)-\d[^-]*\.dist-info$")
     names: set[str] = set()
-    for name in excluded:
-        for req in extras.get(name, []):
-            match = re.match(r"\s*([A-Za-z0-9_.-]+)", req)
-            if match and match.group(1) != "hermes-agent":
-                names.add(match.group(1).lower().replace("_", "-"))
+    for info in Path(venv_dir).glob("**/site-packages/*.dist-info"):
+        match = pattern.match(info.name)
+        if match:
+            names.add(match.group(1).lower().replace("_", "-").replace(".", "-"))
     return names
 
 
@@ -204,7 +192,7 @@ def prune_staged_store(store_dir: Path, names: list[str]) -> None:
 
 def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
                    tools: Path | None = None, env: dict | None = None,
-                   exclude_extras: tuple[str, ...] = ()) -> Path:
+                   variant: str | None = None) -> Path:
     """Prepare final payload dependencies inside the caller's isolated PM process.
 
     The caller supplies its compiler environment; only the full standalone
@@ -220,12 +208,11 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         prepared_path(out).unlink(missing_ok=True)
         (out / "manifest.json").unlink(missing_ok=True)
         return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
-                               cache=Path(cache).resolve(), tools=tools, env=env,
-                               exclude_extras=tuple(exclude_extras))
+                               cache=Path(cache).resolve(), tools=tools, env=env, variant=variant)
 
 
 def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
-                    tools: Path | None, env: dict | None, exclude_extras: tuple[str, ...] = ()) -> Path:
+                    tools: Path | None, env: dict | None, variant: str | None = None) -> Path:
     from pm import paths
     from pm.package import InstallError
 
@@ -244,10 +231,14 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         raise ValueError("selected revision's PM lock differs from the builder; use a checkout at that revision")
     build_env = os.environ if env is None else env
 
+    degram = variant == "degram"
     names = [
         n for n in _bundle_package_names()
         if get_package(n).missing_reason(current_target()) is None
     ]
+    if degram:
+        names = degram_tool_names(names)
+        print(f"  degram payload tools: {', '.join(names)}", flush=True)
     from pm import prepare_tools, stage_tools
 
     prepare_tools(names, out=Path(tools) if tools is not None else store_dir,
@@ -289,12 +280,12 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     from pm import build_environment
 
     # Cold native wheels need a larger budget than interactive installs.
-    if exclude_extras:
-        extras = degram_extras(repo_dir / "pyproject.toml", exclude_extras)
+    if degram:
+        extras = degram_extras(repo_dir / "pyproject.toml")
         build_environment(source=repo_dir, python=python_bin, out=venv_dir,
                           env=env, cache=cache, extras=extras, all_extras=False, sealed=True, explicit=True,
                           timeout=2 * 60 * 60)
-        print(f"✓ venv ({len(extras)} extras, without {', '.join(exclude_extras)}, on the staged interpreter)")
+        print(f"✓ venv (degram extras {', '.join(extras)}, on the staged interpreter)")
     else:
         build_environment(source=repo_dir, python=python_bin, out=venv_dir,
                           env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
@@ -320,10 +311,9 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         print(f"  uv-cache: copying {src_cache} → payload...", flush=True)
         stage_uv_cache(src_cache, payload_cache)
         pruned = prune_uv_cache_to_lock(payload_cache, repo_dir)
-        if exclude_extras:
-            dropped = prune_uv_cache_dists(payload_cache, excluded_distributions(repo_dir / "pyproject.toml",
-                                                                                 exclude_extras))
-            print(f"✓ uv-cache: dropped {dropped} entries of the excluded extras", flush=True)
+        if degram:
+            dropped = prune_uv_cache_to_dists(payload_cache, installed_distributions(venv_dir))
+            print(f"✓ uv-cache: dropped {dropped} entries the degram venv does not install", flush=True)
         print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
     else:
         raise InstallError("uv-cache", "runtime dependency cache is missing")
