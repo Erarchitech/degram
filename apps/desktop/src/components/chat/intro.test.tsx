@@ -90,19 +90,26 @@ it('localizes the custom-personality fallback without translating its user-suppl
   }
 })
 
-it('writes DEGRAM, never HERMES AGENT, across a fresh draft in variant degram (Phase 1301)', async () => {
+it('shows the breathing DeGram mark, never the HERMES AGENT lettering, on a fresh draft in variant degram (Phase 1301)', async () => {
   const { $degramEnabled } = await import('@/store/degram-flag')
+  const { DEGRAM_MARK_DOT_COUNT } = await import('@/degram/animated-mark')
 
   $degramEnabled.set(true)
 
   try {
     const { container } = render(<Fixture />)
+    const mark = container.querySelector('[data-slot="degram-mark"]')
 
-    expect(container.querySelector('.wordmark')?.getAttribute('aria-label')).toBe('DEGRAM')
+    expect(mark?.getAttribute('aria-label')).toBe('DeGram')
+    expect(mark?.querySelectorAll('circle')).toHaveLength(DEGRAM_MARK_DOT_COUNT)
+    expect(DEGRAM_MARK_DOT_COUNT).toBe(91)
+    expect(container.querySelector('.wordmark')).toBeNull()
     expect(container.textContent).not.toMatch(/HERMES/)
   } finally {
     $degramEnabled.set(false)
   }
+
+  cleanup()
 
   const { container } = render(<Fixture />)
 

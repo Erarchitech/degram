@@ -1,0 +1,58 @@
+/* The breathing DeGram mark (animated-mark.tsx). Each dot is a <g> carrying its ring index, its outward travel at
+   the pulse peak (--sx, --sy) and its peak scale (--swell). Two transforms run on one shared clock: the group moves
+   radially (the composition stretches), the circle scales about its own centre (the dots swell). A ring trails the
+   one inside it by --ring-lag, so the pulse spreads from the centre outwards; a sine-like ease keeps it smooth. */
+
+.degram-mark {
+  --pulse: 3.6s;
+  --ring-lag: 0.32s;
+  --pulse-ease: cubic-bezier(0.45, 0, 0.55, 1);
+
+  display: block;
+  overflow: visible;
+  fill: currentColor;
+}
+
+.degram-mark__dot {
+  animation: degram-mark-stretch var(--pulse) var(--pulse-ease) infinite;
+  animation-delay: calc(var(--ring) * var(--ring-lag));
+  will-change: transform;
+}
+
+.degram-mark__dot circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: degram-mark-swell var(--pulse) var(--pulse-ease) infinite;
+  animation-delay: calc(var(--ring) * var(--ring-lag));
+  will-change: transform;
+}
+
+@keyframes degram-mark-stretch {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+
+  50% {
+    transform: translate(var(--sx), var(--sy));
+  }
+}
+
+@keyframes degram-mark-swell {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(var(--swell));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .degram-mark__dot,
+  .degram-mark__dot circle {
+    animation: none;
+    will-change: auto;
+  }
+}

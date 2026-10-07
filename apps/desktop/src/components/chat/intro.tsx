@@ -1,8 +1,11 @@
+import { useStore } from '@nanostores/react'
 import { useState } from 'react'
 
+import { DegramAnimatedMark } from '@/degram/animated-mark'
 import { productMark } from '@/degram/brand'
 import { useI18n } from '@/i18n'
 import { capitalize, normalize } from '@/lib/text'
+import { $degramEnabled } from '@/store/degram-flag'
 
 import introCopyJsonl from './intro-copy.jsonl?raw'
 import { Wordmark } from './wordmark'
@@ -161,6 +164,7 @@ function resolveCopy(personality?: string, seed?: number): IntroCopy {
 export function Intro({ personality, seed }: IntroProps) {
   const [mountSeed] = useState(() => Math.floor(Math.random() * 100000))
   const { t } = useI18n()
+  const degramEnabled = useStore($degramEnabled)
   const rotationSeed = mountSeed + (seed ?? 0)
   const copy = resolveCopy(personality, rotationSeed)
   const key = normalizeKey(personality)
@@ -176,7 +180,12 @@ export function Intro({ personality, seed }: IntroProps) {
       data-slot="aui_intro"
     >
       <div className="w-full min-w-0">
-        <Wordmark className="mb-1" text={productMark('HERMES AGENT')} />
+        {/* DeGram (Phase 1301): the breathing halftone-hexagon mark replaces the red DEGRAM lettering. */}
+        {degramEnabled ? (
+          <DegramAnimatedMark className="mx-auto mb-5 size-28 text-foreground/90" />
+        ) : (
+          <Wordmark className="mb-1" text={productMark('HERMES AGENT')} />
+        )}
 
         <p className="m-0 text-center leading-normal tracking-tight">{body}</p>
       </div>
