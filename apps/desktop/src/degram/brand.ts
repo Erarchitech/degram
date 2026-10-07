@@ -9,12 +9,29 @@
 // model's words, not product chrome. Identifiers (HERMES_HOME) and lowercase commands or paths stay as they are.
 // The logo is already DeGram's (components/brand-mark.tsx, F-04).
 
-const BRAND = 'DeGram'
-const PATTERN = /\bHermes(?: Agent| Desktop)?\b(?![A-Za-z_])/g
+import { $degramEnabled } from '@/store/degram-flag'
 
-/** `text` with the Hermes product names replaced by DeGram. */
+const BRAND = 'DeGram'
+const MARK = 'DEGRAM'
+const PATTERN = /\bHermes(?: Agent| Desktop)?\b(?![A-Za-z_])/g
+/** The uppercase wordmarks; identifiers (HERMES_HOME) and tags (HERMES-WATCH) are left alone. */
+const UPPER = /\bHERMES(?: AGENT| DESKTOP)?\b(?![A-Za-z_-])/g
+
+/** `text` with the Hermes product names replaced by DeGram (DEGRAM for the uppercase wordmarks). */
 export function rebrandText(text: string): string {
-  return text.includes('Hermes') ? text.replace(PATTERN, BRAND) : text
+  let out = text.includes('Hermes') ? text.replace(PATTERN, BRAND) : text
+
+  if (out.includes('HERMES')) {
+    out = out.replace(UPPER, MARK)
+  }
+
+  return out
+}
+
+/** The display lettering of a component that writes the upstream mark letter by letter (DecodeText, Wordmark),
+ *  which the DOM rebrand cannot see as one word: DEGRAM in variant degram. */
+export function productMark(upstream: 'HERMES' | 'HERMES AGENT'): string {
+  return $degramEnabled.get() ? MARK : upstream
 }
 
 /** A copy of a translation tree with every string leaf and every function result rebranded. */
@@ -58,7 +75,7 @@ function rebrandElement(element: Element): void {
   for (const name of ATTRIBUTES) {
     const current = element.getAttribute(name)
 
-    if (current && current.includes('Hermes')) {
+    if (current && (current.includes('Hermes') || current.includes('HERMES'))) {
       element.setAttribute(name, rebrandText(current))
     }
   }
@@ -67,7 +84,11 @@ function rebrandElement(element: Element): void {
 function rebrandTextNode(node: Node): void {
   const parent = node.parentElement
 
-  if (parent && !parent.closest(PROTECTED) && node.nodeValue?.includes('Hermes')) {
+  if (
+    parent &&
+    !parent.closest(PROTECTED) &&
+    (node.nodeValue?.includes('Hermes') || node.nodeValue?.includes('HERMES'))
+  ) {
     node.nodeValue = rebrandText(node.nodeValue)
   }
 }

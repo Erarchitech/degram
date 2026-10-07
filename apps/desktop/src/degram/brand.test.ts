@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { rebrandCatalog, rebrandText, startDomRebrand } from './brand'
+import { productMark, rebrandCatalog, rebrandText, startDomRebrand } from './brand'
 
 describe('rebrandText (Phase 1301: no Hermes name in DeGram)', () => {
   it('replaces the product names with DeGram', () => {
@@ -9,6 +9,13 @@ describe('rebrandText (Phase 1301: no Hermes name in DeGram)', () => {
     expect(rebrandText('Hermes Desktop cannot answer x')).toBe('DeGram cannot answer x')
     expect(rebrandText('Hermes (default)')).toBe('DeGram (default)')
     expect(rebrandText('Hermes’s settings')).toBe('DeGram’s settings')
+  })
+
+  it('replaces the uppercase wordmarks too', () => {
+    expect(rebrandText('HERMES AGENT')).toBe('DEGRAM')
+    expect(rebrandText('HERMES')).toBe('DEGRAM')
+    expect(rebrandText('HERMES DESKTOP')).toBe('DEGRAM')
+    expect(rebrandText('HERMES_HOME and HERMES-WATCH')).toBe('HERMES_HOME and HERMES-WATCH')
   })
 
   it('leaves identifiers, paths and lowercase commands alone', () => {
@@ -104,5 +111,17 @@ describe('startDomRebrand', () => {
     document.body.append(p)
     await flush()
     expect(p.textContent).toBe('Hermes')
+  })
+})
+
+describe('productMark', () => {
+  it('is DEGRAM in variant degram and the upstream mark otherwise', async () => {
+    const { $degramEnabled } = await import('@/store/degram-flag')
+
+    $degramEnabled.set(true)
+    expect(productMark('HERMES')).toBe('DEGRAM')
+    expect(productMark('HERMES AGENT')).toBe('DEGRAM')
+    $degramEnabled.set(false)
+    expect(productMark('HERMES')).toBe('HERMES')
   })
 })

@@ -1,6 +1,7 @@
 import { createContext, memo, useContext } from 'react'
 
 import { DecodeText } from '@/components/ui/decode-text'
+import { productMark } from '@/degram/brand'
 
 import { StatusbarControls } from '../shell/statusbar-controls'
 
@@ -27,7 +28,7 @@ export const WiredPane = memo(function WiredPane({ part }: { part: keyof WiringA
 
     return (
       <div className="grid h-full place-items-center">
-        <DecodeText className="text-(--ui-text-quaternary)" cursor prefix={1} text="HERMES" />
+        <DecodeText className="text-(--ui-text-quaternary)" cursor prefix={1} text={productMark('HERMES')} />
       </div>
     )
   }

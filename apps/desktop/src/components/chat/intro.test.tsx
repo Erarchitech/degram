@@ -89,3 +89,22 @@ it('localizes the custom-personality fallback without translating its user-suppl
     expect(body).toContain('My Custom Voice')
   }
 })
+
+it('writes DEGRAM, never HERMES AGENT, across a fresh draft in variant degram (Phase 1301)', async () => {
+  const { $degramEnabled } = await import('@/store/degram-flag')
+
+  $degramEnabled.set(true)
+
+  try {
+    const { container } = render(<Fixture />)
+
+    expect(container.querySelector('.wordmark')?.getAttribute('aria-label')).toBe('DEGRAM')
+    expect(container.textContent).not.toMatch(/HERMES/)
+  } finally {
+    $degramEnabled.set(false)
+  }
+
+  const { container } = render(<Fixture />)
+
+  expect(container.querySelector('.wordmark')?.getAttribute('aria-label')).toBe('HERMES AGENT')
+})
