@@ -3,7 +3,13 @@ import fs from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDgSession, DEGRAM_HEARTBEAT_S, DEGRAM_TOKEN_RENEW_S } from './dg-session'
-import { type BackendHandle, createScopeController, type DegramEvent, type ScopeKey } from './scope'
+import {
+  AGENT_OUTCOME_CODES,
+  type BackendHandle,
+  createScopeController,
+  type DegramEvent,
+  type ScopeKey
+} from './scope'
 import {
   createFakeClock,
   createFakeDg,
@@ -753,6 +759,54 @@ describe('forwarded agent outcomes', () => {
     expect(r.events).toEqual([])
     expect(r.rpcCalls.map(c => c.method)).toEqual(['degram.credentials.set'])
     expect(r.scope.getState().status).toBe('ready')
+  })
+
+  it('CREDENTIALS_MISSING re-hands the credential to the scope backend once per scope open (G-5, G-7)', async () => {
+    const r = rig()
+
+    await openAlpha(r)
+    r.rpcCalls.length = 0
+    r.dg.requests.length = 0
+
+    expect(await r.scope.reportOutcome('CREDENTIALS_MISSING')).toBe(true)
+    expect(mintRequests(r)).toBe(1)
+    expect(r.rpcCalls.map(c => c.method)).toEqual(['degram.credentials.set'])
+    expect(r.rpcCalls[0]!.params.token).toBe(TOKEN_B)
+
+    // A second report in the same scope epoch does nothing: no mint, no handoff, no loop.
+    expect(await r.scope.reportOutcome('CREDENTIALS_MISSING')).toBe(true)
+    expect(mintRequests(r)).toBe(1)
+    expect(r.rpcCalls).toHaveLength(1)
+
+    // It is not a verdict on the session or on the access.
+    expect(r.events).toEqual([])
+    expect(r.scope.getState().status).toBe('ready')
+  })
+
+  it('CREDENTIALS_MISSING is allowed once again after the scope was opened anew', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+
+    await openAlpha(r)
+    await r.scope.reportOutcome('CREDENTIALS_MISSING')
+    await r.scope.selectProject('beta')
+    r.rpcCalls.length = 0
+
+    await r.scope.reportOutcome('CREDENTIALS_MISSING')
+    expect(r.rpcCalls.map(c => [c.profile, c.method])).toEqual([['scope-alice-ACME-beta', 'degram.credentials.set']])
+  })
+
+  it('CREDENTIALS_MISSING with no open scope changes nothing', async () => {
+    const r = rig()
+
+    await r.session.refresh()
+
+    expect(await r.scope.reportOutcome('CREDENTIALS_MISSING')).toBe(true)
+    expect(r.rpcCalls).toEqual([])
+    expect(mintRequests(r)).toBe(0)
+  })
+
+  it('CREDENTIALS_MISSING is part of the agent outcome set main acts on', () => {
+    expect(AGENT_OUTCOME_CODES).toContain('CREDENTIALS_MISSING')
   })
 
   it.each(['DELEGATED_SCOPE_CHANGED', 'ACCESS_DENIED'])('%s revokes the active scope', async code => {

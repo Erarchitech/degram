@@ -16,6 +16,7 @@ import {
 } from '@/lib/storage'
 import { withTimeout } from '@/lib/with-timeout'
 import { registryConnectionKind } from '@/store/connection-registry-state'
+import { $degramEnabled } from '@/store/degram-flag'
 import {
   $gateway,
   activeGatewayConnectionId,
@@ -109,6 +110,12 @@ export function invalidateProfileListFetches(): void {
 let refreshInFlight: Promise<ProfileInfo[]> | null = null
 
 export function refreshProfiles(): Promise<ProfileInfo[]> {
+  // Variant DeGram (plan 1301-18, G-6): the agent backend locks /api/profiles (DEGRAM_LOCKED) and the profile
+  // rail is hidden, so a refresh could only fail and retry. The cached list stays as it is.
+  if ($degramEnabled.get()) {
+    return Promise.resolve($profiles.get())
+  }
+
   if (refreshInFlight) {
     return refreshInFlight
   }
@@ -246,6 +253,11 @@ interface ActiveProfileResponse {
 // Pull the running backend's current profile + the available profile list.
 // Best-effort: failures (backend not up yet) leave the prior values intact.
 export async function refreshActiveProfile(): Promise<void> {
+  // Variant DeGram: /api/profiles/active is locked too (see refreshProfiles).
+  if ($degramEnabled.get()) {
+    return
+  }
+
   const epoch = profileListEpoch
 
   try {

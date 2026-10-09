@@ -16,6 +16,8 @@ import { notify } from '@/store/notifications'
 import type { DegramBridge, DegramState } from '../../electron/degram/ipc'
 import type { DegramEvent } from '../../electron/degram/scope'
 
+import { type NewScopeHandler, routeDisagreesWithScope } from './scope-route'
+
 /** A boot refusal main reported (plan 04: HOME_OVERLAP). */
 export interface DegramBootError {
   code: string
@@ -93,26 +95,28 @@ function applyState(state: DegramState): void {
 }
 
 /**
- * True once per newly ready scope: a selection the shell has not handled yet means a new scope epoch, so a fresh
- * chat opens for it (D-19). A scope that is already ready at the first observation is only recorded, so a reload
- * never disturbs a session restore.
+ * What the shell must do for this observation of the scope: `new` once per newly ready scope epoch (a selection the
+ * shell has not handled yet: a fresh chat opens for it, D-19), `restore` once when the scope was already ready at the
+ * first observation but the chat's gateway route is not on its profile (a route restored from the previous run, UAT
+ * 6.1: the route moves, no fresh chat), `null` otherwise. A scope already ready AND already routed at the first
+ * observation is only recorded, so a reload never disturbs a session restore.
  */
-function noteScope(state: DegramState): boolean {
+function noteScope(state: DegramState): 'new' | 'restore' | null {
   const { epoch, status } = state.scope
 
   if (handledEpoch === undefined) {
     handledEpoch = status === 'ready' ? epoch : null
 
-    return false
+    return status === 'ready' && routeDisagreesWithScope(state) ? 'restore' : null
   }
 
   if (status === 'ready' && handledEpoch !== epoch) {
     handledEpoch = epoch
 
-    return true
+    return 'new'
   }
 
-  return false
+  return null
 }
 
 function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
@@ -171,7 +175,7 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
  */
 export function startDegramSync(
   bridge: DegramBridge | undefined = degramBridge(),
-  onNewScope?: () => void
+  onNewScope?: NewScopeHandler
 ): () => void {
   if (!bridge) {
     return () => undefined
@@ -183,8 +187,10 @@ export function startDegramSync(
   const take = (state: DegramState): void => {
     applyState(state)
 
-    if (noteScope(state)) {
-      onNewScope?.()
+    const scope = noteScope(state)
+
+    if (scope) {
+      onNewScope?.(state, { fresh: scope === 'new' })
     }
   }
 
@@ -265,7 +271,7 @@ export function parseIsolationBootError(message: string | null | undefined): Deg
 export interface DegramActions {
   /** Stop the running response (one Stop, synchronous in the UI; main-side cancellation is plan 14). */
   stopResponse: () => Promise<void>
-  /** Open a fresh chat for the scope that was just selected (D-19). */
+  /** Open a fresh chat for the scope that was just selected (D-19); the shell host moves the route first (G-7). */
   startNewChat: () => void
 }
 

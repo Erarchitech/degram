@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,12 +14,13 @@ import { I18nProvider } from '@/i18n'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $gateway } from '@/store/gateway'
 import { $notifications } from '@/store/notifications'
+import { $activeGatewayProfile } from '@/store/profile'
 import { $activeSessionId, $busy } from '@/store/session'
 import { stubMenuDomApis } from '@/test/jsdom'
 
 import { AGENT_OUTCOME_CODES } from '../../electron/degram/scope'
 
-import { degramOnStop, degramPromptSubmit } from './composer-seam'
+import { degramOnStop, degramPromptSubmit, useDegramSendBlocked } from './composer-seam'
 import { ConnectedScopeStrip } from './connected-scope-strip'
 import { ContextCard, DegramComposerSections, FailureBanner } from './context-card'
 import { DocumentPicker, hasIdentity, middleEllipsize } from './document-picker'
@@ -198,12 +199,16 @@ afterEach(() => {
   $signOutPending.set(false)
   $notifications.set([])
   $degramEnabled.set(false)
+  $activeGatewayProfile.set('default')
   delete (window as { hermesDesktop?: unknown }).hermesDesktop
 })
 
 const readyHarness = async (project = 'Alpha', epoch = 1) => {
   const state = readyState(project, epoch)
   const h = install(state)
+
+  // The chat follows the ready scope's profile (plan 1301-18); a route on another profile blocks Send.
+  $activeGatewayProfile.set(READY.profile)
 
   h.emitState(state)
   await act(async () => undefined)
@@ -967,6 +972,75 @@ describe('policy deny (T-1301-14-02)', () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+describe('route guard (G-7, D-19, T-1301-18-02)', () => {
+  const setup = async () => {
+    $degramEnabled.set(true)
+    await readyHarness()
+
+    const gw = fakeGateway(
+      ghHandlers({
+        'degram.context.send': () => ({ status: 'ok', submit: { status: 'streaming', user_row_id: 7 } }),
+        'prompt.submit': () => ({ status: 'streaming' })
+      })
+    )
+
+    return { gw, rpc: (m: string, p?: Record<string, unknown>) => gw.request(m, p ?? {}) as Promise<never> }
+  }
+
+  it('blocks Send and refuses the submit, with no RPC, while the route is on another profile than the scope', async () => {
+    const { gw, rpc } = await setup()
+
+    expect(sendBlockedReason()).toBeNull()
+
+    act(() => $activeGatewayProfile.set('another-scope-profile'))
+    expect(sendBlockedReason()).toBe('route-mismatch')
+    expect(await composerGate({ text: 'hi' })).toBeNull()
+
+    await expect(degramPromptSubmit(rpc, { session_id: 's1', text: 'hi' }, 1)).rejects.toThrow('ROUTE_MISMATCH')
+    expect(gw.count('prompt.submit')).toBe(0)
+    expect(gw.count('degram.context.send')).toBe(0)
+    // The machine never entered streaming: nothing went out.
+    expect($lifecycle.get().phase).toBe('idle')
+
+    act(() => $activeGatewayProfile.set('p'))
+    expect(sendBlockedReason()).toBeNull()
+    expect(await composerGate({ text: 'hi' })).toEqual({ text: 'hi' })
+  })
+
+  it('wins over a pinned document and its ready preview', async () => {
+    await setup()
+    await pinGh()
+    await act(async () => {
+      await refreshPreview()
+    })
+    expect(sendBlockedReason()).toBeNull()
+
+    act(() => $activeGatewayProfile.set('another-scope-profile'))
+    expect(sendBlockedReason()).toBe('route-mismatch')
+    expect(await composerGate({ text: 'hi' })).toBeNull()
+  })
+
+  it('the Send button follows the route in the same render', async () => {
+    await setup()
+
+    const { result } = renderHook(() => useDegramSendBlocked())
+
+    expect(result.current).toBe(false)
+    act(() => $activeGatewayProfile.set('another-scope-profile'))
+    expect(result.current).toBe(true)
+    act(() => $activeGatewayProfile.set('p'))
+    expect(result.current).toBe(false)
+  })
+
+  it('never blocks outside the DeGram variant', async () => {
+    await setup()
+    $degramEnabled.set(false)
+    act(() => $activeGatewayProfile.set('another-scope-profile'))
+    expect(sendBlockedReason()).toBeNull()
+    expect(await composerGate({ text: 'hi' })).toEqual({ text: 'hi' })
+  })
+})
+
 describe('Stop and the interrupted marker (D-18, DGCL-06)', () => {
   it('clears the pending state in the click handler and sends interrupt and cancel once each', async () => {
     $degramEnabled.set(true)
@@ -1072,6 +1146,11 @@ describe('named failures (D-18, UI E5)', () => {
     ],
     [
       'API call failed: CREDENTIALS_MISSING: No delegated token is held.',
+      'DeGram has no DG access for Alpha in this window yet. Reopen the project; if it repeats, sign in again.',
+      {}
+    ],
+    [
+      'DELEGATED_SESSION_ENDED: the DG session ended.',
       'Your DG session has ended. Sign in again to continue',
       {}
     ],
@@ -1143,6 +1222,15 @@ describe('named failures (D-18, UI E5)', () => {
       payload: { status: 'error', error: 'PROVIDER_TIMEOUT: slow' }
     })
     expect(h.bridge.reportOutcome).not.toHaveBeenCalled()
+
+    // CREDENTIALS_MISSING reaches main too, which re-hands the credential once per scope open (G-5).
+    await degramPromptSubmit(rpc, { session_id: 's1', text: 'c' }, 1)
+    handleTurnEvent({
+      type: 'message.complete',
+      session_id: 's1',
+      payload: { status: 'error', error: 'API call failed: CREDENTIALS_MISSING: No delegated token is held.' }
+    })
+    expect(h.bridge.reportOutcome).toHaveBeenCalledWith('CREDENTIALS_MISSING')
   })
 
   it('the codes forwarded to main equal the codes main accepts', () => {

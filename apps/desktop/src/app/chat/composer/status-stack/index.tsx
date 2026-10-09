@@ -184,9 +184,13 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
   useEffect(() => {
     if (sessionId) {
       void refreshBackgroundProcesses(sessionId)
-      void refreshSessionControl(sessionId)
+
+      // Variant DeGram (plan 1301-18, G-6): the agent locks `session.control.read`, so the read could only fail.
+      if (!degramEnabled) {
+        void refreshSessionControl(sessionId)
+      }
     }
-  }, [sessionId])
+  }, [degramEnabled, sessionId])
 
   // Drop localhost previews once no dev server is left running — that's what made
   // dead `localhost:5174` chips stick around. On-disk file previews are kept.

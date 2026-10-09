@@ -343,3 +343,36 @@ describe('a desktop without host.paneVisibility', () => {
     host.paneVisibility = restore
   })
 })
+
+describe('the bot relay in variant DeGram (plan 1301-18, G-6)', () => {
+  afterEach(() => {
+    delete (window as { hermesDesktop?: unknown }).hermesDesktop
+  })
+
+  it('starts the relay in every other variant', async () => {
+    const { startBotRelay } = await import('./relay')
+
+    paneStores()
+
+    const harness = recordingContext()
+
+    plugin.register(harness.ctx)
+    expect(startBotRelay).toHaveBeenCalledTimes(1)
+
+    harness.dispose()
+  })
+
+  it('does not start the relay, so no roster or drain timer polls the locked /api/profiles', async () => {
+    const { startBotRelay } = await import('./relay')
+
+    ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = { degramEnabled: true }
+    paneStores()
+
+    const harness = recordingContext()
+
+    plugin.register(harness.ctx)
+    expect(startBotRelay).not.toHaveBeenCalled()
+
+    harness.dispose()
+  })
+})

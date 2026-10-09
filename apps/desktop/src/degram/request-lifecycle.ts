@@ -19,6 +19,7 @@ import { $gateway } from '@/store/gateway'
 
 import { $documents, noteBridgeOutcome, scopeKeyOf, syncDocumentsScope, unpin } from './documents-store'
 import { FORWARDED_TO_MAIN, type ParsedFailure, parseFailureText } from './outcome-copy'
+import { routeDisagreesWithScope } from './scope-route'
 import {
   type BridgeApp,
   cancelContext,
@@ -323,8 +324,23 @@ export function clearArmed(): void {
   armed = null
 }
 
-/** Why Send is blocked right now, or null when it may proceed. Only meaningful while a document is pinned. */
-export function sendBlockedReason(): 'mismatch' | 'previewing' | 'read-failed' | 'stale' | null {
+/**
+ * True while the ready scope's profile and the chat's active gateway route disagree: a turn would run on another
+ * scope's backend and credential (G-7, D-19, T-1301-18-02). Independent of any pinned document.
+ */
+export function routeMismatch(): boolean {
+  return $degramEnabled.get() && routeDisagreesWithScope($degram.get().state)
+}
+
+/**
+ * Why Send is blocked right now, or null when it may proceed. `route-mismatch` holds whatever is pinned and comes
+ * first; the other reasons are only meaningful while a document is pinned.
+ */
+export function sendBlockedReason(): 'mismatch' | 'previewing' | 'read-failed' | 'route-mismatch' | 'stale' | null {
+  if (routeMismatch()) {
+    return 'route-mismatch'
+  }
+
   const key = currentKey()
   const documents = $documents.get()
   const state = $lifecycle.get()
@@ -366,6 +382,11 @@ export async function composerGate<T extends { text: string }>(draft: T): Promis
     syncDocumentsScope()
     syncLifecycleScope()
     clearArmed()
+
+    // A route that is not on the scope's profile blocks every send, pinned document or not (G-7).
+    if (routeMismatch()) {
+      return null
+    }
 
     if (!$documents.get().pinned) {
       return draft

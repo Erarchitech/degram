@@ -107,6 +107,11 @@ interface ComposerDraftPayload {
   text: string
 }
 
+/** Product-identity flag of variant `degram`, published by the preload (same source as store/degram-flag). */
+function isDegramVariant(): boolean {
+  return typeof window !== 'undefined' && window.hermesDesktop?.degramEnabled === true
+}
+
 export default {
   id: ID,
   name: translateNow('common.bots'),
@@ -120,9 +125,16 @@ export default {
     const disposeLocales = ctx.i18n.register(BOTS_LOCALES)
     setGroupChatSyncDisposed(false)
     startFaceClock()
+
     // The cross-connection relay rides every gateway socket this Desktop
-    // holds: roster sync + envelope drain/deliver/reply loops.
-    startBotRelay()
+    // holds: roster sync + envelope drain/deliver/reply loops. Not in variant
+    // DeGram (plan 1301-18, G-6): its backend locks /api/profiles and the bot
+    // RPCs, so the 30 s roster and drain timers only produced failing requests.
+    // Read from the preload flag (the plugin bundle takes no app-store imports).
+    if (!isDegramVariant()) {
+      startBotRelay()
+    }
+
     // Opt-in per bot: raise a bot's Screen tab on its first live screen tool call.
     const stopScreenAutoRaise = startScreenAutoRaise()
 

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { setApiRequestConnection } from '@/api/client'
 import type { DesktopAgentRoster, HermesConnection } from '@/global'
+import { $degramEnabled } from '@/store/degram-flag'
 import { $fleetRoster, _resetFleetRosterForTests } from '@/store/fleet-roster'
 import type { ProfileInfo } from '@/types/hermes'
 
@@ -48,6 +49,25 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it('sends no /api/profiles request in variant degram (plan 1301-18, G-6)', async () => {
+  const api = vi.fn(async () => ({ profiles: [profile('default')] }))
+
+  vi.stubGlobal('window', { hermesDesktop: { api } })
+  $degramEnabled.set(true)
+
+  try {
+    await expect(refreshProfiles()).resolves.toEqual([])
+    await refreshActiveProfile()
+    expect(api).not.toHaveBeenCalled()
+  } finally {
+    $degramEnabled.set(false)
+  }
+
+  // Every other variant still reads the list.
+  await refreshProfiles()
+  expect(api).toHaveBeenCalledTimes(1)
 })
 
 it('keeps failed incoming profile reads isolated while retaining the outgoing connection cache', async () => {

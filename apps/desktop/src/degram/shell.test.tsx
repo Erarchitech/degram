@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider, useI18n } from '@/i18n'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $notifications } from '@/store/notifications'
+import { $activeGatewayProfile } from '@/store/profile'
 import { $busy } from '@/store/session'
 import { stubMenuDomApis } from '@/test/jsdom'
 
@@ -28,6 +29,7 @@ afterEach(() => {
   $busy.set(false)
   $notifications.set([])
   $degramEnabled.set(false)
+  $activeGatewayProfile.set('default')
   delete (window as { hermesDesktop?: unknown }).hermesDesktop
 })
 
@@ -311,7 +313,7 @@ describe('new scope opens a fresh chat (D-19)', () => {
   const ready = (epoch: number) =>
     makeState({ scope: { status: 'ready', project: 'Alpha', company: 'Acme', profile: 'p', epoch, error: null } })
 
-  it('fires once per newly ready scope epoch and never for the scope already ready at mount', async () => {
+  it('fires once per newly ready scope epoch and never for the scope already ready and routed at mount', async () => {
     const onNew = vi.fn()
     const h = install(makeState())
 
@@ -324,14 +326,19 @@ describe('new scope opens a fresh chat (D-19)', () => {
     expect(onNew).not.toHaveBeenCalled()
     h.emitState(ready(1))
     expect(onNew).toHaveBeenCalledTimes(1)
+    // The handler gets the state of the scope (the route moves to its profile, G-7) and fresh = true.
+    expect(onNew).toHaveBeenLastCalledWith(expect.objectContaining({ scope: expect.objectContaining({ profile: 'p', epoch: 1 }) }), {
+      fresh: true
+    })
     h.emitState(ready(1))
     expect(onNew).toHaveBeenCalledTimes(1)
     h.emitState(ready(2))
     expect(onNew).toHaveBeenCalledTimes(2)
     stop()
 
-    // A reload while a scope is already open only records it.
+    // A reload while a scope is already open, with the chat already on its profile, only records it.
     resetDegramStore()
+    $activeGatewayProfile.set('p')
     const onReload = vi.fn()
     const again = install(ready(5))
 
@@ -342,6 +349,29 @@ describe('new scope opens a fresh chat (D-19)', () => {
     await act(async () => undefined)
     expect(onReload).not.toHaveBeenCalled()
     stopAgain()
+  })
+
+  it('a scope already ready at mount whose chat route is on another profile fires once, without a fresh chat (UAT 6.1)', async () => {
+    // The route restored from the previous run is not the scope's profile.
+    $activeGatewayProfile.set('restored-from-last-run')
+
+    const onBoot = vi.fn()
+    const h = install(ready(5))
+
+    h.stop()
+    resetDegramStore()
+    const stop = startDegramSync(h.bridge, onBoot)
+
+    await act(async () => undefined)
+    expect(onBoot).toHaveBeenCalledTimes(1)
+    expect(onBoot).toHaveBeenCalledWith(expect.objectContaining({ scope: expect.objectContaining({ epoch: 5 }) }), {
+      fresh: false
+    })
+
+    // The same epoch again is not a new scope.
+    h.emitState(ready(5))
+    expect(onBoot).toHaveBeenCalledTimes(1)
+    stop()
   })
 })
 

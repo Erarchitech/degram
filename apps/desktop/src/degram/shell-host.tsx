@@ -23,8 +23,10 @@ import { DegramGate } from './degram-gate'
 import { stopActiveResponse } from './host-actions'
 import { registerDgPage } from './register-dg-page'
 import { startTurnEventSync } from './request-lifecycle'
+import { handleNewScope, startRouteReconcile } from './scope-route'
 import { DegramSignOutConfirm } from './sign-out-confirm'
 import {
+  $degram,
   type DegramActions,
   DegramActionsContext,
   parseIsolationBootError,
@@ -61,8 +63,16 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
     [navigate]
   )
 
-  // A newly ready scope opens a fresh chat for it (D-19): the previous project's transcript is never reused.
-  useEffect(() => startDegramSync(undefined, actions.startNewChat), [actions])
+  // A newly ready scope first moves the chat onto its profile (G-7: main opens one profile and backend per scope,
+  // the renderer's route is otherwise whatever the last run restored), then opens a fresh chat for it (D-19): the
+  // previous project's transcript is never reused. A route that cannot move opens no chat and Send stays blocked.
+  useEffect(
+    () => startDegramSync(undefined, (state, opts) => void handleNewScope(state, opts, actions.startNewChat)),
+    [actions]
+  )
+  // The boot adopts the primary profile after the shell mounted: a route moved away from the ready scope's profile
+  // is brought back, instead of leaving the composer blocked.
+  useEffect(() => startRouteReconcile(() => $degram.get().state), [])
   useEffect(() => registerScopeStrip(), [])
   useEffect(() => registerDgPage(), [])
   useEffect(() => registerComposerGate(), [])

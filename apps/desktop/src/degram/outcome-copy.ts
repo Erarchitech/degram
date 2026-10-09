@@ -46,7 +46,10 @@ const EXTRA_CODES = [
   'DELEGATED_SCOPE_CHANGED',
   'DELEGATED_SESSION_ENDED',
   'CONTEXT_SCOPE_INVALID',
-  'RELAY_BODY_TOO_LARGE'
+  'RELAY_BODY_TOO_LARGE',
+  // Renderer-side refusal (plan 1301-18): the chat's route is not on the ready scope's profile. The composer is
+  // blocked before it can show, so no closer copy exists.
+  'ROUTE_MISMATCH'
 ] as const
 
 /** Codes main verifies against DG and acts on (re-mint, end the session, revoke): forwarded by `reportOutcome`. */
@@ -56,13 +59,16 @@ export const FORWARDED_TO_MAIN: readonly string[] = [
   'DELEGATED_AUTH_FAILED',
   'DELEGATED_SESSION_ENDED',
   'DELEGATED_SCOPE_CHANGED',
-  'ACCESS_DENIED'
+  'ACCESS_DENIED',
+  // The scope's backend holds no credential: main re-hands it once per scope open (plan 1301-18, G-5).
+  'CREDENTIALS_MISSING'
 ]
 
 export type CopyKey =
   | 'empty.noDocuments'
   | 'errors.accessRevoked'
   | 'errors.consentRequired'
+  | 'errors.credentialsMissing'
   | 'errors.credentialsRefresh'
   | 'errors.dgUnreachable'
   | 'errors.extensionNotLoaded'
@@ -92,7 +98,7 @@ const CODE_COPY: Record<OutcomeCode | (typeof EXTRA_CODES)[number], CopyKey> = {
   COMPLETED: 'none',
   CONSENT_REQUIRED: 'errors.consentRequired',
   CREDENTIALS_EXPIRED: 'errors.credentialsRefresh',
-  CREDENTIALS_MISSING: 'errors.sessionEnded',
+  CREDENTIALS_MISSING: 'errors.credentialsMissing',
   DEGRAM_LOCKED: 'errors.lockedAction',
   DG_UNAVAILABLE: 'errors.dgUnreachable',
   DOCUMENT_NOT_OPEN: 'errors.pinnedGone',
@@ -115,7 +121,8 @@ const CODE_COPY: Record<OutcomeCode | (typeof EXTRA_CODES)[number], CopyKey> = {
   DELEGATED_SCOPE_CHANGED: 'errors.accessRevoked',
   DELEGATED_SESSION_ENDED: 'errors.sessionEnded',
   CONTEXT_SCOPE_INVALID: 'errors.unknown',
-  RELAY_BODY_TOO_LARGE: 'errors.unknown'
+  RELAY_BODY_TOO_LARGE: 'errors.unknown',
+  ROUTE_MISMATCH: 'errors.unknown'
 }
 
 const ALL_CODES = [...OUTCOME_CODES, ...EXTRA_CODES] as readonly string[]
@@ -223,6 +230,9 @@ export function failureSentence(copy: DegramCopy, failure: ParsedFailure, ctx: T
 
     case 'errors.accessRevoked':
       return copy.errors.accessRevoked(ctx.project ?? '')
+
+    case 'errors.credentialsMissing':
+      return copy.errors.credentialsMissing(ctx.project ?? '')
 
     case 'errors.limit':
       return failure.retryAfter === undefined

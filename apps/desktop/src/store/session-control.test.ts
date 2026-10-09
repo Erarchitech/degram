@@ -151,6 +151,30 @@ describe('session-control store', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['a structured code', new JsonRpcGatewayError('locked', { code: 4403, data: { code: 'DEGRAM_LOCKED' } } as never)],
+    ['the message', new Error('4403: DEGRAM_LOCKED: session.control.read is not available in DeGram')],
+    ['an error record', { code: 'DEGRAM_LOCKED', message: 'locked' }]
+  ])('treats a DeGram lock (%s) as unsupported, with no error row (plan 1301-18, G-6)', async (_name, failure) => {
+    const request = vi.fn(async () => {
+      throw failure
+    })
+
+    useGateway(request)
+
+    await refreshSessionControl('s1')
+    await refreshSessionControl('s1')
+
+    expect($sessionControlBySession.get().s1).toMatchObject({
+      capability: 'unsupported',
+      error: null,
+      loading: false,
+      snapshot: null
+    })
+    // Asked once: the unsupported verdict suppresses every later read.
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
   it('retains the last good snapshot and reports a bounded ordinary read error', async () => {
     applySessionControlSnapshot('s1', FULL_SNAPSHOT)
     const message = 'x'.repeat(500)

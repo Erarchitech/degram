@@ -732,6 +732,30 @@ function isMethodNotFound(error: unknown): boolean {
   return message.toLowerCase().includes('method not found') || message.toLowerCase().includes('method-not-found')
 }
 
+/**
+ * The DeGram agent answers every RPC outside its allowlist with DEGRAM_LOCKED (code or message). Variant DeGram has
+ * no structured session controls, so it reads like a missing method: unsupported, no error row (plan 1301-18, G-6).
+ */
+function isDegramLocked(error: unknown): boolean {
+  if (isRecord(error)) {
+    const { code, data, message } = error as { code?: unknown; data?: unknown; message?: unknown }
+
+    if (typeof code === 'string' && code.includes('DEGRAM_LOCKED')) {
+      return true
+    }
+
+    if (isRecord(data) && typeof data.code === 'string' && data.code.includes('DEGRAM_LOCKED')) {
+      return true
+    }
+
+    if (typeof message === 'string' && message.includes('DEGRAM_LOCKED')) {
+      return true
+    }
+  }
+
+  return error instanceof Error && error.message.includes('DEGRAM_LOCKED')
+}
+
 /** Hydrates one session's structured controls; background refreshes never flash a loading state. */
 export async function refreshSessionControl(
   sessionId: string,
@@ -777,7 +801,7 @@ export async function refreshSessionControl(
       return $sessionControlBySession.get()[sessionId]
     }
 
-    if (isMethodNotFound(error)) {
+    if (isMethodNotFound(error) || isDegramLocked(error)) {
       const transitioned = markUnsupported(sessionId, token)
 
       if (transitioned) {

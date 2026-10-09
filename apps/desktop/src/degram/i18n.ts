@@ -87,6 +87,8 @@ export interface DegramCopy {
     grasshopperOff: string
     pinnedGone: (document: string) => string
     sessionEnded: string
+    /** CREDENTIALS_MISSING: the scope's backend holds no DG credential yet (plan 1301-18, G-5); not a session end. */
+    credentialsMissing: (project: string) => string
     accessRevoked: (project: string) => string
     policyDeny: (reason: string) => string
     isolation: (path: string) => string
@@ -238,6 +240,8 @@ export const degramEn: DegramCopy = {
     pinnedGone: document =>
       `${document} is no longer open, or another file is active in its place. Select the document again — DeGram never switches documents on its own.`,
     sessionEnded: 'Your DG session has ended. Sign in again to continue; project data was cleared from this window.',
+    credentialsMissing: project =>
+      `DeGram has no DG access for ${project} in this window yet. Reopen the project; if it repeats, sign in again.`,
     accessRevoked: project =>
       `You no longer have access to ${project}. Its data and local chat history were removed from this computer.`,
     policyDeny: reason =>
@@ -400,6 +404,8 @@ export const degramRu: DegramCopy = {
     pinnedGone: document =>
       `${document} больше не открыт или вместо него активен другой файл. Выберите документ заново — DeGram не переключает документы сам.`,
     sessionEnded: 'Сеанс DG завершён. Войдите снова, чтобы продолжить; данные проекта убраны из этого окна.',
+    credentialsMissing: project =>
+      `У DeGram пока нет доступа к DG для ${project} в этом окне. Откройте проект заново; если ошибка повторится, войдите снова.`,
     accessRevoked: project =>
       `У вас больше нет доступа к ${project}. Его данные и локальная история чата удалены с этого компьютера.`,
     policyDeny: reason =>

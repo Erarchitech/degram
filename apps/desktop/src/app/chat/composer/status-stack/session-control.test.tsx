@@ -32,6 +32,7 @@ vi.mock('@/store/goals', async importOriginal => {
 
 import { I18nProvider } from '@/i18n'
 import { clearQueuedPrompts, getQueuedPrompts } from '@/store/composer-queue'
+import { $degramEnabled } from '@/store/degram-flag'
 import { $goalsBySession } from '@/store/goals'
 import {
   $sessionControlBySession,
@@ -152,6 +153,7 @@ describe('ComposerStatusStack session-control UI', () => {
     $sessionControlBySession.set({})
     $todosBySession.set({})
     $sessionStates.set({})
+    $degramEnabled.set(false)
     clearQueuedPrompts('stored-1')
   })
 
@@ -172,6 +174,19 @@ describe('ComposerStatusStack session-control UI', () => {
     // Legacy goal remains available while capability is unknown.
     fireEvent.click(screen.getByRole('button', { name: /Goal active/ }))
     expect(screen.getByText('Legacy Goal Title')).toBeTruthy()
+  })
+
+  // Plan 1301-18 (G-6): the DeGram agent locks session.control.read, so the read is never attempted there.
+  it('never reads session control in variant degram, and still reads it in every other variant', () => {
+    $degramEnabled.set(true)
+    renderStack()
+
+    expect(mockRefreshSessionControl).not.toHaveBeenCalled()
+    cleanup()
+
+    $degramEnabled.set(false)
+    renderStack()
+    expect(mockRefreshSessionControl).toHaveBeenCalledWith(SID)
   })
 
   // 2. supported structured goal replaces, not duplicates, legacy goal

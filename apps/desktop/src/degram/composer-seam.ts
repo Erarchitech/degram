@@ -13,6 +13,7 @@ import { useStore } from '@nanostores/react'
 import { COMPOSER_AREAS, type ComposerMiddleware } from '@/app/chat/composer/contrib'
 import { registry } from '@/contrib/registry'
 import { $degramEnabled } from '@/store/degram-flag'
+import { $activeGatewayProfile } from '@/store/profile'
 
 import { $documents } from './documents-store'
 import {
@@ -21,11 +22,16 @@ import {
   composerGate,
   markSendFailed,
   markSent,
+  routeMismatch,
   sendBlockedReason,
   stopRequest,
   takeSendPlan
 } from './request-lifecycle'
 import { sendContext } from './use-degram-gateway'
+import { $degram } from './use-degram-state'
+
+/** Outcome code of a submit refused because the chat's route is not on the ready scope's profile. */
+export const ROUTE_MISMATCH = 'ROUTE_MISMATCH'
 
 export const DEGRAM_COMPOSER_GATE_ID = 'degram.composer-gate'
 
@@ -56,6 +62,12 @@ interface SubmitParams extends Record<string, unknown> {
 export async function degramPromptSubmit<R>(rpc: Rpc, params: SubmitParams, timeoutMs?: number): Promise<R> {
   if (!$degramEnabled.get()) {
     return rpc<R>('prompt.submit', params, timeoutMs)
+  }
+
+  // The one hard check behind the disabled Send button: a turn never goes out on the route of another scope
+  // (G-7, T-1301-18-02). Refused before the machine enters `streaming` and before any RPC.
+  if (routeMismatch()) {
+    throw new Error(`${ROUTE_MISMATCH}: the chat is not on the profile of the selected project`)
   }
 
   const plan = takeSendPlan(params.text)
@@ -90,11 +102,17 @@ export function degramOnStop(): void {
 
 /** True while a pinned document's read is in flight, failed or stale: the composer's Send button is disabled. */
 export function useDegramSendBlocked(): boolean {
+  // The result reads module state (`sendBlockedReason`), not hook values: React Compiler would memoize the call on
+  // `enabled` alone and the button would stop following the route and the machine.
+  'use no memo'
+
   const enabled = useStore($degramEnabled)
 
-  // Subscribed so the button follows the machine and the pin in the same render.
+  // Subscribed so the button follows the machine, the pin, the scope and the gateway route in the same render.
   useStore($lifecycle)
   useStore($documents)
+  useStore($degram)
+  useStore($activeGatewayProfile)
 
   return enabled && sendBlockedReason() !== null
 }

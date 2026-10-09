@@ -130,11 +130,17 @@ export type CheckSource = 'heartbeat' | 'focus' | 'outcome'
 const OUTCOMES_END_SESSION = new Set(['DELEGATED_SESSION_ENDED'])
 const OUTCOMES_VERIFY_AND_RENEW = new Set(['CREDENTIALS_EXPIRED', 'DELEGATED_EXPIRED', 'DELEGATED_AUTH_FAILED'])
 const OUTCOMES_REVOKE = new Set(['DELEGATED_SCOPE_CHANGED', 'ACCESS_DENIED'])
+/**
+ * The agent the chat talked to holds no credential (G-5, G-7): hand the open scope's credential to its backend
+ * again, at most once per scope open. Not a verdict on the DG session: it neither ends it nor revokes anything.
+ */
+const OUTCOMES_REHAND = new Set(['CREDENTIALS_MISSING'])
 
 export const AGENT_OUTCOME_CODES: readonly string[] = [
   ...OUTCOMES_END_SESSION,
   ...OUTCOMES_VERIFY_AND_RENEW,
-  ...OUTCOMES_REVOKE
+  ...OUTCOMES_REVOKE,
+  ...OUTCOMES_REHAND
 ]
 
 /** Focus events closer together than this reuse the previous check (no request burst). */
@@ -594,7 +600,22 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     return checking
   }
 
+  /** The open scope whose credential was already re-handed after a CREDENTIALS_MISSING report (once per open). */
+  let rehanded: OpenScope | null = null
+
   const reportOutcome = async (code: string): Promise<boolean> => {
+    if (OUTCOMES_REHAND.has(code)) {
+      const open = current
+
+      // No open scope, or the one report this scope may act on was already spent: a loop-proof no-op (T-1301-18-03).
+      if (open && open.handle && rehanded !== open) {
+        rehanded = open
+        await renew()
+      }
+
+      return true
+    }
+
     if (OUTCOMES_END_SESSION.has(code)) {
       // A pairing credential's parent is the pairing, not the DG session: ask DG about the pairing (one
       // re-mint) instead of signing the user out. A refused pairing closes the scope (pairingEnded).
