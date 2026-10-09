@@ -102,7 +102,7 @@ class TestGhDocuments:
         (row,) = group["documents"]
         assert row["name"] == "tower.gh" and row["path"] == "C:/work/tower.gh" and row["unsaved"] is False
         assert row["identity"] == {"documentId": gh_identity()["documentId"], "filePath": "C:/work/tower.gh"}
-        assert listing["pinned"] is None, "nothing is pinned until pin is called, even with a single document"
+        assert listing["pinned"] == {}, "nothing is pinned until pin is called, even with a single document"
 
     def test_unsaved_document_is_marked(self, rt, gh):
         gh.handlers["get_document_identity"] = gh_identity(file_path=None, name="Untitled")
@@ -122,13 +122,13 @@ class TestGhDocuments:
     def test_pin_verifies_the_document_is_open_and_records_it(self, rt):
         pinned = rt.documents.pin(**GH_PIN)
         assert pinned["app"] == "grasshopper" and pinned["identity"]["documentId"] == GH_PIN["identity"]["documentId"]
-        assert rt.documents.pinned == pinned
+        assert rt.documents.pinned == {"grasshopper": pinned}
 
     def test_pin_of_a_document_that_is_not_open_is_refused(self, rt):
         with pytest.raises(BridgeError) as exc:
             rt.documents.pin("grasshopper", {"documentId": "ffffffff-0000-0000-0000-000000000000", "filePath": None})
         assert exc.value.code in {"DOCUMENT_NOT_OPEN", "IDENTITY_MISMATCH"}
-        assert rt.documents.pinned is None
+        assert rt.documents.pinned == {}
 
     def test_pin_with_an_unknown_app_is_refused(self, rt):
         with pytest.raises(ValueError):
@@ -137,8 +137,16 @@ class TestGhDocuments:
     def test_unpin_clears_and_bumps_the_generation(self, rt):
         rt.documents.pin(**GH_PIN)
         before = rt.documents.generation
-        rt.documents.unpin()
-        assert rt.documents.pinned is None and rt.documents.generation > before
+        rt.documents.unpin("grasshopper")
+        assert rt.documents.pinned == {} and rt.documents.generation > before
+        rt.documents.pin(**GH_PIN)
+        before = rt.documents.generation
+        rt.documents.unpin_all()
+        assert rt.documents.pinned == {} and rt.documents.generation > before
+
+    def test_unpin_with_an_unknown_app_is_refused(self, rt):
+        with pytest.raises(ValueError):
+            rt.documents.unpin("autocad")
 
 
 class TestVocabulary:

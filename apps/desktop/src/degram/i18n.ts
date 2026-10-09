@@ -75,7 +75,11 @@ export interface DegramCopy {
     refresh: string
     reading: string
     wholeDefinition: string
+    /** A pinned document the read left out: «{document}: not included — {reason}» (D-29). */
+    excluded: (document: string, reason: string) => string
   }
+  /** The scope strip's own copy (D-29): how many documents are pinned. */
+  strip: { documentsCount: (count: number) => string }
   errors: {
     dgUnreachable: string
     modelUnavailable: string
@@ -224,8 +228,10 @@ export const degramEn: DegramCopy = {
     payloadLabel: 'Exact payload',
     refresh: 'Re-read selection',
     reading: 'Reading',
-    wholeDefinition: 'Whole definition'
+    wholeDefinition: 'Whole definition',
+    excluded: (document, reason) => `${document}: not included — ${reason}`
   },
+  strip: { documentsCount: n => `Documents: ${n}` },
   errors: {
     dgUnreachable: "The DG server can't be reached. Check your network or VPN, then retry the request.",
     modelUnavailable:
@@ -388,8 +394,10 @@ export const degramRu: DegramCopy = {
     payloadLabel: 'Точный состав отправки',
     refresh: 'Перечитать выделение',
     reading: 'Чтение',
-    wholeDefinition: 'Всё определение'
+    wholeDefinition: 'Всё определение',
+    excluded: (document, reason) => `${document}: не включён — ${reason}`
   },
+  strip: { documentsCount: n => `Документы: ${n}` },
   errors: {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',
     modelUnavailable: 'Сервис модели недоступен. Сообщение не обработано; повторите запрос через несколько минут.',

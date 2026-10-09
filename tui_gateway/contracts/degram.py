@@ -68,16 +68,24 @@ class DegramDocumentsListParams(Params):
 
 class DegramDocumentsListResult(DegramOutcomeFields):
     groups: JsonValue = None  # [{app, state, documents: [{app, name, path, unsaved, identity, pinned}], code?, reason?}]
-    pinned: JsonValue = None
+    pinned: JsonValue = None  # {app: {app, name, path, unsaved, identity}}: one pinned document per bridge (D-29)
 
 
 class DegramDocumentsPinParams(Params):
-    app: str | None = None  # null unpins
+    app: str | None = None  # the bridge this document belongs to; pinning replaces only that bridge's pin (null: unpin all)
     identity: JsonValue = None
 
 
 class DegramDocumentsPinResult(DegramOutcomeFields):
-    pinned: JsonValue = None
+    pinned: JsonValue = None  # the pinned document just recorded ({app, name, path, unsaved, identity})
+
+
+class DegramDocumentsUnpinParams(Params):
+    app: str | None = None  # the bridge whose pin to forget; null forgets every pin
+
+
+class DegramDocumentsUnpinResult(DegramOutcomeFields):
+    pinned: JsonValue = None  # what is still pinned: {app: document}
 
 
 class DegramContextPreviewParams(Params):
@@ -92,10 +100,10 @@ class DegramContextPreviewResult(DegramOutcomeFields):
     requiresConsent: bool | None = None
     limits: JsonValue = None
     payload: str | None = None
-    summary: JsonValue = None
+    summary: JsonValue = None  # {project, documents: [{app, name, path, objects, parameters, truncated, emptySelection}], rules, fragments, bytes, excluded}
     truncation: JsonValue = None
     missing: JsonValue = None
-    document: JsonValue = None
+    documents: JsonValue = None  # the pinned documents the payload names, one per bridge
 
 
 class DegramContextSendParams(Params):
@@ -124,9 +132,13 @@ class DegramContextCancelResult(DegramOutcomeFields):
 method("degram.documents.list", params=DegramDocumentsListParams, result=DegramDocumentsListResult,
        doc="Open documents of every reachable CAD bridge (or of one bridge: app) with a state per bridge; pins nothing.")
 method("degram.documents.pin", params=DegramDocumentsPinParams, result=DegramDocumentsPinResult,
-       doc="Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY.")
+       doc="Pin one open document by identity; it replaces only that bridge's pin (one pinned document per bridge). "
+           "Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY.")
+method("degram.documents.unpin", params=DegramDocumentsUnpinParams, result=DegramDocumentsUnpinResult,
+       doc="Forget the pinned document of one bridge (app) or of every bridge (app null); nothing else changes.")
 method("degram.context.preview", params=DegramContextPreviewParams, result=DegramContextPreviewResult,
-       doc="Read the pinned document and return the exact bounded context payload with its disclosure.")
+       doc="Read every pinned document (one per bridge) and return the exact bounded context payload with its "
+           "disclosure; a bridge that cannot be read is listed in summary.excluded.")
 method("degram.context.send", params=DegramContextSendParams, result=DegramContextSendResult,
        doc="Submit a turn whose message embeds the previewed payload byte for byte. Whole-definition needs consent true.")
 method("degram.context.cancel", params=DegramContextCancelParams, result=DegramContextCancelResult,

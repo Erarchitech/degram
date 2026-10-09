@@ -54,21 +54,47 @@ export interface PinnedDocument {
   identity: Record<string, unknown>
 }
 
-export interface ContextSummary {
-  project: string
-  document: null | { app: string; name: string; path: null | string }
+/** One document per bridge (D-29): the pinned Revit model and the pinned Grasshopper definition at the same time. */
+export type PinnedMap = Partial<Record<BridgeApp, PinnedDocument>>
+
+/** A pinned document the payload carries a snapshot section for. */
+export interface SummaryDocument {
+  app: BridgeApp
+  name: string
+  path: null | string
   objects: number
   parameters: number
+  truncated: boolean
+  emptySelection: boolean
+}
+
+/** A pinned document the read left out (identity mismatch, closed, busy, routes not loopback...). */
+export interface ExcludedDocument {
+  app: BridgeApp
+  name: string
+  code: string
+  reason?: string
+  message?: string
+  bridgeState?: string
+}
+
+export interface ContextSummary {
+  project: string
+  /** One entry per pinned document that was read, in bridge order. */
+  documents: SummaryDocument[]
+  /** The pinned documents that were not read: shown as «not included», never switched or re-pinned. */
+  excluded: ExcludedDocument[]
   rules: number
   fragments: number
   bytes: number
-  emptySelection: boolean
 }
 
 export interface TruncationEntry {
   what: string
   kept: number
   total: number
+  /** The document the cut belongs to (absent for rules and the byte cap). */
+  app?: BridgeApp
 }
 
 export interface MissingEntry {
@@ -216,8 +242,8 @@ export function parseGroups(raw: unknown): BridgeGroup[] {
   return out
 }
 
-export function parsePinned(raw: unknown): null | PinnedDocument {
-  const pinned = asRecord(asRecord(raw)?.pinned)
+function parsePinnedDocument(value: unknown): null | PinnedDocument {
+  const pinned = asRecord(value)
   const app = pinned?.app
 
   if (!pinned || !isApp(app) || !asString(pinned.name)) {
@@ -233,25 +259,74 @@ export function parsePinned(raw: unknown): null | PinnedDocument {
   }
 }
 
+/** The pinned document a `degram.documents.pin` answer records (`pinned` is the one document). */
+export function parsePinned(raw: unknown): null | PinnedDocument {
+  return parsePinnedDocument(asRecord(raw)?.pinned)
+}
+
+/** What a list or unpin answer reports as pinned: `{ app: document }`, one per bridge (D-29). */
+export function parsePinnedMap(raw: unknown): PinnedMap {
+  const map = asRecord(asRecord(raw)?.pinned)
+  const out: PinnedMap = {}
+
+  for (const app of BRIDGE_APPS) {
+    const pinned = parsePinnedDocument(map?.[app])
+
+    if (pinned && pinned.app === app) {
+      out[app] = pinned
+    }
+  }
+
+  return out
+}
+
 function parseSummary(raw: unknown, fallbackProject: string): ContextSummary {
   const summary = asRecord(raw)
-  const document = asRecord(summary?.document)
+
+  const documents = (Array.isArray(summary?.documents) ? summary.documents : []).flatMap(entry => {
+    const doc = asRecord(entry)
+    const app = doc?.app
+
+    return doc && isApp(app)
+      ? [
+          {
+            app,
+            name: asString(doc.name) ?? '',
+            path: asString(doc.path) ?? null,
+            objects: asCount(doc.objects),
+            parameters: asCount(doc.parameters),
+            truncated: doc.truncated === true,
+            emptySelection: doc.emptySelection === true
+          }
+        ]
+      : []
+  })
+
+  const excluded = (Array.isArray(summary?.excluded) ? summary.excluded : []).flatMap(entry => {
+    const row = asRecord(entry)
+    const app = row?.app
+
+    return row && isApp(app)
+      ? [
+          {
+            app,
+            name: asString(row.name) ?? '',
+            code: asString(row.code) ?? 'UNKNOWN',
+            reason: asString(row.reason),
+            message: asString(row.message),
+            bridgeState: asString(row.bridgeState)
+          }
+        ]
+      : []
+  })
 
   return {
     project: asString(summary?.project) ?? fallbackProject,
-    document: document
-      ? {
-          app: asString(document.app) ?? '',
-          name: asString(document.name) ?? '',
-          path: asString(document.path) ?? null
-        }
-      : null,
-    objects: asCount(summary?.objects),
-    parameters: asCount(summary?.parameters),
+    documents,
+    excluded,
     rules: asCount(summary?.rules),
     fragments: asCount(summary?.fragments),
-    bytes: asCount(summary?.bytes),
-    emptySelection: summary?.emptySelection === true
+    bytes: asCount(summary?.bytes)
   }
 }
 
@@ -268,7 +343,14 @@ export function parsePreview(raw: unknown, fallbackProject = ''): ContextPreview
     const item = asRecord(entry)
 
     return item && asString(item.what)
-      ? [{ what: item.what as string, kept: asCount(item.kept), total: asCount(item.total) }]
+      ? [
+          {
+            what: item.what as string,
+            kept: asCount(item.kept),
+            total: asCount(item.total),
+            ...(isApp(item.app) && { app: item.app })
+          }
+        ]
       : []
   })
 
@@ -292,7 +374,8 @@ export function parsePreview(raw: unknown, fallbackProject = ''): ContextPreview
 
 export interface ListResult {
   groups: BridgeGroup[]
-  pinned: null | PinnedDocument
+  /** Every pinned document, one per bridge, whichever bridge this read asked about. */
+  pinned: PinnedMap
   outcome: null | OutcomeInfo
 }
 
@@ -300,7 +383,7 @@ export interface ListResult {
 export async function listDocuments(app?: BridgeApp): Promise<ListResult> {
   const raw = await request<unknown>('degram.documents.list', app ? { app } : {})
 
-  return { groups: parseGroups(raw), pinned: parsePinned(raw), outcome: outcomeOf(raw) }
+  return { groups: parseGroups(raw), pinned: parsePinnedMap(raw), outcome: outcomeOf(raw) }
 }
 
 export async function pinDocument(
@@ -312,8 +395,9 @@ export async function pinDocument(
   return { outcome: outcomeOf(raw), pinned: parsePinned(raw) }
 }
 
-export async function unpinDocument(): Promise<void> {
-  await request<unknown>('degram.documents.pin', { app: null })
+/** Forget one bridge's pinned document; `null` forgets both. The other bridge keeps its own pin (D-29). */
+export async function unpinDocument(app: BridgeApp | null): Promise<void> {
+  await request<unknown>('degram.documents.unpin', { app })
 }
 
 /**
@@ -325,7 +409,7 @@ export const PREVIEW_RPC_TIMEOUT_MS = 45_000
 
 export type PreviewResult = { outcome: OutcomeInfo; preview: null } | { outcome: null; preview: ContextPreview }
 
-/** Read the pinned document and get the exact payload. `previewId` is chosen by the caller so a cancel can name it. */
+/** Read the pinned documents and get the exact payload. `previewId` is chosen by the caller so a cancel can name it. */
 export async function previewContext(
   scope: ContextScope | 'none',
   previewId: string,

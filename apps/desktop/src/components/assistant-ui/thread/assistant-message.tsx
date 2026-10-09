@@ -38,7 +38,7 @@ import { formatElapsed } from '@/components/chat/activity-timer'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
 import { Codicon } from '@/components/ui/codicon'
 import { CopyButton } from '@/components/ui/copy-button'
-import { useDocuments } from '@/degram/documents-store'
+import { pinnedName, useDocuments } from '@/degram/documents-store'
 import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { InterruptedBadge } from '@/degram/interrupted-badge'
 import { degramFailureHeadline } from '@/degram/outcome-copy'
@@ -611,7 +611,7 @@ const ErrorCardHeadline: FC = () => {
     return (
       <div data-testid="degram-error-headline">
         {degramFailureHeadline(t.degram, errorText, {
-          document: documents.pinned?.name,
+          document: pinnedName(documents),
           project: degram.state?.scope.project ?? undefined
         })}
       </div>

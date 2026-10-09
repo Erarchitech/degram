@@ -1,4 +1,5 @@
-// document-picker.tsx — explicit document pinning with the bridge status in view (DGCL-04, 1301-UI-SPEC E3, D-13).
+// document-picker.tsx — explicit document pinning with the bridge status in view (DGCL-04, 1301-UI-SPEC E3, D-13,
+// D-29). One document is pinned per bridge: each group shows its own pinned row and its own «Открепить».
 //
 // A Popover + `Command variant="menu"` anchored to the strip's document segment. Rows are grouped by bridge (app
 // glyph + name; path · identity in mono). Each bridge group loads on its own: a pending group is one row with the
@@ -84,7 +85,7 @@ function GroupBody({ app, entry }: { app: BridgeApp; entry: AppEntry }) {
   const copy = t.degram
   const documents = useDocuments()
   const group = entry.group
-  const pinnedHere = documents.pinned?.app === app ? documents.pinned : null
+  const pinnedHere = documents.pinned[app] ?? null
 
   // Pending: one row with the spinner; the other bridges are not waiting for this one.
   if (entry.loading || (!group && !entry.failed)) {
@@ -189,18 +190,6 @@ export function DocumentPicker({ children }: { children: ReactNode }) {
         variant="menu"
       >
         <div className="flex items-center justify-end gap-1 px-1 pb-1">
-          {documents.pinned && (
-            <Button
-              onClick={() => {
-                void unpin()
-                setOpen(false)
-              }}
-              size="micro"
-              variant="text"
-            >
-              {copy.document.unpin}
-            </Button>
-          )}
           <Button
             aria-label={copy.document.refreshList}
             onClick={() => void refreshDocuments()}
@@ -226,9 +215,23 @@ export function DocumentPicker({ children }: { children: ReactNode }) {
                   className="[&_[cmdk-group-heading]]:sticky [&_[cmdk-group-heading]]:top-0 [&_[cmdk-group-heading]]:z-10 [&_[cmdk-group-heading]]:bg-popover [&_[cmdk-group-heading]]:text-base [&_[cmdk-group-heading]]:font-medium"
                   data-bridge={app}
                   heading={
-                    <span className="flex items-center gap-1.5">
+                    <span className="flex w-full items-center gap-1.5">
                       <Codicon name={APP_GLYPH[app]} size="0.9rem" />
                       {app === 'revit' ? copy.bridge.revit : copy.bridge.grasshopper}
+                      {documents.pinned[app] && (
+                        <Button
+                          className="ml-auto"
+                          data-testid="degram-unpin"
+                          onClick={() => {
+                            void unpin(app)
+                            setOpen(false)
+                          }}
+                          size="micro"
+                          variant="text"
+                        >
+                          {copy.document.unpin}
+                        </Button>
+                      )}
                     </span>
                   }
                   key={app}

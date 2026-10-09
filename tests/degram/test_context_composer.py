@@ -25,6 +25,11 @@ def _json_part(payload: str):
     return json.loads(payload[payload.index("\n{") + 1:])
 
 
+def _section(payload: str, app: str = "grasshopper") -> dict:
+    """The snapshot section of one pinned document inside the payload body (D-29: one section per document)."""
+    return next(s for s in _json_part(payload)["snapshots"] if s["app"] == app)
+
+
 def _hdr(headers: dict, name: str):
     return next((v for k, v in headers.items() if k.lower() == name.lower()), None)
 
@@ -44,12 +49,12 @@ class TestPreview:
         view = rt.composer.preview("selection")
         assert view["status"] == "ok" and view["scope"] == "selection" and view["requiresConsent"] is False
         summary = view["summary"]
-        assert summary["project"] == PROJECT and summary["objects"] == 2 and summary["parameters"] == 4
-        assert summary["rules"] == 2 and summary["fragments"] == 0 and summary["emptySelection"] is False
-        assert summary["bytes"] == len(view["payload"].encode("utf-8"))
-        assert summary["document"]["name"] == "tower.gh" and summary["document"]["app"] == "grasshopper"
-        body = _json_part(view["payload"])
-        guids = [n["instanceId"] for n in body["snapshot"]["nodes"]]
+        (doc,) = summary["documents"]
+        assert summary["project"] == PROJECT and doc["objects"] == 2 and doc["parameters"] == 4
+        assert summary["rules"] == 2 and summary["fragments"] == 0 and doc["emptySelection"] is False
+        assert summary["bytes"] == len(view["payload"].encode("utf-8")) and summary["excluded"] == []
+        assert doc["name"] == "tower.gh" and doc["app"] == "grasshopper" and doc["truncated"] is False
+        guids = [n["instanceId"] for n in _section(view["payload"])["nodes"]]
         assert guids == [gh_node(1)["instanceId"], gh_node(2)["instanceId"]]
         assert gh_node(3)["instanceId"] not in view["payload"]
         assert view["truncation"] == [] and view["missing"] == []
@@ -81,9 +86,14 @@ class TestPreview:
         gh.handlers["get_document_identity"] = gh_identity(document_id="99999999-0000-0000-0000-000000000000")
         gh.requests.clear()
         view = rt.composer.preview("selection")
-        assert view["status"] == "error" and view["code"] == "IDENTITY_MISMATCH"
-        assert view["bridgeState"] == "identity-mismatch"
+        # D-29: the bridge's document is excluded, the preview itself still answers (project data only here)
+        assert view["status"] == "ok" and view["scope"] == "none" and view["summary"]["documents"] == []
+        (row,) = view["summary"]["excluded"]
+        assert row["app"] == "grasshopper" and row["code"] == "IDENTITY_MISMATCH" and row["name"] == "tower.gh"
+        assert row["bridgeState"] == "identity-mismatch"
+        assert _json_part(view["payload"])["snapshots"] == []
         assert gh.commands() == ["get_document_identity"], "nothing but the identity check may be sent"
+        assert rt.documents.pinned["grasshopper"]["name"] == "tower.gh", "never re-pinned or switched"
 
     def test_a_context_from_another_document_is_never_used(self, rt, gh):
         rt.documents.pin(**GH_PIN)
@@ -92,38 +102,41 @@ class TestPreview:
         other["definition"] = {**other["definition"], "documentId": "99999999-0000-0000-0000-000000000000"}
         gh.handlers["get_canvas_context"] = other
         view = rt.composer.preview("selection")
-        assert view["status"] == "error" and view["code"] == "IDENTITY_MISMATCH"
+        assert view["status"] == "ok" and view["summary"]["excluded"][0]["code"] == "IDENTITY_MISMATCH"
+        assert gh_node(1)["instanceId"] not in view["payload"]
 
     def test_closed_document_is_document_not_open(self, rt, gh):
         from .fakes import gh_error
         rt.documents.pin(**GH_PIN)
         gh.handlers["get_document_identity"] = gh_error("HANDLER_ERROR", "No active document.")
         view = rt.composer.preview("selection")
-        assert view["status"] == "error" and view["code"] == "DOCUMENT_NOT_OPEN"
+        assert view["status"] == "ok" and view["summary"]["excluded"][0]["code"] == "DOCUMENT_NOT_OPEN"
 
     def test_bridge_off_and_busy_are_reported_not_retried(self, rt, gh, monkeypatch):
         from .fakes import free_port, gh_error
         rt.documents.pin(**GH_PIN)
         gh.handlers["get_document_identity"] = gh_error("BUSY")
         gh.requests.clear()
-        assert rt.composer.preview("selection")["code"] == "BUSY"
+        assert rt.composer.preview("selection")["summary"]["excluded"][0]["code"] == "BUSY"
         assert gh.commands() == ["get_document_identity"], "exactly one attempt"
         monkeypatch.setattr(gh_bridge, "GH_PORT", free_port())
         view = rt.composer.preview("selection")
-        assert view["code"] == "BRIDGE_OFF" and view["bridgeState"] == "off"
+        (row,) = view["summary"]["excluded"]
+        assert row["code"] == "BRIDGE_OFF" and row["bridgeState"] == "off"
 
     def test_no_document_pinned_is_project_data_only(self, rt, gh):
         view = rt.composer.preview("selection")
         assert view["status"] == "ok" and view["scope"] == "none" and view["requestedScope"] == "selection"
-        assert view["summary"]["document"] is None and view["summary"]["objects"] == 0
+        assert view["summary"]["documents"] == [] and view["summary"]["excluded"] == []
         assert gh.connections == 0, "no document pinned means no bridge read"
-        assert _json_part(view["payload"])["snapshot"] is None
+        assert _json_part(view["payload"])["snapshots"] == []
 
     def test_empty_selection_is_disclosed(self, rt, gh):
         gh.handlers["get_selection"] = {"selection": []}
         rt.documents.pin(**GH_PIN)
         view = rt.composer.preview("selection")
-        assert view["status"] == "ok" and view["summary"]["emptySelection"] is True and view["summary"]["objects"] == 0
+        (doc,) = view["summary"]["documents"]
+        assert view["status"] == "ok" and doc["emptySelection"] is True and doc["objects"] == 0
 
     def test_dg_backend_down_is_a_missing_marker_not_a_failure(self, rt, dg):
         dg.routes[f"/data-service/rules/{PROJECT}"] = (500, {"detail": "boom"})
@@ -141,8 +154,8 @@ class TestPreview:
         rt.documents.pin(**GH_PIN)
         view = rt.composer.preview("whole-definition")
         assert view["scope"] == "whole-definition" and view["requiresConsent"] is True
-        assert view["summary"]["objects"] == 5
-        assert len(_json_part(view["payload"])["snapshot"]["nodes"]) == 5
+        assert view["summary"]["documents"][0]["objects"] == 5
+        assert len(_section(view["payload"])["nodes"]) == 5
 
     def test_unknown_scope_is_rejected(self, rt):
         with pytest.raises(ContextError) as exc:
@@ -161,18 +174,19 @@ class TestLimits:
         gh.handlers.update(default_gh_handlers(nodes=nodes, selection=[n["instanceId"] for n in nodes]))
         rt.documents.pin(**GH_PIN)
         view = rt.composer.preview("selection")
-        assert view["summary"]["objects"] == 200
-        assert {"what": "objects", "kept": 200, "total": 201} in view["truncation"]
-        assert len(_json_part(view["payload"])["snapshot"]["nodes"]) == 200
+        (doc,) = view["summary"]["documents"]
+        assert doc["objects"] == 200 and doc["truncated"] is True
+        assert {"app": "grasshopper", "what": "objects", "kept": 200, "total": 201} in view["truncation"]
+        assert len(_section(view["payload"])["nodes"]) == 200
 
     def test_more_than_50_parameters_per_object_are_cut_and_disclosed(self, rt, gh):
         nodes = [gh_node(1, params=51), gh_node(2, params=3)]
         gh.handlers.update(default_gh_handlers(nodes=nodes, selection=[n["instanceId"] for n in nodes]))
         rt.documents.pin(**GH_PIN)
         view = rt.composer.preview("selection")
-        assert view["summary"]["parameters"] == 53
-        assert {"what": "parameters", "kept": 53, "total": 54} in view["truncation"]
-        first = _json_part(view["payload"])["snapshot"]["nodes"][0]
+        assert view["summary"]["documents"][0]["parameters"] == 53
+        assert {"app": "grasshopper", "what": "parameters", "kept": 53, "total": 54} in view["truncation"]
+        first = _section(view["payload"])["nodes"][0]
         assert len(first["inputParams"]) == 50
 
     def test_payload_is_cut_to_256_kib_by_dropping_objects(self, rt, gh):
@@ -186,10 +200,10 @@ class TestLimits:
         view = rt.composer.preview("selection")
         assert view["summary"]["bytes"] <= SNAPSHOT_LIMITS["max_bytes"]
         assert len(view["payload"].encode("utf-8")) == view["summary"]["bytes"]
-        kept = view["summary"]["objects"]
+        kept = view["summary"]["documents"][0]["objects"]
         assert 0 < kept < 150
-        assert {"what": "objects", "kept": kept, "total": 150} in view["truncation"]
-        assert len(_json_part(view["payload"])["snapshot"]["nodes"]) == kept
+        assert {"app": "grasshopper", "what": "objects", "kept": kept, "total": 150} in view["truncation"]
+        assert len(_section(view["payload"])["nodes"]) == kept
         assert any(t["what"] == "bytes" and t["total"] > SNAPSHOT_LIMITS["max_bytes"] for t in view["truncation"])
 
 
@@ -274,7 +288,7 @@ class TestRpc:
 
     def test_list_pin_preview_send_round_trip(self, rt, monkeypatch):
         listing = self.rpc("degram.documents.list")["result"]
-        assert any(g["app"] == "grasshopper" for g in listing["groups"]) and listing["pinned"] is None
+        assert any(g["app"] == "grasshopper" for g in listing["groups"]) and listing["pinned"] == {}
         pinned = self.rpc("degram.documents.pin", GH_PIN)["result"]
         assert pinned["status"] == "ok" and pinned["pinned"]["app"] == "grasshopper"
         view = self.rpc("degram.context.preview", {"scope": "selection"})["result"]
@@ -314,11 +328,33 @@ class TestRpc:
     def test_pin_with_a_null_app_unpins(self, rt):
         self.rpc("degram.documents.pin", GH_PIN)
         reply = self.rpc("degram.documents.pin", {"app": None})["result"]
-        assert reply["status"] == "ok" and reply["pinned"] is None and rt.documents.pinned is None
+        assert reply["status"] == "ok" and reply["pinned"] == {} and rt.documents.pinned == {}
+
+    def test_unpin_forgets_one_bridge_and_a_null_app_forgets_all(self, rt):
+        self.rpc("degram.documents.pin", GH_PIN)
+        before = rt.documents.generation
+        reply = self.rpc("degram.documents.unpin", {"app": "grasshopper"})["result"]
+        assert reply["status"] == "ok" and reply["pinned"] == {} and rt.documents.pinned == {}
+        assert rt.documents.generation > before
+        self.rpc("degram.documents.pin", GH_PIN)
+        assert self.rpc("degram.documents.unpin", {"app": None})["result"]["pinned"] == {}
+        assert rt.documents.pinned == {}
+
+    def test_unpin_of_an_unknown_bridge_is_a_bad_request(self, rt):
+        self.rpc("degram.documents.pin", GH_PIN)
+        reply = self.rpc("degram.documents.unpin", {"app": "rhino-mesh"})
+        assert reply["error"]["data"]["code"] == "BAD_REQUEST" and "grasshopper" in rt.documents.pinned
+
+    def test_unpin_drops_the_previews_of_the_old_pins(self, rt):
+        self.rpc("degram.documents.pin", GH_PIN)
+        view = self.rpc("degram.context.preview", {"scope": "selection"})["result"]
+        self.rpc("degram.documents.unpin", {"app": "grasshopper"})
+        reply = self.rpc("degram.context.send", {"session_id": "s1", "previewId": view["previewId"], "text": "hi"})
+        assert reply["error"]["data"]["code"] == "PREVIEW_UNKNOWN", "the composer drops its previews on an unpin"
 
     def test_all_rpcs_refuse_outside_variant_degram(self, rt, monkeypatch):
         monkeypatch.delenv("HERMES_DEGRAM")
-        calls = {"degram.documents.list": {}, "degram.documents.pin": GH_PIN,
+        calls = {"degram.documents.list": {}, "degram.documents.pin": GH_PIN, "degram.documents.unpin": {},
                  "degram.context.preview": {"scope": "selection"},
                  "degram.context.send": {"session_id": "s", "previewId": "pv_x", "text": "t"},
                  "degram.context.cancel": {}}
@@ -338,7 +374,7 @@ class TestRpc:
         self.rpc("degram.documents.pin", GH_PIN)
         view = self.rpc("degram.context.preview", {"scope": "selection"})["result"]
         assert self.rpc("degram.credentials.clear")["result"]["ok"] is True
-        assert rt.documents.pinned is None
+        assert rt.documents.pinned == {}
         with pytest.raises(ContextError):
             rt.composer.prepare_send(view["previewId"], "hi")
 
@@ -350,21 +386,22 @@ class TestPreviewBudget:
         from degram_variant import context_composer
         seen = {}
         real_rules = rt.composer._dg.get_rules
-        real_snapshot = rt.documents.read_snapshot
+        real_snapshot = rt.documents.read_snapshots
 
         def rules(cancel=None, read_timeout_s=None):
             seen["rules"] = read_timeout_s
             return real_rules(cancel, read_timeout_s=read_timeout_s)
 
         def snapshot(scope, project, cancel=None, deadline_s=None):
-            seen["bridge"] = deadline_s
+            seen["bridge"] = dict(deadline_s)
             return real_snapshot(scope, project, cancel, deadline_s=deadline_s)
 
         monkeypatch.setattr(rt.composer._dg, "get_rules", rules)
-        monkeypatch.setattr(rt.documents, "read_snapshot", snapshot)
+        monkeypatch.setattr(rt.documents, "read_snapshots", snapshot)
         rt.documents.pin(**GH_PIN)
         assert rt.composer.preview("selection")["status"] == "ok"
-        assert seen == {"rules": context_composer.PREVIEW_RULES_READ_TIMEOUT_S, "bridge": 20.0}
+        assert seen == {"rules": context_composer.PREVIEW_RULES_READ_TIMEOUT_S,
+                        "bridge": {"revit": 20.0, "grasshopper": 20.0}}
 
     def test_a_dg_that_is_slow_to_answer_is_dg_unavailable_within_the_rules_budget(self, rt, dg, monkeypatch):
         """The rules read uses the short timeout; the preview then lists rules as missing instead of timing out."""

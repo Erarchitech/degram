@@ -1,8 +1,10 @@
 // context-card.tsx — what the next request will carry, always on screen (DGCL-07, 1301-UI-SPEC E4/E5, D-17/D-18).
 //
-// Mounted in the composer status stack, always expanded to its summary line (the documented exception to "status
-// groups start collapsed"): project · document · objects · parameters · rules · fragments · size. The caret reveals
-// the exact payload text the agent will embed byte for byte; truncation and missing data are warn badges; a failed
+// Mounted in the composer status stack, always expanded to its summary lines (the documented exception to "status
+// groups start collapsed"): one project line (project · rules · fragments · size) and one line per pinned document
+// (document · objects · parameters), D-29. The caret reveals the exact payload text the agent will embed byte for
+// byte; truncation and missing data are warn badges; a pinned document the read left out (another file, closed,
+// busy, routes not loopback) is a warn row «{document}: не включён — {reason}» while the rest stays sendable; a failed
 // read shows its diagnostic inline with «Повторить чтение» and nothing stale is ever sent. Choosing «Всё определение»
 // re-reads for that scope and sends nothing; the Send that follows opens the whole-definition confirmation. A
 // policy deny is a neutral banner with the server's reason and «Сузить контекст», never a confirm.
@@ -22,7 +24,7 @@ import { SegmentedControl } from '@/components/ui/segmented-control'
 import { OverflowTip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 
-import { scopeKeyOf, useDocuments } from './documents-store'
+import { pinnedApps, pinnedName, scopeKeyOf, useDocuments } from './documents-store'
 import { type DegramCopy } from './i18n'
 import { failureSentence, isRetryable, parseFailureText } from './outcome-copy'
 import {
@@ -35,18 +37,19 @@ import {
   setContextScope,
   useLifecycle
 } from './request-lifecycle'
-import type { ContextScope, TruncationEntry } from './use-degram-gateway'
+import { BRIDGE_APPS, type BridgeApp, type ContextScope, type TruncationEntry } from './use-degram-gateway'
 import { useDegram } from './use-degram-state'
 
 const partLabel = (copy: DegramCopy, what: string): string =>
   (copy.context.parts as Record<string, string | undefined>)[what] ?? what
 
-function truncationBadge(copy: DegramCopy, entry: TruncationEntry): string {
+function truncationBadge(copy: DegramCopy, entry: TruncationEntry, document?: string): string {
   const bytes = entry.what === 'bytes'
   const kept = bytes ? copy.context.size(entry.kept) : entry.kept
   const total = bytes ? copy.context.size(entry.total) : entry.total
 
-  return `${copy.context.truncated(kept, total)} · ${partLabel(copy, entry.what)}`
+  // A cut that belongs to one document names it (the limits apply per document).
+  return `${copy.context.truncated(kept, total)} · ${partLabel(copy, entry.what)}${document ? ` · ${document}` : ''}`
 }
 
 interface FailureBannerProps {
@@ -66,7 +69,7 @@ export function FailureBanner({ failure, onSubmit }: FailureBannerProps) {
   const sentence =
     failureSentence(copy, failure.parsed, {
       app: failure.app,
-      document: documents.pinned?.name,
+      document: pinnedName(documents, failure.app),
       project: state?.scope.project ?? undefined,
       elapsedSeconds: failure.elapsedSeconds
     }) ?? copy.errors.unknown
@@ -117,6 +120,9 @@ function Dot() {
   )
 }
 
+/** The selector of the composer: focus arriving inside it (from outside) re-reads the card. */
+const COMPOSER_ROOT = '[data-slot="composer-root"]'
+
 export function ContextCard() {
   const { t } = useI18n()
   const copy = t.degram
@@ -129,37 +135,56 @@ export function ContextCard() {
 
   const { mismatch, pinned } = documents
   const { phase, preview, previewError } = lifecycle
-  const pinKey = pinned ? `${pinned.app}:${JSON.stringify(pinned.identity)}` : ''
+  const apps = pinnedApps(documents)
+  const hasPins = apps.length > 0
+  const pinKey = apps.map(app => `${app}:${JSON.stringify(pinned[app]?.identity)}`).join('|')
+  const mismatchKey = apps.filter(app => mismatch[app]).join(',')
   const reading = phase === 'previewing'
-  const documentName = preview?.summary.document?.name ?? pinned?.name ?? ''
 
-  // A read starts when the scope, the pinned document or its mismatch state changes: a new project or document
+  // A read starts when the scope, a pinned document or a bridge's mismatch state changes: a new project or document
   // updates the card and the next request in the same render, and the read is never a send.
   useEffect(() => {
     if (key) {
       void refreshPreview()
     }
-  }, [key, pinKey, mismatch])
+  }, [key, pinKey, mismatchKey])
 
-  // Coming back from Revit or Grasshopper: the selection may have changed there, so read it again.
+  // Coming back from Revit or Grasshopper, or into the composer: the selection may have changed there, so read it again.
   useEffect(() => {
-    const onFocus = () => {
+    const reread = () => {
       // A focus re-read must not interrupt a read in flight or a streaming turn.
       const { phase: current } = $lifecycle.get()
 
-      if (pinKey && current !== 'previewing' && current !== 'streaming') {
+      if (hasPins && current !== 'previewing' && current !== 'streaming') {
         void refreshPreview()
       }
     }
 
-    window.addEventListener('focus', onFocus)
+    const onComposerFocus = (event: FocusEvent) => {
+      const root = event.target instanceof Element ? event.target.closest(COMPOSER_ROOT) : null
+      const from = event.relatedTarget
 
-    return () => window.removeEventListener('focus', onFocus)
-  }, [pinKey])
+      // Focus moving between controls of the composer is not "arriving" in it.
+      if (!root || (from instanceof Node && root.contains(from))) {
+        return
+      }
+
+      reread()
+    }
+
+    window.addEventListener('focus', reread)
+    document.addEventListener('focusin', onComposerFocus)
+
+    return () => {
+      window.removeEventListener('focus', reread)
+      document.removeEventListener('focusin', onComposerFocus)
+    }
+  }, [hasPins])
 
   const summary = preview?.summary
   const project = summary?.project ?? degram.state?.scope.project ?? ''
-  const wholeAllowed = pinned?.app === 'grasshopper'
+  const wholeAllowed = pinned.grasshopper !== undefined
+  const gh = summary?.documents.find(doc => doc.app === 'grasshopper')
 
   const readError = previewError
     ? (failureSentence(
@@ -171,9 +196,35 @@ export function ContextCard() {
           // «No answer within N s»: the seconds the failing request itself reports (PREVIEW_TIMEOUT).
           seconds: parseFailureText(previewError.message ?? '').seconds
         },
-        { app: pinned?.app, document: pinned?.name, reason: previewError.reason }
+        { app: apps.length === 1 ? apps[0] : undefined, document: pinnedName(documents), reason: previewError.reason }
       ) ?? copy.errors.unknown)
     : null
+
+  // What is left out of the request, per bridge: the read's own answer, or a mismatch the store already knows about.
+  const excludedRows = apps.flatMap(app => {
+    const doc = pinned[app]
+    const row = !reading && summary ? summary.excluded.find(entry => entry.app === app) : undefined
+
+    if (!doc || (!row && mismatch[app] !== true)) {
+      return []
+    }
+
+    const sentence =
+      failureSentence(
+        copy,
+        { code: row?.code ?? 'IDENTITY_MISMATCH', reason: row?.reason, message: row?.message ?? '' },
+        { app, document: doc.name, reason: row?.reason }
+      ) ?? copy.errors.unknown
+
+    return [{ app, name: doc.name, sentence }]
+  })
+
+  const isExcluded = (app: BridgeApp) => excludedRows.some(row => row.app === app)
+
+  const documentName = (app: BridgeApp) =>
+    pinned[app]?.name ?? summary?.documents.find(doc => doc.app === app)?.name ?? ''
+
+  const badges = preview && !reading ? [...preview.truncation, ...preview.missing] : []
 
   return (
     <div data-phase={phase} data-slot="degram-context-card" data-testid="degram-context-card">
@@ -203,7 +254,7 @@ export function ContextCard() {
                 value={lifecycle.scope}
               />
             )}
-            {pinned && (
+            {hasPins && (
               <Button
                 aria-label={copy.context.refresh}
                 disabled={reading || phase === 'streaming'}
@@ -225,17 +276,7 @@ export function ContextCard() {
           role="group"
         >
           <span className="min-w-0 shrink truncate">{project}</span>
-          {pinned && (
-            <>
-              <Dot />
-              <OverflowTip label={documentName}>
-                <span className="min-w-0 shrink truncate" data-testid="degram-context-document">
-                  {documentName}
-                </span>
-              </OverflowTip>
-            </>
-          )}
-          {pinned && reading && (
+          {hasPins && reading && (
             <>
               <Dot />
               <GlyphSpinner ariaLabel={copy.context.reading} className="text-[0.85rem]" spinner="braille" />
@@ -243,10 +284,6 @@ export function ContextCard() {
           )}
           {summary && !reading && (
             <span className="shrink-0 font-mono text-[0.6875rem] leading-[1.45] text-muted-foreground">
-              <Dot />
-              {copy.context.objects(summary.objects)}
-              <Dot />
-              {copy.context.parameters(summary.parameters)}
               <Dot />
               {copy.context.rules(summary.rules)}
               <Dot />
@@ -258,7 +295,39 @@ export function ContextCard() {
         </div>
       </StatusRow>
 
-      {!pinned && (
+      {hasPins && (
+        <div className="grid gap-0.5 px-2 pb-1.5" data-testid="degram-context-documents">
+          {BRIDGE_APPS.filter(app => pinned[app]).map(app => {
+            const entry = !reading ? summary?.documents.find(doc => doc.app === app) : undefined
+            const counted = entry && !isExcluded(app)
+
+            return (
+              <div
+                className="flex min-w-0 items-center text-[0.8125rem] leading-[1.4]"
+                data-app={app}
+                data-testid="degram-context-document-line"
+                key={app}
+              >
+                <OverflowTip label={documentName(app)}>
+                  <span className="min-w-0 shrink truncate" data-testid="degram-context-document">
+                    {documentName(app)}
+                  </span>
+                </OverflowTip>
+                {counted && (
+                  <span className="shrink-0 font-mono text-[0.6875rem] leading-[1.45] text-muted-foreground">
+                    <Dot />
+                    {copy.context.objects(entry.objects)}
+                    <Dot />
+                    {copy.context.parameters(entry.parameters)}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {!hasPins && (
         <p
           className="px-2 pb-1.5 text-[0.8125rem] leading-[1.4] text-muted-foreground"
           data-testid="degram-card-no-document"
@@ -267,10 +336,36 @@ export function ContextCard() {
         </p>
       )}
 
-      {pinned && summary?.emptySelection && !reading && !readError && (
-        <p className="px-2 pb-1.5 text-[0.8125rem] leading-[1.4] text-muted-foreground" data-testid="degram-card-empty">
-          {copy.context.emptySelection(documentName)}
-        </p>
+      {!reading &&
+        !readError &&
+        summary?.documents
+          .filter(doc => doc.emptySelection && !isExcluded(doc.app))
+          .map(doc => (
+            <p
+              className="px-2 pb-1.5 text-[0.8125rem] leading-[1.4] text-muted-foreground"
+              data-testid="degram-card-empty"
+              key={doc.app}
+            >
+              {copy.context.emptySelection(doc.name)}
+            </p>
+          ))}
+
+      {excludedRows.length > 0 && !reading && (
+        <div className="grid gap-1 px-2 pb-1.5" data-testid="degram-card-excluded">
+          {excludedRows.map(row => (
+            <div
+              className="flex items-start gap-2 text-[0.8125rem] leading-[1.4]"
+              data-app={row.app}
+              data-testid="degram-card-excluded-row"
+              key={row.app}
+              role="status"
+            >
+              <Badge className="h-auto shrink whitespace-normal break-words text-left leading-snug" variant="warn">
+                {copy.context.excluded(row.name, row.sentence)}
+              </Badge>
+            </div>
+          ))}
+        </div>
       )}
 
       {readError && !reading && (
@@ -280,19 +375,17 @@ export function ContextCard() {
           role="status"
         >
           <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground">{readError}</span>
-          {!mismatch && (
-            <Button onClick={() => void refreshPreview()} size="micro" variant="textStrong">
-              {copy.document.retryRead}
-            </Button>
-          )}
+          <Button onClick={() => void refreshPreview()} size="micro" variant="textStrong">
+            {copy.document.retryRead}
+          </Button>
         </div>
       )}
 
-      {preview && !reading && (preview.truncation.length > 0 || preview.missing.length > 0) && (
+      {preview && !reading && badges.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5" data-testid="degram-card-badges">
           {preview.truncation.map(entry => (
-            <Badge key={`t:${entry.what}`} variant="warn">
-              {truncationBadge(copy, entry)}
+            <Badge key={`t:${entry.app ?? ''}:${entry.what}`} variant="warn">
+              {truncationBadge(copy, entry, entry.app ? documentName(entry.app) : undefined)}
             </Badge>
           ))}
           {preview.missing.map(entry => (
@@ -321,9 +414,9 @@ export function ContextCard() {
         description={
           <span className="block max-h-40 overflow-y-auto">
             {copy.confirm.wholeBody(
-              summary?.objects ?? 0,
-              summary?.parameters ?? 0,
-              documentName,
+              gh?.objects ?? 0,
+              gh?.parameters ?? 0,
+              documentName('grasshopper'),
               copy.context.size(summary?.bytes ?? 0)
             )}
           </span>

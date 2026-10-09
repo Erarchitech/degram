@@ -1,7 +1,8 @@
 // chat.test.tsx — the DeGram chat surfaces of Phase 1301-14: document picker with bridge status, the Context card
 // (summary, plurals, truncation, exact payload, pending and failed reads), whole-definition consent, policy deny,
-// Stop, named failures with a manual retry, and the strip's document and bridge segments. The gateway is a scripted
-// fake (`setDegramGatewayForTests`); nothing here talks to a bridge, a model or the DG server.
+// Stop, named failures with a manual retry, and the strip's document and bridge segments, and (1301-21, D-29) one
+// pinned document per bridge. The gateway is a scripted fake (`setDegramGatewayForTests`); nothing here talks to a
+// bridge, a model or the DG server.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -24,7 +25,7 @@ import { degramOnStop, degramPromptSubmit, useDegramSendBlocked } from './compos
 import { ConnectedScopeStrip } from './connected-scope-strip'
 import { ContextCard, DegramComposerSections, FailureBanner } from './context-card'
 import { DocumentPicker, hasIdentity, middleEllipsize } from './document-picker'
-import { $documents, noteBridgeOutcome, pinRow, refreshDocuments, resetDocuments } from './documents-store'
+import { $documents, noteBridgeOutcome, pinRow, refreshDocuments, resetDocuments, unpin } from './documents-store'
 import { stopActiveResponse } from './host-actions'
 import { InterruptedBadge } from './interrupted-badge'
 import { copyKeyForOutcome, failureSentence, FORWARDED_TO_MAIN, OUTCOME_CODES, parseFailureText } from './outcome-copy'
@@ -87,11 +88,25 @@ const GH_ROW = {
 const listOf = (app: string, documents: unknown[], state = 'ready', extra: Record<string, unknown> = {}) => ({
   status: 'ok',
   groups: [{ app, state, documents: documents.map(d => ({ app, ...(d as object) })), ...extra }],
-  pinned: null
+  pinned: {}
 })
 
 const PAYLOAD =
-  'DeGram context (scope: selection)\nproject: Alpha\ndocument: tower.gh [grasshopper]\n{"project":"Alpha"}'
+  'DeGram context (scope: selection)\nproject: Alpha\ndocuments: tower.gh [grasshopper]\n{"project":"Alpha"}'
+
+const GH_DOC = { app: 'grasshopper', name: 'tower.gh', path: 'C:/work/tower.gh', objects: 2, parameters: 3 }
+const REVIT_DOC = { app: 'revit', name: 'Tower.rvt', path: 'C:\\Projects\\Tower.rvt', objects: 1, parameters: 16 }
+
+/** The preview summary of the agent (D-29): one entry per document that was read, one per document left out. */
+const summaryOf = (documents: Array<Record<string, unknown>>, over: Record<string, unknown> = {}) => ({
+  project: 'Alpha',
+  documents: documents.map(doc => ({ path: null, truncated: false, emptySelection: false, ...doc })),
+  excluded: [],
+  rules: 2,
+  fragments: 0,
+  bytes: 1234,
+  ...over
+})
 
 const previewOf = (params: { previewId: string; scope: string }, over: Record<string, unknown> = {}) => ({
   status: 'ok',
@@ -100,16 +115,7 @@ const previewOf = (params: { previewId: string; scope: string }, over: Record<st
   requestedScope: params.scope,
   requiresConsent: params.scope === 'whole-definition',
   payload: PAYLOAD,
-  summary: {
-    project: 'Alpha',
-    document: { app: 'grasshopper', name: 'tower.gh', path: 'C:/work/tower.gh' },
-    objects: 2,
-    parameters: 3,
-    rules: 2,
-    fragments: 0,
-    bytes: 1234,
-    emptySelection: false
-  },
+  summary: summaryOf([GH_DOC]),
   truncation: [],
   missing: [],
   ...over
@@ -141,42 +147,78 @@ function fakeGateway(handlers: Record<string, Handler>) {
   }
 }
 
-/** Handlers for a backend with a pin: `list` reports the pinned document, as the real agent does. */
-const ghHandlers = (over: Record<string, Handler> = {}): Record<string, Handler> => {
-  let pinned: Record<string, unknown> | null = null
+type PinMap = Record<string, Record<string, unknown>>
 
-  return {
+const DOC_OF: Record<string, typeof GH_DOC> = { grasshopper: GH_DOC, revit: REVIT_DOC }
+
+const ROW_OF: Record<string, { name: string; path: null | string; identity: Record<string, unknown> }> = {
+  grasshopper: GH_ROW,
+  revit: REVIT_ROWS[0]
+}
+
+/**
+ * A scripted backend with one pin per bridge (D-29), as the real agent keeps them: `list` reports every pin, `pin`
+ * replaces only its own bridge's, `unpin` forgets one bridge or both, and the default preview reads each pinned
+ * document except those listed in `excluded` (app -> outcome), which it reports as left out.
+ */
+const backend = (over: Record<string, Handler> = {}) => {
+  const pins: PinMap = {}
+  const excluded: Record<string, { code: string; reason?: string; bridgeState?: string }> = {}
+
+  const handlers: Record<string, Handler> = {
     'degram.documents.list': ({ app }) => {
       const same = (row: { identity: Record<string, unknown> }) =>
-        Boolean(pinned) && JSON.stringify((pinned as { identity: unknown }).identity) === JSON.stringify(row.identity)
+        Boolean(pins[app]) && JSON.stringify(pins[app]?.identity) === JSON.stringify(row.identity)
 
-      const base =
-        app === 'revit'
+      return {
+        ...(app === 'revit'
           ? listOf(
               'revit',
               REVIT_ROWS.map(row => ({ ...row, pinned: same(row) }))
             )
-          : listOf('grasshopper', [{ ...GH_ROW, pinned: same(GH_ROW) }])
-
-      return pinned ? { ...base, pinned } : base
+          : listOf('grasshopper', [{ ...GH_ROW, pinned: same(GH_ROW) }])),
+        pinned: { ...pins }
+      }
     },
     'degram.documents.pin': ({ app, identity }) => {
-      if (app === null) {
-        pinned = null
+      const row = ROW_OF[app]
 
-        return { status: 'ok', pinned: null }
+      pins[app] = { app, name: row.name, path: row.path, unsaved: false, identity }
+
+      return { status: 'ok', pinned: pins[app] }
+    },
+    'degram.documents.unpin': ({ app }) => {
+      if (app === null) {
+        for (const key of Object.keys(pins)) {
+          delete pins[key]
+        }
+      } else {
+        delete pins[app]
       }
 
-      pinned = { app, name: GH_ROW.name, path: GH_ROW.path, unsaved: false, identity }
-
-      return { status: 'ok', pinned }
+      return { status: 'ok', pinned: { ...pins } }
     },
-    'degram.context.preview': params => previewOf(params as never),
+    'degram.context.preview': params => {
+      const apps = ['revit', 'grasshopper'].filter(app => pins[app])
+      const read = apps.filter(app => !excluded[app])
+
+      return previewOf(params as never, {
+        summary: summaryOf(
+          read.map(app => ({ ...DOC_OF[app], name: pins[app]?.name })),
+          { excluded: apps.filter(app => excluded[app]).map(app => ({ app, name: pins[app]?.name, ...excluded[app] })) }
+        )
+      })
+    },
     'degram.context.cancel': () => ({ status: 'ok', cancelled: 0 }),
     'session.interrupt': () => ({ status: 'interrupted' }),
     ...over
   }
+
+  return { pins, excluded, handlers }
 }
+
+/** Handlers for a backend with a pin: `list` reports the pinned document, as the real agent does. */
+const ghHandlers = (over: Record<string, Handler> = {}): Record<string, Handler> => backend(over).handlers
 
 const ru = (ui: ReactNode) => (
   <I18nProvider configClient={null} initialLocale="ru">
@@ -221,6 +263,13 @@ const readyHarness = async (project = 'Alpha', epoch = 1) => {
 const pinGh = async () => {
   await act(async () => {
     await pinRow({ app: 'grasshopper', ...GH_ROW } as never)
+  })
+}
+
+/** Pin the first Revit model through the real store action. */
+const pinRevit = async () => {
+  await act(async () => {
+    await pinRow({ app: 'revit', ...REVIT_ROWS[0] } as never)
   })
 }
 
@@ -291,7 +340,7 @@ describe('document picker (UI E3, D-13)', () => {
         'degram.documents.list': ({ app }) =>
           app === 'revit'
             ? listOf('revit', REVIT_ROWS)
-            : { status: 'ok', groups: [{ app, state: 'off', documents: [], code: 'BRIDGE_OFF' }], pinned: null }
+            : { status: 'ok', groups: [{ app, state: 'off', documents: [], code: 'BRIDGE_OFF' }], pinned: {} }
       })
     )
 
@@ -320,7 +369,7 @@ describe('document picker (UI E3, D-13)', () => {
         ghHandlers({
           'degram.documents.list': ({ app }) =>
             app === 'revit'
-              ? { status: 'ok', groups: [{ app, state: 'setup-incomplete', documents: [], ...extra }], pinned: null }
+              ? { status: 'ok', groups: [{ app, state: 'setup-incomplete', documents: [], ...extra }], pinned: {} }
               : listOf('grasshopper', [GH_ROW])
         })
       )
@@ -440,9 +489,15 @@ describe('document picker (UI E3, D-13)', () => {
 
     fireEvent.click(row)
 
-    // Optimistic: the strip already names the document, with the accent dot, while the pin RPC is still pending.
-    expect(screen.getByRole('button', { name: 'Document: tower.gh' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Document: tower.gh' }).querySelector('.bg-ring')).toBeTruthy()
+    // Optimistic: the strip already counts the document and the Grasshopper segment names it, with the accent dot,
+    // while the pin RPC is still pending.
+    expect(screen.getByRole('button', { name: 'Document: Documents: 1' })).toBeTruthy()
+
+    const segment = window.document.querySelector('[data-bridge-status="pinned"]') as HTMLElement
+
+    expect(segment.textContent).toContain('Grasshopper')
+    expect(segment.textContent).toContain('tower.gh')
+    expect(segment.querySelector('.bg-ring')).toBeTruthy()
     expect(gw.of('degram.documents.pin')[0].params).toEqual({ app: 'grasshopper', identity: GH_ROW.identity })
 
     await act(async () =>
@@ -451,7 +506,7 @@ describe('document picker (UI E3, D-13)', () => {
         pinned: { app: 'grasshopper', name: 'tower.gh', path: GH_ROW.path, unsaved: false, identity: GH_ROW.identity }
       })
     )
-    expect($documents.get().pinned?.name).toBe('tower.gh')
+    expect($documents.get().pinned.grasshopper?.name).toBe('tower.gh')
     expect(h.bridge.selectProject).not.toHaveBeenCalled()
   })
 
@@ -467,8 +522,69 @@ describe('document picker (UI E3, D-13)', () => {
       await pinRow({ app: 'grasshopper', ...GH_ROW } as never)
     })
 
-    expect($documents.get().pinned).toBeNull()
-    expect($documents.get().pinError?.code).toBe('DOCUMENT_NOT_OPEN')
+    expect($documents.get().pinned).toEqual({})
+    expect($documents.get().pinError.grasshopper?.code).toBe('DOCUMENT_NOT_OPEN')
+  })
+
+  it('a refused pin rolls back only its own bridge: the other bridge keeps its pin (D-29)', async () => {
+    await readyHarness()
+
+    const { handlers } = backend()
+
+    fakeGateway({
+      ...handlers,
+      'degram.documents.pin': params =>
+        params.app === 'grasshopper'
+          ? { status: 'error', code: 'DOCUMENT_NOT_OPEN', bridgeState: 'identity-mismatch' }
+          : handlers['degram.documents.pin'](params)
+    })
+
+    await pinRevit()
+    await pinGh()
+
+    expect(Object.keys($documents.get().pinned)).toEqual(['revit'])
+    expect($documents.get().pinError.grasshopper?.code).toBe('DOCUMENT_NOT_OPEN')
+    expect($documents.get().pinError.revit).toBeUndefined()
+  })
+
+  it('pins one document per bridge: pinning on one bridge never unpins the other, each group has its own Unpin', async () => {
+    await readyHarness()
+    const gw = fakeGateway(ghHandlers())
+
+    render(withActions(<ConnectedScopeStrip />))
+    await pinRevit()
+    await pinGh()
+
+    expect(Object.keys($documents.get().pinned).sort()).toEqual(['grasshopper', 'revit'])
+    // Pinning a document replaces no pin on the other bridge and calls no unpin.
+    expect(gw.count('degram.documents.unpin')).toBe(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Document: Documents: 2' }))
+    await screen.findByText('tower.gh')
+
+    const groups = window.document.querySelectorAll('[cmdk-group]')
+    const revitGroup = Array.from(groups).find(group => group.getAttribute('data-bridge') === 'revit') as HTMLElement
+    const ghGroup = Array.from(groups).find(group => group.getAttribute('data-bridge') === 'grasshopper') as HTMLElement
+
+    expect(within(revitGroup).getByTestId('degram-unpin')).toBeTruthy()
+    expect(within(ghGroup).getByTestId('degram-unpin')).toBeTruthy()
+
+    fireEvent.click(within(revitGroup).getByTestId('degram-unpin'))
+    await waitFor(() => expect(gw.of('degram.documents.unpin')).toHaveLength(1))
+    expect(gw.of('degram.documents.unpin')[0].params).toEqual({ app: 'revit' })
+    expect(Object.keys($documents.get().pinned)).toEqual(['grasshopper'])
+  })
+
+  it('unpin() with no bridge forgets both pins in one call', async () => {
+    await readyHarness()
+    const gw = fakeGateway(ghHandlers())
+
+    await pinRevit()
+    await pinGh()
+    await act(async () => unpin())
+
+    expect($documents.get().pinned).toEqual({})
+    expect(gw.of('degram.documents.unpin').at(-1)?.params).toEqual({ app: null })
   })
 })
 
@@ -484,7 +600,7 @@ describe('scope strip document and bridge segments (DGCL-02, plan 13 hand-over)'
             ? new Promise(resolveRevit => {
                 releaseRevit = resolveRevit
               })
-            : { status: 'ok', groups: [{ app, state: 'off', documents: [], code: 'BRIDGE_OFF' }], pinned: null }
+            : { status: 'ok', groups: [{ app, state: 'off', documents: [], code: 'BRIDGE_OFF' }], pinned: {} }
       })
     )
 
@@ -497,20 +613,77 @@ describe('scope strip document and bridge segments (DGCL-02, plan 13 hand-over)'
     expect(screen.queryByText('Проверка')).toBeNull()
   })
 
+  it('reads «Select document» with no pin and «Documents: n» with one or two (D-29)', async () => {
+    await readyHarness()
+    fakeGateway(ghHandlers())
+    render(withActions(<ConnectedScopeStrip />))
+
+    expect(screen.getByRole('button', { name: 'Document: Select document' })).toBeTruthy()
+
+    await pinGh()
+    expect(screen.getByRole('button', { name: 'Document: Documents: 1' })).toBeTruthy()
+
+    await pinRevit()
+    expect(screen.getByRole('button', { name: 'Document: Documents: 2' })).toBeTruthy()
+  })
+
+  it('reads «Документы: 2» in Russian', async () => {
+    await readyHarness()
+    fakeGateway(ghHandlers())
+    render(ru(withActions(<ConnectedScopeStrip />)))
+    await pinRevit()
+    await pinGh()
+
+    expect(screen.getByRole('button', { name: 'Документ: Документы: 2' })).toBeTruthy()
+  })
+
+  it('each bridge segment carries its own pinned document name and accent dot', async () => {
+    await readyHarness()
+    fakeGateway(ghHandlers())
+    render(withActions(<ConnectedScopeStrip />))
+    await waitFor(() => expect(window.document.querySelectorAll('[data-bridge-status="ready"]')).toHaveLength(2))
+    await pinRevit()
+    await pinGh()
+
+    const segments = Array.from(window.document.querySelectorAll('[data-bridge-status="pinned"]')) as HTMLElement[]
+
+    expect(segments).toHaveLength(2)
+    expect(segments[0].textContent).toContain('Revit')
+    expect(segments[0].textContent).toContain('Tower.rvt')
+    expect(segments[1].textContent).toContain('Grasshopper')
+    expect(segments[1].textContent).toContain('tower.gh')
+    expect(segments.every(segment => segment.querySelector('.bg-ring'))).toBe(true)
+  })
+
   it('turns the pinned dot neutral and names the mismatch when the pinned document is gone', async () => {
     await readyHarness()
     fakeGateway(ghHandlers())
     render(withActions(<ConnectedScopeStrip />))
     await pinGh()
 
-    expect(screen.getByRole('button', { name: 'Document: tower.gh' }).querySelector('.bg-ring')).toBeTruthy()
+    expect(window.document.querySelector('[data-bridge-status="pinned"] .bg-ring')).toBeTruthy()
 
     act(() => noteBridgeOutcome('grasshopper', { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }))
 
-    const segment = screen.getByRole('button', { name: 'Document: tower.gh' })
-
-    expect(segment.querySelector('.bg-ring')).toBeNull()
+    expect(window.document.querySelector('[data-bridge-status="pinned"]')).toBeNull()
+    expect(window.document.querySelector('[data-bridge-status="identity-mismatch"] .bg-ring')).toBeNull()
     expect(screen.getByText('other file')).toBeTruthy()
+  })
+
+  it('a mismatch on one bridge leaves the other bridge pinned with its dot', async () => {
+    await readyHarness()
+    fakeGateway(ghHandlers())
+    render(withActions(<ConnectedScopeStrip />))
+    await pinRevit()
+    await pinGh()
+
+    act(() => noteBridgeOutcome('grasshopper', { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }))
+
+    const pinned = Array.from(window.document.querySelectorAll('[data-bridge-status="pinned"]'))
+
+    expect(pinned).toHaveLength(1)
+    expect(pinned[0].textContent).toContain('Tower.rvt')
+    expect($documents.get().mismatch).toEqual({ revit: false, grasshopper: true })
   })
 })
 
@@ -532,7 +705,7 @@ describe('Context card (UI E4, D-17)', () => {
     expect(sendBlockedReason()).toBeNull()
   })
 
-  it('with a pinned document reads it and shows project · document · counts · size with Russian plurals', async () => {
+  it('with a pinned document reads it: a project line and a document line, with Russian plurals', async () => {
     await readyHarness()
     const gw = fakeGateway(ghHandlers())
 
@@ -542,7 +715,9 @@ describe('Context card (UI E4, D-17)', () => {
     const summary = await screen.findByTestId('degram-context-summary')
 
     await waitFor(() => expect(summary.textContent).toContain('0 фрагментов'))
-    expect(summary.textContent).toBe('Alpha · tower.gh · 2 объекта · 3 параметра · 2 правила · 0 фрагментов · 1,2 КБ')
+    // The project line: project · rules · fragments · size. The document line: document · objects · parameters.
+    expect(summary.textContent).toBe('Alpha · 2 правила · 0 фрагментов · 1,2 КБ')
+    expect(screen.getByTestId('degram-context-document-line').textContent).toBe('tower.gh · 2 объекта · 3 параметра')
     expect(gw.of('degram.context.preview')[0].params.scope).toBe('selection')
     expect(gw.of('degram.context.preview')[0].params.previewId).toMatch(/^pv_[A-Za-z0-9_-]{1,61}$/)
   })
@@ -572,7 +747,7 @@ describe('Context card (UI E4, D-17)', () => {
       ghHandlers({
         'degram.context.preview': params =>
           previewOf(params as never, {
-            truncation: [{ what: 'objects', kept: 200, total: 500 }],
+            truncation: [{ what: 'objects', kept: 200, total: 500, app: 'grasshopper' }],
             missing: [{ what: 'rules', reason: 'DG_UNAVAILABLE' }]
           })
       })
@@ -583,7 +758,8 @@ describe('Context card (UI E4, D-17)', () => {
 
     const badges = await screen.findByTestId('degram-card-badges')
 
-    expect(within(badges).getByText(/Truncated: 200 of 500/)).toBeTruthy()
+    // A cut that belongs to one document names it (the limits apply per document).
+    expect(within(badges).getByText('Truncated: 200 of 500 · objects · tower.gh')).toBeTruthy()
     expect(within(badges).getByText('Missing: rules')).toBeTruthy()
     expect(badges.querySelectorAll('[data-slot="badge"]')).toHaveLength(2)
   })
@@ -671,16 +847,7 @@ describe('Context card (UI E4, D-17)', () => {
       ghHandlers({
         'degram.context.preview': params =>
           previewOf(params as never, {
-            summary: {
-              project: 'Alpha',
-              document: { app: 'grasshopper', name: 'tower.gh', path: null },
-              objects: 0,
-              parameters: 0,
-              rules: 2,
-              fragments: 0,
-              bytes: 300,
-              emptySelection: true
-            }
+            summary: summaryOf([{ ...GH_DOC, objects: 0, parameters: 0, emptySelection: true }], { bytes: 300 })
           })
       })
     )
@@ -691,7 +858,7 @@ describe('Context card (UI E4, D-17)', () => {
     expect(
       await screen.findByText('Nothing is selected in tower.gh. Select elements there, or send without a snapshot.')
     ).toBeTruthy()
-    expect(screen.getByTestId('degram-context-summary').textContent).toContain('0 objects')
+    expect(screen.getByTestId('degram-context-document-line').textContent).toContain('0 objects')
     expect(sendBlockedReason()).toBeNull()
   })
 
@@ -702,16 +869,7 @@ describe('Context card (UI E4, D-17)', () => {
       ghHandlers({
         'degram.context.preview': params =>
           previewOf(params as never, {
-            summary: {
-              project: 'Beta',
-              document: { app: 'grasshopper', name: 'tower.gh', path: null },
-              objects: 7,
-              parameters: 1,
-              rules: 1,
-              fragments: 0,
-              bytes: 80,
-              emptySelection: false
-            }
+            summary: summaryOf([{ ...GH_DOC, objects: 7, parameters: 1 }], { project: 'Beta', rules: 1, bytes: 80 })
           })
       })
     )
@@ -728,10 +886,10 @@ describe('Context card (UI E4, D-17)', () => {
 
     expect(summary.textContent).toBe('Beta')
     expect(screen.getByTestId('degram-card-no-document')).toBeTruthy()
-    expect($documents.get().pinned).toBeNull()
+    expect($documents.get().pinned).toEqual({})
   })
 
-  it('a pinned document gone blocks the read, names the mismatch and offers no silent switch', async () => {
+  it('a pinned document gone is shown as not included, blocks Send and offers no silent switch', async () => {
     await readyHarness()
     const gw = fakeGateway(ghHandlers())
 
@@ -741,13 +899,260 @@ describe('Context card (UI E4, D-17)', () => {
 
     act(() => noteBridgeOutcome('grasshopper', { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }))
 
-    const error = await screen.findByTestId('degram-card-read-error')
+    const row = await screen.findByTestId('degram-card-excluded-row')
 
-    expect(error.textContent).toContain('tower.gh is no longer open, or another file is active in its place.')
+    expect(row.textContent).toBe(
+      'tower.gh: not included — tower.gh is no longer open, or another file is active in its place. Select the document again — DeGram never switches documents on its own.'
+    )
+    expect(row.querySelector('[data-slot="badge"]')).toBeTruthy()
     expect(sendBlockedReason()).toBe('mismatch')
-    expect(within(error).queryByRole('button', { name: 'Retry read' })).toBeNull()
-    // The preview was not re-read against another document, and nothing was pinned instead.
+    // The only pinned document is gone: no document line counts it, and nothing was pinned instead.
+    expect(screen.queryByText(/2 objects/)).toBeNull()
     expect(gw.of('degram.documents.pin')).toHaveLength(1)
+  })
+
+  it('a project switch clears both pins in the same render (D-29)', async () => {
+    const h = await readyHarness('Alpha', 1)
+
+    fakeGateway(ghHandlers())
+    render(withActions(<ContextCard />))
+    await pinRevit()
+    await pinGh()
+    await screen.findByText(/2 objects/)
+    expect(Object.keys($documents.get().pinned).sort()).toEqual(['grasshopper', 'revit'])
+    cleanup()
+
+    h.emitState(readyState('Beta', 2))
+    render(withActions(<ContextCard />))
+
+    expect(screen.getByTestId('degram-card-no-document')).toBeTruthy()
+    expect(screen.queryByTestId('degram-context-document-line')).toBeNull()
+    expect($documents.get().pinned).toEqual({})
+  })
+})
+
+describe('Context card with two pinned documents (D-29, G-13)', () => {
+  it('shows one line per pinned document and one project line', async () => {
+    await readyHarness()
+    fakeGateway(ghHandlers())
+
+    render(ru(withActions(<ContextCard />)))
+    await pinRevit()
+    await pinGh()
+
+    await waitFor(() => expect(screen.getAllByTestId('degram-context-document-line')).toHaveLength(2))
+    await waitFor(() => expect(screen.getByTestId('degram-context-summary').textContent).toContain('1,2 КБ'))
+
+    const lines = screen.getAllByTestId('degram-context-document-line')
+
+    expect(lines.map(line => line.getAttribute('data-app'))).toEqual(['revit', 'grasshopper'])
+    expect(lines[0].textContent).toBe('Tower.rvt · 1 объект · 16 параметров')
+    expect(lines[1].textContent).toBe('tower.gh · 2 объекта · 3 параметра')
+    expect(screen.getByTestId('degram-context-summary').textContent).toBe('Alpha · 2 правила · 0 фрагментов · 1,2 КБ')
+    expect(screen.queryByTestId('degram-card-excluded')).toBeNull()
+  })
+
+  it('a mismatch on one bridge excludes only that document: a warn row, and Send stays enabled', async () => {
+    await readyHarness()
+    const { excluded, handlers } = backend()
+    const gw = fakeGateway(handlers)
+
+    excluded.grasshopper = { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }
+    render(withActions(<ContextCard />))
+    await pinRevit()
+    await pinGh()
+
+    const row = await screen.findByTestId('degram-card-excluded-row')
+
+    expect(row.getAttribute('data-app')).toBe('grasshopper')
+    expect(row.textContent).toContain('tower.gh: not included — tower.gh is no longer open')
+    expect(row.querySelector('[data-slot="badge"]')).toBeTruthy()
+
+    const lines = screen.getAllByTestId('degram-context-document-line')
+
+    expect(lines[0].textContent).toBe('Tower.rvt · 1 object · 16 parameters')
+    expect(lines[1].textContent).toBe('tower.gh')
+    await waitFor(() => expect(sendBlockedReason()).toBeNull())
+    // Nothing was switched or re-pinned: both pins are still the user's.
+    expect(Object.keys($documents.get().pinned).sort()).toEqual(['grasshopper', 'revit'])
+    expect($documents.get().mismatch.grasshopper).toBe(true)
+    expect($documents.get().mismatch.revit).toBe(false)
+    expect(gw.count('degram.documents.unpin')).toBe(0)
+  })
+
+  it('BUSY and ROUTES_NOT_LOOPBACK on one bridge exclude only that document, with their own sentence', async () => {
+    await readyHarness()
+    const { excluded, handlers } = backend()
+
+    fakeGateway(handlers)
+    excluded.revit = { code: 'SETUP_INCOMPLETE', reason: 'ROUTES_NOT_LOOPBACK', bridgeState: 'setup-incomplete' }
+    excluded.grasshopper = { code: 'BUSY', bridgeState: 'busy' }
+    render(withActions(<ContextCard />))
+    await pinRevit()
+    await pinGh()
+
+    const rows = await screen.findAllByTestId('degram-card-excluded-row')
+
+    expect(rows.map(row => row.getAttribute('data-app'))).toEqual(['revit', 'grasshopper'])
+    expect(rows[0].textContent).toContain("Tower.rvt: not included — pyRevit Routes aren't limited to this computer")
+    expect(rows[1].textContent).toContain('tower.gh: not included — Grasshopper is busy')
+    // Neither is a mismatch (the user did nothing wrong, the bridge is busy or misconfigured): Send is not blocked.
+    await waitFor(() => expect(sendBlockedReason()).toBeNull())
+  })
+
+  it('Send is blocked only when every pinned document is gone or replaced, and unpinning them lifts it', async () => {
+    await readyHarness()
+
+    const { excluded, handlers } = backend()
+    const gone = { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }
+
+    fakeGateway(handlers)
+
+    render(withActions(<ContextCard />))
+    await pinRevit()
+    await pinGh()
+    await screen.findAllByTestId('degram-context-document-line')
+
+    // The agent confirms what the bridges report: one document gone leaves the other, so Send is not blocked.
+    excluded.grasshopper = gone
+    act(() => noteBridgeOutcome('grasshopper', gone))
+    await waitFor(() => expect(screen.getAllByTestId('degram-context-document-line')[1].textContent).toBe('tower.gh'))
+    expect(sendBlockedReason()).toBeNull()
+
+    // Both gone: nothing left to read, so no read is made and Send is blocked until the user acts.
+    excluded.revit = gone
+    act(() => noteBridgeOutcome('revit', gone))
+    await waitFor(() => expect(sendBlockedReason()).toBe('mismatch'))
+    expect(await composerGate({ text: 'hi' })).toBeNull()
+
+    // The escape is the user's: unpin (here both), then the request is project-only and goes through.
+    await act(async () => unpin())
+    expect(sendBlockedReason()).toBeNull()
+    expect(await composerGate({ text: 'hi' })).toEqual({ text: 'hi' })
+  })
+
+  it('the whole-definition control is available only for the pinned Grasshopper definition', async () => {
+    await readyHarness()
+    fakeGateway(ghHandlers())
+
+    render(withActions(<ContextCard />))
+    await pinRevit()
+    await screen.findByText(/1 object/)
+    expect(screen.queryByRole('button', { name: 'Whole definition' })).toBeNull()
+
+    await pinGh()
+    await screen.findByText(/2 objects/)
+    expect(screen.getByRole('button', { name: 'Whole definition' })).toBeTruthy()
+  })
+
+  it('whole-definition with both pinned reads only the Grasshopper definition whole; the dialog counts that document', async () => {
+    $degramEnabled.set(true)
+    await readyHarness()
+
+    const gw = fakeGateway(
+      ghHandlers({
+        'degram.context.preview': params =>
+          previewOf(params as never, {
+            summary: summaryOf([
+              REVIT_DOC,
+              params.scope === 'whole-definition' ? { ...GH_DOC, objects: 5, parameters: 9 } : GH_DOC
+            ])
+          })
+      })
+    )
+
+    render(withActions(<DegramComposerSections />))
+    await pinRevit()
+    await pinGh()
+    await screen.findAllByTestId('degram-context-document-line')
+    fireEvent.click(screen.getByRole('button', { name: 'Whole definition' }))
+    await waitFor(() => expect(gw.of('degram.context.preview').at(-1)?.params.scope).toBe('whole-definition'))
+    await screen.findByText(/5 objects/)
+
+    const gate = composerGate({ text: 'check' })
+    const dialog = await screen.findByRole('dialog')
+
+    expect(
+      within(dialog).getByText(
+        '5 objects and 9 parameters from tower.gh (1.2 KB) will go to the model. Review the payload in the context card first.'
+      )
+    ).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep selection only' }))
+    expect(await gate).toBeNull()
+  })
+
+  it('without a Grasshopper pin a whole-definition scope is read as the selection', async () => {
+    await readyHarness()
+    const gw = fakeGateway(ghHandlers())
+
+    render(withActions(<ContextCard />))
+    await pinGh()
+    await screen.findByText(/2 objects/)
+    fireEvent.click(screen.getByRole('button', { name: 'Whole definition' }))
+    await waitFor(() => expect(gw.of('degram.context.preview').at(-1)?.params.scope).toBe('whole-definition'))
+
+    await pinRevit()
+    await act(async () => unpin('grasshopper'))
+    await waitFor(() => expect(gw.of('degram.context.preview').at(-1)?.params.scope).toBe('selection'))
+    expect(screen.queryByRole('button', { name: 'Whole definition' })).toBeNull()
+  })
+})
+
+describe('the card re-reads when the composer gains focus (UAT 4.8)', () => {
+  it('re-reads on focus arriving in the composer, not on focus moving inside it, and never while reading', async () => {
+    await readyHarness()
+    const gw = fakeGateway(ghHandlers())
+
+    render(
+      withActions(
+        <>
+          <button type="button">outside</button>
+          <div data-slot="composer-root">
+            <textarea aria-label="draft" />
+            <button type="button">attach</button>
+            <ContextCard />
+          </div>
+        </>
+      )
+    )
+    await pinGh()
+    await screen.findByText(/2 objects/)
+
+    const reads = () => gw.count('degram.context.preview')
+    const before = reads()
+
+    // Focus from outside into the composer: a fresh read of the selection.
+    act(() => screen.getByLabelText('draft').focus())
+    await waitFor(() => expect(reads()).toBe(before + 1))
+    await screen.findByText(/2 objects/)
+
+    // Focus moving between controls of the composer is not an arrival.
+    act(() => screen.getByRole('button', { name: 'attach' }).focus())
+    await act(async () => undefined)
+    expect(reads()).toBe(before + 1)
+
+    // Back out and in again: another read.
+    act(() => screen.getByRole('button', { name: 'outside' }).focus())
+    act(() => screen.getByLabelText('draft').focus())
+    await waitFor(() => expect(reads()).toBe(before + 2))
+  })
+
+  it('does not read when nothing is pinned', async () => {
+    await readyHarness()
+    const gw = fakeGateway(ghHandlers())
+
+    render(
+      withActions(
+        <div data-slot="composer-root">
+          <textarea aria-label="draft" />
+          <ContextCard />
+        </div>
+      )
+    )
+    act(() => screen.getByLabelText('draft').focus())
+    await act(async () => undefined)
+
+    expect(gw.count('degram.context.preview')).toBe(0)
   })
 })
 
@@ -1138,8 +1543,8 @@ describe('named failures (D-18, UI E5)', () => {
     ['ROUTES_DISABLED: off', 'pyRevit Routes are turned off.', {}],
     ['SETUP_INCOMPLETE: (reason: ROUTES_NOT_LOOPBACK)', "pyRevit Routes aren't limited to this computer", {}],
     ['EXTENSION_NOT_LOADED: missing', "The DeGram extension isn't loaded in pyRevit.", {}],
-    ['IDENTITY_MISMATCH: another file', 'tower.gh is no longer open, or another file is active in its place.', {}],
-    ['DOCUMENT_NOT_OPEN: closed', 'tower.gh is no longer open, or another file is active in its place.', {}],
+    ['IDENTITY_MISMATCH: another file', 'Tower.rvt is no longer open, or another file is active in its place.', {}],
+    ['DOCUMENT_NOT_OPEN: closed', 'Tower.rvt is no longer open, or another file is active in its place.', {}],
     [
       'Authentication failed: CREDENTIALS_EXPIRED: The held delegated token is past its expiry.',
       'The DG access token expired and is being renewed. Retry the request.',

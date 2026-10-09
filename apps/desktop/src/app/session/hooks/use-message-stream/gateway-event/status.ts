@@ -1,5 +1,5 @@
 import { isSessionNotOwnedError } from '@/app/session/hooks/use-prompt-actions/utils'
-import { $documents } from '@/degram/documents-store'
+import { $documents, pinnedName } from '@/degram/documents-store'
 import { degramFailureHeadline } from '@/degram/outcome-copy'
 import { $degram } from '@/degram/use-degram-state'
 import { runtimeTranslations, translateNow } from '@/i18n'
@@ -314,7 +314,7 @@ export function handleStatusEvent(ctx: GatewayEventContext): boolean {
 
     const toastMessage = degramToast
       ? degramFailureHeadline(runtimeTranslations().degram, errorMessage, {
-          document: $documents.get().pinned?.name,
+          document: pinnedName($documents.get()),
           project: $degram.get().state?.scope.project ?? undefined
         })
       : card

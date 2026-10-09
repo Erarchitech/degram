@@ -17,8 +17,8 @@ from utils import fast_safe_load
 from degram_variant.lockdown import ALLOWED_TOOL_NAMES, DEGRAM_TOOL_NAMES, REVIT_TOOL_NAMES
 from degram_variant.outcomes import BridgeError
 
-from .conftest import GH_PIN, PROJECT, TOKEN
-from .fakes import GH_DOC_ID
+from .conftest import GH_PIN, PROJECT, TOKEN, default_gh_handlers
+from .fakes import GH_DOC_ID, gh_node
 
 FAKE_SERVER = Path(__file__).parent / "fixtures" / "fake_revit_mcp.py"
 REVIT_PIN = {"app": "revit", "identity": {"creationGuid": "aaaaaaaa-0000-0000-0000-000000000001",
@@ -117,7 +117,7 @@ class TestRevitDocuments:
         annex = by_name["annex.rvt"]
         assert annex["unsaved"] is True and annex["path"] is None and annex["identity"]["pathName"] == ""
         assert _group(listing, "grasshopper")["documents"][0]["identity"]["documentId"] == GH_DOC_ID
-        assert listing["pinned"] is None, "two open documents, still nothing pinned"
+        assert listing["pinned"] == {}, "two open documents, still nothing pinned"
 
     def test_pin_a_revit_document(self, rt, adapter):
         pinned = rt.documents.pin(**REVIT_PIN)
@@ -166,7 +166,8 @@ class TestRevitPreviewDeadline:
         monkeypatch.setattr(context_composer, "PREVIEW_BRIDGE_DEADLINE_S", {"revit": 0.6, "grasshopper": 0.6})
         started = time.monotonic()
         view = rt.composer.preview("selection")
-        assert view["status"] == "error" and view["code"] == "BUSY" and view["bridgeState"] == "busy"
+        (row,) = view["summary"]["excluded"]
+        assert view["status"] == "ok" and row["code"] == "BUSY" and row["bridgeState"] == "busy"
         assert time.monotonic() - started < 10
         assert len([c for c in adapter.calls() if c["tool"] == "get_selection_snapshot"]) == 1, "no retry"
 
@@ -198,12 +199,13 @@ class TestRevitSnapshot:
     def test_preview_uses_the_identity_pinned_snapshot_tool(self, rt, adapter):
         rt.documents.pin(**REVIT_PIN)
         view = rt.composer.preview("selection")
-        assert view["status"] == "ok" and view["summary"]["objects"] == 2 and view["summary"]["parameters"] == 6
+        (doc,) = view["summary"]["documents"]
+        assert view["status"] == "ok" and doc["objects"] == 2 and doc["parameters"] == 6 and doc["app"] == "revit"
         call = next(c for c in adapter.calls() if c["tool"] == "get_selection_snapshot")
         assert call["arguments"]["identity"] == REVIT_PIN["identity"]
         assert call["arguments"]["max_elements"] == 200 and call["arguments"]["max_parameters"] == 50
         body = json.loads(view["payload"][view["payload"].index("\n{") + 1:])
-        assert [e["uniqueId"] for e in body["snapshot"]["elements"]] == ["uid-1", "uid-2"]
+        assert [e["uniqueId"] for e in body["snapshots"][0]["elements"]] == ["uid-1", "uid-2"]
         assert "tower.rvt" in view["payload"].split("\n{", 1)[0]
 
     def test_only_the_two_document_tools_are_used_by_the_preview(self, rt, adapter):
@@ -216,8 +218,10 @@ class TestRevitSnapshot:
         rt.documents.pin(**REVIT_PIN)
         adapter.mode(mode="error", code=code, **({"reason": reason} if reason else {}))
         view = rt.composer.preview("selection")
-        assert view["status"] == "error" and view["code"] == code and view["bridgeState"] == "identity-mismatch"
-        assert view.get("reason") == reason and "payload" not in view
+        (row,) = view["summary"]["excluded"]
+        assert view["status"] == "ok" and row["code"] == code and row["bridgeState"] == "identity-mismatch"
+        assert row.get("reason") == reason and view["summary"]["documents"] == []
+        assert json.loads(view["payload"][view["payload"].index("\n{") + 1:])["snapshots"] == []
 
     def test_whole_definition_is_not_supported_for_revit(self, rt, adapter):
         rt.documents.pin(**REVIT_PIN)
@@ -285,13 +289,13 @@ class TestDegramToolset:
 
     def test_list_documents_reads_every_bridge(self, rt, adapter):
         out = self._call("degram_list_documents")
-        assert {g["app"] for g in out["groups"]} == {"grasshopper", "revit"} and out["pinned"] is None
+        assert {g["app"] for g in out["groups"]} == {"grasshopper", "revit"} and out["pinned"] == {}
 
     def test_bridge_status_reports_a_state_per_bridge(self, rt, adapter, gh):
         out = self._call("degram_bridge_status")
         states = {b["app"]: b for b in out["bridges"]}
         assert states["grasshopper"]["state"] == "ready" and states["revit"]["state"] == "ready"
-        assert states["revit"]["documents"] == 2 and out["pinned"] is None
+        assert states["revit"]["documents"] == 2 and out["pinned"] == {}
 
     def test_snapshot_without_a_pinned_document_is_a_named_outcome(self, rt):
         out = self._call("degram_document_snapshot")
@@ -300,8 +304,8 @@ class TestDegramToolset:
     def test_snapshot_reads_only_the_pinned_document_selection(self, rt, gh):
         rt.documents.pin(**GH_PIN)
         out = self._call("degram_document_snapshot")
-        assert out["status"] == "ok" and out["scope"] == "selection" and out["summary"]["objects"] == 2
-        assert len(out["snapshot"]["nodes"]) == 2
+        assert out["status"] == "ok" and out["scope"] == "selection" and out["summary"]["documents"][0]["objects"] == 2
+        assert len(out["snapshots"][0]["nodes"]) == 2
         assert set(gh.commands()) <= {"get_document_identity", "get_selection", "get_canvas_context"}
 
     def test_snapshot_has_no_scope_argument_so_whole_definition_is_never_a_tool_call(self, rt):
@@ -405,3 +409,193 @@ class TestProjectGraphFitsTheToolBudget:
         assert out["graph"]["nodes"] == []
         cut = next(t for t in out["truncation"] if t["what"] == "rules")
         assert cut["total"] == 200 and 0 < cut["kept"] == len(out["rules"]) < 200
+
+
+def _body(view: dict) -> dict:
+    return json.loads(view["payload"][view["payload"].index("\n{") + 1:])
+
+
+def _section(view: dict, app: str) -> dict:
+    return next(sec for sec in _body(view)["snapshots"] if sec["app"] == app)
+
+
+class TestTwoPins:
+    """1301-21, G-13, D-29: one pinned document per bridge, both read in one request, a problem on one bridge leaves
+    the other usable, nothing is switched or re-pinned automatically."""
+
+    def test_two_pins_coexist_and_pinning_one_bridge_keeps_the_other(self, rt, adapter):
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        assert set(rt.documents.pinned) == {"grasshopper", "revit"}
+        assert rt.documents.pinned["grasshopper"]["name"] == "tower.gh"
+        assert rt.documents.pinned["revit"]["name"] == "tower.rvt"
+        listing = rt.documents.list()
+        assert set(listing["pinned"]) == {"grasshopper", "revit"}
+        assert _group(listing, "grasshopper")["state"] == "pinned" and _group(listing, "revit")["state"] == "pinned"
+        assert [d["pinned"] for d in _group(listing, "revit")["documents"]] == [True, False]
+        # a second pin on the same bridge replaces only that bridge's pin
+        before = rt.documents.generation
+        rt.documents.pin(**GH_PIN)
+        assert rt.documents.generation > before and set(rt.documents.pinned) == {"grasshopper", "revit"}
+
+    def test_unpin_one_bridge_leaves_the_other_and_unpin_all_clears_both(self, rt, adapter):
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        rt.documents.unpin("revit")
+        assert set(rt.documents.pinned) == {"grasshopper"}
+        rt.documents.pin(**REVIT_PIN)
+        rt.documents.unpin_all()
+        assert rt.documents.pinned == {}
+
+    def test_one_preview_carries_one_snapshot_section_per_document_exactly_as_summarised(self, rt, adapter):
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        view = rt.composer.preview("selection")
+        assert view["status"] == "ok" and view["scope"] == "selection" and view["summary"]["excluded"] == []
+        by_app = {d["app"]: d for d in view["summary"]["documents"]}
+        assert set(by_app) == {"grasshopper", "revit"}
+        assert (by_app["grasshopper"]["objects"], by_app["grasshopper"]["parameters"]) == (2, 4)
+        assert (by_app["revit"]["objects"], by_app["revit"]["parameters"]) == (2, 6)
+        assert [n["instanceId"] for n in _section(view, "grasshopper")["nodes"]] == [
+            gh_node(1)["instanceId"], gh_node(2)["instanceId"]]
+        assert [e["uniqueId"] for e in _section(view, "revit")["elements"]] == ["uid-1", "uid-2"]
+        head = view["payload"].split("\n{", 1)[0]
+        assert "tower.gh [grasshopper]" in head and "tower.rvt [revit]" in head
+        assert view["summary"]["bytes"] == len(view["payload"].encode("utf-8"))
+        # the send embeds the previewed payload byte for byte
+        plan = rt.composer.prepare_send(view["previewId"], "Compare the two")
+        assert plan.message.startswith(view["payload"])
+
+    def test_a_gh_mismatch_excludes_only_gh_and_revit_is_still_sent(self, rt, adapter, gh):
+        from .fakes import gh_identity
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        gh.handlers["get_document_identity"] = gh_identity(document_id="99999999-0000-0000-0000-000000000000")
+        view = rt.composer.preview("selection")
+        assert view["status"] == "ok" and view["scope"] == "selection"
+        assert [d["app"] for d in view["summary"]["documents"]] == ["revit"]
+        (row,) = view["summary"]["excluded"]
+        assert row["app"] == "grasshopper" and row["code"] == "IDENTITY_MISMATCH" and row["name"] == "tower.gh"
+        assert row["bridgeState"] == "identity-mismatch"
+        assert [s["app"] for s in _body(view)["snapshots"]] == ["revit"]
+        assert _body(view)["excluded"][0]["app"] == "grasshopper"
+        assert gh_node(1)["instanceId"] not in view["payload"]
+        assert set(rt.documents.pinned) == {"grasshopper", "revit"}, "never unpinned or switched automatically"
+
+    def test_routes_not_loopback_excludes_revit_only(self, rt, adapter):
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        adapter.mode(mode="error", code="SETUP_INCOMPLETE", reason="ROUTES_NOT_LOOPBACK")
+        view = rt.composer.preview("selection")
+        assert view["status"] == "ok" and [d["app"] for d in view["summary"]["documents"]] == ["grasshopper"]
+        (row,) = view["summary"]["excluded"]
+        assert row["app"] == "revit" and row["code"] == "SETUP_INCOMPLETE" and row["reason"] == "ROUTES_NOT_LOOPBACK"
+        assert row["bridgeState"] == "setup-incomplete"
+
+    def test_a_busy_revit_does_not_stall_gh_and_both_reads_run_concurrently(self, rt, adapter, monkeypatch):
+        from degram_variant import context_composer
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        adapter.mode(mode="hang")
+        monkeypatch.setattr(context_composer, "PREVIEW_BRIDGE_DEADLINE_S", {"revit": 0.8, "grasshopper": 5.0})
+        started = time.monotonic()
+        view = rt.composer.preview("selection")
+        assert time.monotonic() - started < 8
+        assert [d["app"] for d in view["summary"]["documents"]] == ["grasshopper"]
+        assert view["summary"]["excluded"][0]["app"] == "revit" and view["summary"]["excluded"][0]["code"] == "BUSY"
+
+    def test_whole_definition_with_both_pins_expands_only_gh(self, rt, adapter):
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        view = rt.composer.preview("whole-definition")
+        assert view["status"] == "ok" and view["scope"] == "whole-definition" and view["requiresConsent"] is True
+        by_app = {d["app"]: d for d in view["summary"]["documents"]}
+        assert by_app["grasshopper"]["objects"] == 5 and len(_section(view, "grasshopper")["nodes"]) == 5
+        assert by_app["revit"]["objects"] == 2, "Revit keeps its selection"
+        assert "algorithms" in _section(view, "grasshopper") and "algorithms" not in _section(view, "revit")
+
+    def test_whole_definition_with_the_gh_pin_excluded_falls_back_to_the_revit_selection(self, rt, adapter, gh):
+        from .fakes import gh_identity
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        gh.handlers["get_document_identity"] = gh_identity(document_id="99999999-0000-0000-0000-000000000000")
+        view = rt.composer.preview("whole-definition")
+        assert view["status"] == "ok" and view["requestedScope"] == "whole-definition"
+        assert view["scope"] == "selection" and view["requiresConsent"] is False
+        assert rt.composer.prepare_send(view["previewId"], "hi", scope="whole-definition").consent is False
+
+    def test_whole_definition_without_a_gh_pin_is_not_supported_even_with_revit_pinned(self, rt, adapter):
+        rt.documents.pin(**REVIT_PIN)
+        view = rt.composer.preview("whole-definition")
+        assert view["status"] == "error" and view["code"] == "SCOPE_NOT_SUPPORTED"
+        assert view["reason"] == "WHOLE_DEFINITION_GH_ONLY"
+
+    def test_limits_apply_per_document_and_are_disclosed_per_document(self, rt, adapter, gh):
+        nodes = [gh_node(i, params=1) for i in range(1, 202)]
+        gh.handlers.update(default_gh_handlers(nodes=nodes, selection=[n["instanceId"] for n in nodes]))
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        view = rt.composer.preview("selection")
+        by_app = {d["app"]: d for d in view["summary"]["documents"]}
+        assert by_app["grasshopper"]["objects"] == 200 and by_app["grasshopper"]["truncated"] is True
+        assert by_app["revit"]["objects"] == 2 and by_app["revit"]["truncated"] is False
+        assert {"app": "grasshopper", "what": "objects", "kept": 200, "total": 201} in view["truncation"]
+        assert not any(t.get("app") == "revit" for t in view["truncation"])
+
+    def test_the_256_kib_cap_covers_the_whole_body(self, rt, adapter, gh):
+        from degram_variant.context_composer import SNAPSHOT_LIMITS
+        nodes = []
+        for i in range(1, 151):
+            node = gh_node(i, params=1)
+            node["name"] = "x" * 5000
+            nodes.append(node)
+        gh.handlers.update(default_gh_handlers(nodes=nodes, selection=[n["instanceId"] for n in nodes]))
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        view = rt.composer.preview("selection")
+        assert view["summary"]["bytes"] <= SNAPSHOT_LIMITS["max_bytes"]
+        assert len(view["payload"].encode("utf-8")) == view["summary"]["bytes"]
+        by_app = {d["app"]: d for d in view["summary"]["documents"]}
+        assert 0 < by_app["grasshopper"]["objects"] < 150 and by_app["grasshopper"]["truncated"] is True
+        assert by_app["revit"]["objects"] == 2
+        assert any(t["what"] == "bytes" for t in view["truncation"])
+
+    def test_a_preview_goes_stale_after_a_re_pin_of_either_bridge(self, rt, adapter):
+        from degram_variant.context_composer import ContextError
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        for app_pin in (GH_PIN, REVIT_PIN):
+            view = rt.composer.preview("selection")
+            rt.documents.pin(**app_pin)
+            with pytest.raises(ContextError) as exc:
+                rt.composer.prepare_send(view["previewId"], "hi")
+            assert exc.value.code == "PREVIEW_STALE"
+
+    def test_a_scope_reset_clears_both_pins(self, rt, adapter):
+        from degram_variant import runtime
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        view = rt.composer.preview("selection")
+        runtime.reset_scope()
+        assert rt.documents.pinned == {}
+        from degram_variant.context_composer import ContextError
+        with pytest.raises(ContextError):
+            rt.composer.prepare_send(view["previewId"], "hi")
+
+    def test_the_agent_tool_reads_both_pinned_documents_and_names_an_excluded_one(self, rt, adapter, gh):
+        from .fakes import gh_identity
+        rt.documents.pin(**GH_PIN)
+        rt.documents.pin(**REVIT_PIN)
+        out = TestDegramToolset()._call("degram_document_snapshot")
+        assert out["status"] == "ok" and {s["app"] for s in out["snapshots"]} == {"grasshopper", "revit"}
+        assert out["excluded"] == [] and {d["app"] for d in out["documents"]} == {"grasshopper", "revit"}
+        gh.handlers["get_document_identity"] = gh_identity(document_id="99999999-0000-0000-0000-000000000000")
+        out = TestDegramToolset()._call("degram_document_snapshot")
+        assert out["status"] == "ok" and [s["app"] for s in out["snapshots"]] == ["revit"]
+        assert out["excluded"][0]["app"] == "grasshopper" and out["excluded"][0]["code"] == "IDENTITY_MISMATCH"
+
+    def test_the_tool_descriptions_name_both_pinned_documents(self, rt):
+        import tools.degram_tools  # noqa: F401
+        from tools.registry import registry
+        for name in ("degram_list_documents", "degram_document_snapshot"):
+            assert "Revit model and/or Grasshopper definition" in registry.get_schema(name)["description"]

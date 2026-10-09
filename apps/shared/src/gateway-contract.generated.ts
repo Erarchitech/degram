@@ -1284,6 +1284,17 @@ export interface DegramDocumentsPinResult {
   bridgeState?: string | null
   pinned?: unknown
 }
+export interface DegramDocumentsUnpinParams {
+  app?: string | null
+}
+export interface DegramDocumentsUnpinResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  pinned?: unknown
+}
 export interface DegramContextPreviewParams {
   scope?: string
   previewId?: string | null
@@ -1303,7 +1314,7 @@ export interface DegramContextPreviewResult {
   summary?: unknown
   truncation?: unknown
   missing?: unknown
-  document?: unknown
+  documents?: unknown
 }
 export interface DegramContextSendParams {
   session_id: string
@@ -5064,7 +5075,7 @@ export interface RpcMethods {
   'cron.manage': { params: CronManageParams; result: CronManageResult }
   /** Abort the in-flight bridge read of a preview (or every read); the preview resolves with CANCELLED. */
   'degram.context.cancel': { params: DegramContextCancelParams; result: DegramContextCancelResult }
-  /** Read the pinned document and return the exact bounded context payload with its disclosure. */
+  /** Read every pinned document (one per bridge) and return the exact bounded context payload with its disclosure; a bridge that cannot be read is listed in summary.excluded. */
   'degram.context.preview': { params: DegramContextPreviewParams; result: DegramContextPreviewResult }
   /** Submit a turn whose message embeds the previewed payload byte for byte. Whole-definition needs consent true. */
   'degram.context.send': { params: DegramContextSendParams; result: DegramContextSendResult }
@@ -5076,8 +5087,10 @@ export interface RpcMethods {
   'degram.credentials.status': { params: Params; result: DegramCredentialsStatusResult }
   /** Open documents of every reachable CAD bridge (or of one bridge: app) with a state per bridge; pins nothing. */
   'degram.documents.list': { params: DegramDocumentsListParams; result: DegramDocumentsListResult }
-  /** Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY. */
+  /** Pin one open document by identity; it replaces only that bridge's pin (one pinned document per bridge). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY. */
   'degram.documents.pin': { params: DegramDocumentsPinParams; result: DegramDocumentsPinResult }
+  /** Forget the pinned document of one bridge (app) or of every bridge (app null); nothing else changes. */
+  'degram.documents.unpin': { params: DegramDocumentsUnpinParams; result: DegramDocumentsUnpinResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */
   'delegation.pause': { params: DelegationPauseParams; result: DelegationPauseResult }
   /** Running subagent tree plus the spawn pause flag and limits. */
@@ -5549,6 +5562,7 @@ export const RPC_METHODS = [
   'degram.credentials.status',
   'degram.documents.list',
   'degram.documents.pin',
+  'degram.documents.unpin',
   'delegation.pause',
   'delegation.status',
   'diagnostics.share_nous',

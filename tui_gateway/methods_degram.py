@@ -107,10 +107,10 @@ def _(rid, params: dict) -> dict:
     from degram_variant.outcomes import BridgeError
     rt = runtime.get()
     app = params.get("app")
-    if app is None:  # no app: unpin (the card goes back to "no document selected")
-        rt.documents.unpin()
+    if app is None:  # legacy "app: null" unpins every bridge; the renderer calls degram.documents.unpin
+        rt.documents.unpin_all()
         rt.composer.clear()
-        return _ok(rid, {"status": "ok", "pinned": None})
+        return _ok(rid, {"status": "ok", "pinned": rt.documents.pinned})
     token = rt.cancels.new("documents.pin")
     try:
         with token.active():
@@ -122,6 +122,25 @@ def _(rid, params: dict) -> dict:
     finally:
         rt.cancels.discard("documents.pin", token)
     return _ok(rid, {"status": "ok", "pinned": pinned})
+
+
+@method("degram.documents.unpin")
+def _(rid, params: dict) -> dict:
+    """D-29: forget one bridge's pinned document (``app``) or every pin (``app`` null); the other bridge keeps its own."""
+    if (refused := _not_degram(rid, "degram.documents.unpin")) is not None:
+        return refused
+    from degram_variant import runtime
+    rt = runtime.get()
+    app = params.get("app")
+    try:
+        if app is None:
+            rt.documents.unpin_all()
+        else:
+            rt.documents.unpin(app)
+    except ValueError as exc:
+        return _degram_err(rid, 4400, "BAD_REQUEST", str(exc))
+    rt.composer.clear()
+    return _ok(rid, {"status": "ok", "pinned": rt.documents.pinned})
 
 
 @method("degram.context.preview")

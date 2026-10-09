@@ -1,13 +1,19 @@
-"""Open documents of every reachable CAD bridge, and the one pinned document (1301 D-13).
+"""Open documents of every reachable CAD bridge, and the pinned document of each bridge (1301 D-13, D-29).
 
 ``list`` asks each bridge for its open documents (GH: ``get_document_identity``; Revit: ``list_open_documents``) and
 reports a state per bridge (the UI-SPEC bridge states). Nothing is pinned until ``pin`` is called, a single open document
 is never pinned automatically, and every snapshot read goes through a source that first re-checks the pinned identity
-(``IDENTITY_MISMATCH`` / ``DOCUMENT_NOT_OPEN`` instead of reading another document)."""
+(``IDENTITY_MISMATCH`` / ``DOCUMENT_NOT_OPEN`` instead of reading another document).
+
+D-29 (1301-21, G-13): one pin per bridge. Pinning a document replaces only that bridge's pin, so a Revit model and a
+Grasshopper definition are pinned at the same time; ``read_snapshots`` reads every pinned bridge independently and a
+failure of one bridge is that bridge's outcome, never the other's."""
 
 from __future__ import annotations
 
+import contextvars
 import threading
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from .cancel import CancelToken
@@ -37,7 +43,7 @@ class DocumentsService:
     def __init__(self, sources: dict[str, DocumentSource]) -> None:
         self._sources = dict(sources)
         self._lock = threading.Lock()
-        self._pinned: dict[str, Any] | None = None
+        self._pins: dict[str, dict[str, Any]] = {}
         self._generation = 0
 
     @property
@@ -45,9 +51,10 @@ class DocumentsService:
         return tuple(self._sources)
 
     @property
-    def pinned(self) -> dict[str, Any] | None:
+    def pinned(self) -> dict[str, dict[str, Any]]:
+        """The pinned documents keyed by bridge app, in the order of the bridges (empty when nothing is pinned)."""
         with self._lock:
-            return dict(self._pinned) if self._pinned else None
+            return {app: dict(self._pins[app]) for app in self._sources if app in self._pins}
 
     @property
     def generation(self) -> int:
@@ -83,7 +90,7 @@ class DocumentsService:
                 groups.append(group)
                 continue
             for doc in documents:
-                doc["pinned"] = bool(pinned and pinned["app"] == app and _same_identity(app, pinned["identity"], doc["identity"]))
+                doc["pinned"] = bool(app in pinned and _same_identity(app, pinned[app]["identity"], doc["identity"]))
             group["documents"] = documents
             if any(d["pinned"] for d in documents):
                 group["state"] = "pinned"
@@ -91,7 +98,7 @@ class DocumentsService:
         return {"groups": groups, "pinned": pinned}
 
     def status(self, cancel: CancelToken | None = None) -> dict[str, Any]:
-        """One line per bridge (state, code, reason, number of open documents) and the pinned document."""
+        """One line per bridge (state, code, reason, number of open documents) and the pinned documents."""
         listing = self.list(cancel)
         bridges = []
         for group in listing["groups"]:
@@ -104,8 +111,9 @@ class DocumentsService:
         return {"status": "ok", "bridges": bridges, "pinned": listing["pinned"]}
 
     def pin(self, app: str, identity: dict[str, Any], cancel: CancelToken | None = None) -> dict[str, Any]:
-        """Pin an open document. The document must be in the bridge's fresh list: a stale picker row cannot pin a
-        document that is gone. Raises ValueError for an unknown app, ``BridgeError`` when the document is not open."""
+        """Pin an open document; it replaces only this bridge's pin (D-29). The document must be in the bridge's fresh
+        list: a stale picker row cannot pin a document that is gone. Raises ValueError for an unknown app,
+        ``BridgeError`` when the document is not open."""
         source = self.source(app)
         if not isinstance(identity, dict) or not identity:
             raise ValueError("identity is required")
@@ -116,28 +124,65 @@ class DocumentsService:
         pinned = {"app": app, "name": match["name"], "path": match["path"], "unsaved": match["unsaved"],
                   "identity": dict(match["identity"])}
         with self._lock:
-            self._pinned = pinned
+            self._pins[app] = pinned
             self._generation += 1
         return dict(pinned)
 
-    def unpin(self) -> None:
+    def unpin(self, app: str) -> None:
+        """Forget one bridge's pin (the other bridge keeps its own). ValueError for an unknown app."""
+        self.source(app)
         with self._lock:
-            self._pinned = None
+            self._pins.pop(app, None)
+            self._generation += 1
+
+    def unpin_all(self) -> None:
+        with self._lock:
+            self._pins.clear()
             self._generation += 1
 
     # -- reads -----------------------------------------------------------------------------------
-    def read_snapshot(self, scope: str, project: str, cancel: CancelToken | None = None,
-                      deadline_s: float | None = None) -> Snapshot | None:
-        """The pinned document's snapshot, or None when nothing is pinned. The source re-checks the identity first.
-        ``deadline_s`` (the preview path) bounds the bridge wait; None keeps the source's own tool deadline."""
-        pinned = self.pinned
-        if pinned is None:
-            return None
-        source = self._sources[pinned["app"]]
-        if deadline_s is None:
-            return source.read_snapshot(pinned, scope, project, cancel)
-        return source.read_snapshot(pinned, scope, project, cancel, deadline_s=deadline_s)
+    def read_snapshots(self, scope: str, project: str, cancel: CancelToken | None = None,
+                       deadline_s: Mapping[str, float] | None = None) -> dict[str, Snapshot | BridgeError]:
+        """One result per pinned bridge: its snapshot, or the ``BridgeError`` that ended that bridge's read (identity
+        mismatch, closed document, BUSY, setup...). Every source re-checks its pinned identity first. The bridges are
+        read concurrently, each with its own deadline from ``deadline_s`` (the preview path; absent keeps the source's own
+        tool deadline), so one slow bridge never spends the other's budget. Whole-definition scope applies to the
+        Grasshopper definition only: any other bridge contributes its selection. A cancelled read raises
+        ``CANCELLED`` for the whole request."""
+        pins = self.pinned
+        results: dict[str, Snapshot | BridgeError] = {}
+        raised: dict[str, BaseException] = {}
+
+        def read(app: str) -> None:
+            app_scope = "whole-definition" if scope == "whole-definition" and app == "grasshopper" else "selection"
+            wait = (deadline_s or {}).get(app)
+            try:
+                source = self._sources[app]
+                if wait is None:
+                    results[app] = source.read_snapshot(pins[app], app_scope, project, cancel)
+                else:
+                    results[app] = source.read_snapshot(pins[app], app_scope, project, cancel, deadline_s=wait)
+            except BridgeError as exc:
+                results[app] = exc
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
+                raised[app] = exc
+
+        if len(pins) == 1:
+            read(next(iter(pins)))
+        elif pins:
+            threads = [threading.Thread(target=contextvars.copy_context().run, args=(read, app),
+                                        name=f"degram-read-{app}", daemon=True) for app in pins]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        for exc in raised.values():
+            raise exc
+        for outcome in results.values():
+            if isinstance(outcome, BridgeError) and outcome.code == "CANCELLED":
+                raise outcome
+        return {app: results[app] for app in pins}
 
     def reset(self) -> None:
-        """Scope change or sign-out (D-08): forget the pinned document."""
-        self.unpin()
+        """Scope change or sign-out (D-08): forget every pinned document."""
+        self.unpin_all()

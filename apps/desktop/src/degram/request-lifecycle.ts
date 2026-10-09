@@ -2,6 +2,9 @@
 //
 //   idle -> previewing -> ready -> streaming -> done | interrupted | failed
 //
+// D-29: up to two documents are pinned (one per bridge). A preview reads both; a bridge whose document cannot be read
+// is excluded from the request and shown as such, while Send stays available for the rest.
+//
 // The machine has exactly one way into `streaming`: the user's Send (`armSend` after the composer gate, then the
 // stock submit path reports `markSent`). Nothing else sends: not a timer, not a retry, not a scope change. A
 // preview is a read (it asks the bridge what would be sent); it never reaches the model. A failure stays on screen
@@ -17,7 +20,16 @@ import { atom } from 'nanostores'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $gateway } from '@/store/gateway'
 
-import { $documents, noteBridgeOutcome, scopeKeyOf, syncDocumentsScope, unpin } from './documents-store'
+import {
+  $documents,
+  allPinnedMismatched,
+  noteBridgeOutcome,
+  noteDocumentsRead,
+  pinnedApps,
+  scopeKeyOf,
+  syncDocumentsScope,
+  unpin
+} from './documents-store'
 import { FORWARDED_TO_MAIN, type ParsedFailure, parseFailureText } from './outcome-copy'
 import { routeDisagreesWithScope } from './scope-route'
 import {
@@ -196,8 +208,6 @@ function newPreviewId(): string {
   return `pv_${Date.now().toString(36)}${previewCounter.toString(36)}${random}`
 }
 
-const IDENTITY_OUTCOME: OutcomeInfo = { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }
-
 const RPC_TIMEOUT = /request timed out after (\d+(?:\.\d+)?)s/i
 
 // A failure of the gateway connection itself (the socket is gone, never opened, or stopped answering heartbeats).
@@ -224,8 +234,9 @@ export function classifyPreviewError(err: unknown): OutcomeInfo {
 }
 
 /**
- * Read the pinned document and show exactly what would be sent. Without a pinned document there is nothing to
- * read (the card says so and the request carries project data only). With a mismatch no read is made at all.
+ * Read the pinned documents and show exactly what would be sent. Without a pinned document there is nothing to
+ * read (the card says so and the request carries project data only). When every pinned document is known to be
+ * gone or replaced no read is made at all; otherwise a mismatch on one bridge only leaves that document out.
  */
 export async function refreshPreview(): Promise<void> {
   syncDocumentsScope()
@@ -238,23 +249,21 @@ export async function refreshPreview(): Promise<void> {
   }
 
   const documents = $documents.get()
-  const pinned = documents.pinned
 
   if (state.previewId) {
     void cancelContext(state.previewId).catch(() => undefined)
   }
 
-  if (!pinned) {
+  // Nothing pinned, or every pinned document already known to be gone: the card says so, nothing is read.
+  if (pinnedApps(documents).length === 0 || allPinnedMismatched(documents)) {
     $lifecycle.set({ ...state, phase: 'idle', previewId: null, preview: null, previewError: null })
 
     return
   }
 
-  if (documents.mismatch) {
-    $lifecycle.set({ ...state, phase: 'idle', previewId: null, preview: null, previewError: IDENTITY_OUTCOME })
-
-    return
-  }
+  // Whole-definition scope belongs to the Grasshopper definition only: without that pin the read is the selection.
+  const scope: ContextScope =
+    state.scope === 'whole-definition' && documents.pinned.grasshopper ? 'whole-definition' : 'selection'
 
   const previewId = newPreviewId()
   const project = $degram.get().state?.scope.project ?? ''
@@ -263,13 +272,20 @@ export async function refreshPreview(): Promise<void> {
   dispatch({ type: 'preview-start', previewId })
 
   try {
-    const result = await previewContext(state.scope, previewId, project)
+    const result = await previewContext(scope, previewId, project)
 
     if (currentKey() !== key) {
       return
     }
 
     if (result.preview) {
+      // Each bridge answers for its own document: one that was left out is marked (neutral dot, no silent switch), one
+      // that was read is present after all.
+      for (const row of result.preview.summary.excluded) {
+        noteBridgeOutcome(row.app, row)
+      }
+
+      noteDocumentsRead(result.preview.summary.documents.map(doc => doc.app))
       dispatch({ type: 'preview-ok', previewId, preview: result.preview })
 
       return
@@ -282,7 +298,6 @@ export async function refreshPreview(): Promise<void> {
       return
     }
 
-    noteBridgeOutcome(pinned.app, result.outcome)
     dispatch({ type: 'preview-failed', previewId, outcome: result.outcome })
   } catch (error) {
     if (currentKey() === key) {
@@ -359,7 +374,8 @@ export function routeMismatch(): boolean {
 
 /**
  * Why Send is blocked right now, or null when it may proceed. `route-mismatch` holds whatever is pinned and comes
- * first; the other reasons are only meaningful while a document is pinned.
+ * first; the other reasons are only meaningful while a document is pinned. `mismatch` means every pinned document
+ * is gone or replaced (D-29: one document left out never blocks the rest) until the user selects again or unpins.
  */
 export function sendBlockedReason(): 'mismatch' | 'previewing' | 'read-failed' | 'route-mismatch' | 'stale' | null {
   if (routeMismatch()) {
@@ -370,11 +386,17 @@ export function sendBlockedReason(): 'mismatch' | 'previewing' | 'read-failed' |
   const documents = $documents.get()
   const state = $lifecycle.get()
 
-  if (!$degramEnabled.get() || !key || !documents.pinned || state.scopeKey !== key || documents.scopeKey !== key) {
+  if (
+    !$degramEnabled.get() ||
+    !key ||
+    pinnedApps(documents).length === 0 ||
+    state.scopeKey !== key ||
+    documents.scopeKey !== key
+  ) {
     return null
   }
 
-  if (documents.mismatch) {
+  if (allPinnedMismatched(documents)) {
     return 'mismatch'
   }
 
@@ -413,7 +435,7 @@ export async function composerGate<T extends { text: string }>(draft: T): Promis
       return null
     }
 
-    if (!$documents.get().pinned) {
+    if (pinnedApps($documents.get()).length === 0) {
       return draft
     }
 
@@ -489,6 +511,13 @@ function afterTurn(): void {
   void refreshPreview()
 }
 
+/** The bridge a failure can be pinned on: the only pinned one (with two pins the failure text cannot say). */
+function singlePinnedApp(): BridgeApp | null {
+  const apps = pinnedApps($documents.get())
+
+  return apps.length === 1 ? (apps[0] ?? null) : null
+}
+
 function failTurn(text: string): void {
   const state = $lifecycle.get()
   const parsed = parseFailureText(text)
@@ -498,7 +527,7 @@ function failTurn(text: string): void {
     failure: {
       parsed,
       text,
-      app: $documents.get().pinned?.app ?? null,
+      app: singlePinnedApp(),
       elapsedSeconds: state.startedAt ? Math.max(0, (Date.now() - state.startedAt) / 1000) : 0,
       lastText: state.lastText
     }
@@ -643,15 +672,20 @@ export async function retryRequest(submit: (text: string) => Promise<boolean> | 
 
   $lifecycle.set({ ...$lifecycle.get(), failure: null })
 
-  if ($documents.get().pinned) {
+  if (pinnedApps($documents.get()).length > 0) {
     await refreshPreview()
   }
 
   return Boolean(await submit(text))
 }
 
-/** Unpin from the card's context (the escape from a blocked send). */
-export async function unpinDocument(): Promise<void> {
-  await unpin()
+/** Unpin one bridge's document, or both with no argument (the escape from a blocked send). The other pin stays. */
+export async function unpinDocument(app?: BridgeApp): Promise<void> {
+  // Whole-definition is a Grasshopper-only scope: without that pin the card is back on the selection.
+  if (!app || app === 'grasshopper') {
+    $lifecycle.set({ ...$lifecycle.get(), scope: 'selection' })
+  }
+
+  await unpin(app)
   await refreshPreview()
 }

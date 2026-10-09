@@ -782,7 +782,7 @@
     },
     {
       "name": "degram.context.preview",
-      "summary": "Read the pinned document and return the exact bounded context payload with its disclosure.",
+      "summary": "Read every pinned document (one per bridge) and return the exact bounded context payload with its disclosure; a bridge that cannot be read is listed in summary.excluded.",
       "params": [
         {
           "name": "params",
@@ -890,7 +890,7 @@
     },
     {
       "name": "degram.documents.pin",
-      "summary": "Pin one open document by identity (app null unpins). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY.",
+      "summary": "Pin one open document by identity; it replaces only that bridge's pin (one pinned document per bridge). Outcomes: DOCUMENT_NOT_OPEN, BRIDGE_OFF, BUSY.",
       "params": [
         {
           "name": "params",
@@ -903,6 +903,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/DegramDocumentsPinResult"
+        }
+      }
+    },
+    {
+      "name": "degram.documents.unpin",
+      "summary": "Forget the pinned document of one bridge (app) or of every bridge (app null); nothing else changes.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramDocumentsUnpinParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramDocumentsUnpinResult"
         }
       }
     },
@@ -12518,9 +12536,9 @@
             "default": null,
             "title": "Missing"
           },
-          "document": {
+          "documents": {
             "default": null,
-            "title": "Document"
+            "title": "Documents"
           }
         },
         "required": [
@@ -13011,6 +13029,91 @@
           "status"
         ],
         "title": "DegramDocumentsPinResult",
+        "type": "object"
+      },
+      "DegramDocumentsUnpinParams": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          }
+        },
+        "title": "DegramDocumentsUnpinParams",
+        "type": "object"
+      },
+      "DegramDocumentsUnpinResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "pinned": {
+            "default": null,
+            "title": "Pinned"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramDocumentsUnpinResult",
         "type": "object"
       },
       "DelegationPauseParams": {

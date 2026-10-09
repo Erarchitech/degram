@@ -132,7 +132,8 @@ class TestDeadlinesAndNoRetry:
         monkeypatch.setattr(gh_bridge, "_monotonic", _fast_clock)
         started = time.monotonic()
         view = rt.composer.preview("selection")
-        assert view["status"] == "error" and view["code"] == "BUSY" and view["bridgeState"] == "busy"
+        (row,) = view["summary"]["excluded"]
+        assert view["status"] == "ok" and row["code"] == "BUSY" and row["bridgeState"] == "busy"
         assert time.monotonic() - started < 5, "the clock is patched, the test must not wait 30 s"
         assert gh.connections == before + 1, "no retry"
 
@@ -142,7 +143,8 @@ class TestDeadlinesAndNoRetry:
         before = gh.connections
         monkeypatch.setattr(gh_bridge, "GH_PORT", free_port())
         view = rt.composer.preview("selection")
-        assert view["code"] == "BRIDGE_OFF" and view["bridgeState"] == "off"
+        (row,) = view["summary"]["excluded"]
+        assert row["code"] == "BRIDGE_OFF" and row["bridgeState"] == "off"
         assert gh.connections == before, "the refused port is not the fake listener"
 
     def test_the_deadline_constants_are_the_plan_values(self):

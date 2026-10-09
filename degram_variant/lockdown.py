@@ -220,8 +220,8 @@ ALLOWED_RPC_METHODS = frozenset({
     # the delegated credential handoff
     "degram.credentials.set", "degram.credentials.clear", "degram.credentials.status",
     # the CAD read capabilities (plan 11): pick and pin a document, preview and send the context, cancel a read
-    "degram.documents.list", "degram.documents.pin", "degram.context.preview", "degram.context.send",
-    "degram.context.cancel",
+    "degram.documents.list", "degram.documents.pin", "degram.documents.unpin", "degram.context.preview",
+    "degram.context.send", "degram.context.cancel",
 })
 
 # ``config.set`` keys that would re-open provider/model/toolset/MCP/auxiliary selection, the working

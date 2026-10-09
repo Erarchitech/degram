@@ -2,10 +2,10 @@
 
 Four tools, no parameters that could widen what they read, no write capability:
 
-* ``degram_list_documents``: the open documents of every reachable bridge (GH, Revit) and the pinned one.
+* ``degram_list_documents``: the open documents of every reachable bridge (GH, Revit) and the pinned ones (one per bridge).
 * ``degram_bridge_status``: one state per bridge (ready, pinned, busy, off, setup-incomplete, identity-mismatch).
-* ``degram_document_snapshot``: the *selection* of the pinned document (identity re-checked first), bounded to 200
-  objects / 50 parameters per object / 256 KiB with the cut disclosed. No scope argument: whole-definition scope exists
+* ``degram_document_snapshot``: the *selection* of the pinned Revit model and/or Grasshopper definition (identity
+  re-checked first), bounded to 200 objects / 50 parameters per object per document / 256 KiB with the cut disclosed. No scope argument: whole-definition scope exists
   only through the user's context card and its consent, never as a tool call.
 * ``degram_project_graph``: graph nodes, relationships and rules of the *bound* project, read with the delegated token.
   No project argument: another project cannot be named.
@@ -156,7 +156,8 @@ def _project_graph(args: dict, **_kw) -> str:
 registry.register(
     name="degram_list_documents", toolset="degram", handler=_list_documents, check_fn=_is_degram,
     schema={"name": "degram_list_documents",
-            "description": "List the open Grasshopper and Revit documents and which one is pinned. Read-only; pins nothing.",
+            "description": "List the open Grasshopper and Revit documents and which are pinned (at most one per bridge: "
+                           "the pinned Revit model and/or Grasshopper definition). Read-only; pins nothing.",
             "parameters": _NO_ARGS})
 registry.register(
     name="degram_bridge_status", toolset="degram", handler=_bridge_status, check_fn=_is_degram,
@@ -167,9 +168,10 @@ registry.register(
 registry.register(
     name="degram_document_snapshot", toolset="degram", handler=_document_snapshot, check_fn=_is_degram,
     schema={"name": "degram_document_snapshot",
-            "description": "Read the current selection of the pinned CAD document (objects with their parameters), "
-                           "bounded in size; truncation and missing data are listed. Read-only; fails with "
-                           "IDENTITY_MISMATCH if the document answering is not the pinned one.",
+            "description": "Read the current selection of the pinned Revit model and/or Grasshopper definition "
+                           "(objects with their parameters), bounded in size per document; truncation, missing data "
+                           "and any pinned document that could not be read (excluded) are listed. Read-only; a "
+                           "document that is not the pinned one is never read (IDENTITY_MISMATCH).",
             "parameters": _NO_ARGS})
 registry.register(
     name="degram_project_graph", toolset="degram", handler=_project_graph, check_fn=_is_degram,

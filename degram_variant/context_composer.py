@@ -1,12 +1,12 @@
 """The context the user sees is the context that is sent (1301 D-14, D-17, DGCL-07).
 
-``ContextComposer.preview`` reads the pinned document (identity first), applies the client-side limits, discloses
-what was cut or is missing and returns the *exact payload text*. ``prepare_send`` embeds that very text, unchanged,
+``ContextComposer.preview`` reads every pinned document (one per bridge, D-29; identity first), applies the
+client-side limits per document, discloses what was cut, missing or left out and returns the *exact payload text*. ``prepare_send`` embeds that very text, unchanged,
 in the user message and arms the relay provenance headers. Secrets never enter a payload: the composer holds no
 credential (the DG backend reads go through ``DgClient``) and a test scans the payload for the token.
 
-Limits (``SNAPSHOT_LIMITS``) are applied here, independent of the server: 200 objects, 50 parameters per object and
-256 KiB of payload. Whole-definition scope needs an explicit consent flag on send; a relay ``POLICY_DENY`` is terminal
+Limits (``SNAPSHOT_LIMITS``) are applied here, independent of the server: 200 objects and 50 parameters per object in
+each document and 256 KiB for the whole payload. Whole-definition scope needs an explicit consent flag on send; a relay ``POLICY_DENY`` is terminal
 and is never turned into a send by consent (the relay decides, see ``provider.relay_outcome``)."""
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from .outcomes import (
     DOCUMENT_NOT_OPEN,
     SCOPE_NOT_SUPPORTED,
     BridgeError,
+    bridge_state,
 )
 from .revit_bridge import REVIT_PREVIEW_DEADLINE_S
 from .snapshot import Snapshot
@@ -91,6 +92,38 @@ def _doc_info(document: dict[str, Any] | None) -> dict[str, Any] | None:
             "identity": document.get("identity")}
 
 
+def _split_results(pins: dict[str, dict[str, Any]], results: dict[str, Snapshot | BridgeError]
+                   ) -> tuple[dict[str, Snapshot], list[dict[str, Any]]]:
+    """Readable snapshots, and for every bridge whose read ended in an outcome the exclusion row the card shows
+    (D-29: that document is left out; nothing is re-pinned or substituted)."""
+    snapshots: dict[str, Snapshot] = {}
+    excluded: list[dict[str, Any]] = []
+    for app, outcome in results.items():
+        if isinstance(outcome, BridgeError):
+            row: dict[str, Any] = {"app": app, "name": pins[app].get("name"), "code": outcome.code,
+                                   "message": outcome.message}
+            if outcome.reason:
+                row["reason"] = outcome.reason
+            state = bridge_state(outcome.code, outcome.reason)
+            if state:
+                row["bridgeState"] = state
+            excluded.append(row)
+        else:
+            snapshots[app] = outcome
+    return snapshots, excluded
+
+
+def _effective_scope(requested: str, snapshots: dict[str, Snapshot]) -> str:
+    """The scope the payload really carries: whole-definition only while the Grasshopper definition was read whole,
+    selection while some document was read, none when every pinned document was excluded."""
+    if not snapshots:
+        return "none"
+    gh = snapshots.get("grasshopper")
+    if requested == "whole-definition" and gh is not None and gh.scope == "whole-definition":
+        return "whole-definition"
+    return "selection"
+
+
 class ContextComposer:
     def __init__(self, documents: DocumentsService, dg: DgClient | None = None, cancels: CancelRegistry | None = None,
                  limits=SNAPSHOT_LIMITS) -> None:
@@ -126,21 +159,23 @@ class ContextComposer:
         except DegramCredentialsError as exc:
             raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
         generation = self._documents.generation
-        pinned = self._documents.pinned
+        pins = self._documents.pinned
         scope = requested
-        if scope != "none" and pinned is None:
+        if scope != "none" and not pins:
             if scope == "whole-definition":
                 raise BridgeError(SCOPE_NOT_SUPPORTED, "NO_DOCUMENT_PINNED",
                                   "Whole-definition scope needs a pinned Grasshopper document.")
             scope = "none"  # the card says so: no document selected, the request uses project data only
-        if scope == "whole-definition" and pinned and pinned["app"] != "grasshopper":
+        if scope == "whole-definition" and "grasshopper" not in pins:
             raise BridgeError(SCOPE_NOT_SUPPORTED, "WHOLE_DEFINITION_GH_ONLY",
                               "Whole-definition scope is offered for Grasshopper definitions only.")
-        snapshot = None
+        snapshots: dict[str, Snapshot] = {}
+        excluded: list[dict[str, Any]] = []
         if scope != "none":
-            snapshot = self._documents.read_snapshot(
-                scope, info.project, cancel, deadline_s=PREVIEW_BRIDGE_DEADLINE_S.get(pinned["app"] if pinned else ""))
-        missing: list[dict[str, Any]] = list(snapshot.missing) if snapshot else []
+            results = self._documents.read_snapshots(scope, info.project, cancel, deadline_s=PREVIEW_BRIDGE_DEADLINE_S)
+            snapshots, excluded = _split_results(pins, results)
+            scope = _effective_scope(scope, snapshots)
+        missing: list[dict[str, Any]] = [m for snap in snapshots.values() for m in snap.missing]
         try:
             rules = self._dg.get_rules(cancel, read_timeout_s=PREVIEW_RULES_READ_TIMEOUT_S)
         except BridgeError as exc:
@@ -151,8 +186,8 @@ class ContextComposer:
                 raise
         if cancel.cancelled:
             raise BridgeError(CANCELLED, "CANCELLED_BY_USER", "The read was cancelled.")
-        view = self._compose(info.project, pinned, scope, snapshot, rules, missing)
-        view.pop("_snapshot", None)
+        view = self._compose(info.project, pins, scope, snapshots, excluded, rules, missing)
+        view.pop("_snapshots", None)
         stored = _Stored(pid, view["payload"], scope, requested, (info.user, info.company, info.project), generation)
         with self._lock:
             self._previews[pid] = stored
@@ -162,121 +197,146 @@ class ContextComposer:
                 "requiresConsent": scope == "whole-definition", "limits": dict(self._limits), **view}
 
     # -- payload ---------------------------------------------------------------------------------
-    def _compose(self, project: str, pinned: dict[str, Any] | None, scope: str, snapshot: Snapshot | None,
-                 rules: list[dict[str, Any]], missing: list[dict[str, Any]]) -> dict[str, Any]:
+    def _compose(self, project: str, pins: dict[str, dict[str, Any]], scope: str, snapshots: dict[str, Snapshot],
+                 excluded: list[dict[str, Any]], rules: list[dict[str, Any]],
+                 missing: list[dict[str, Any]]) -> dict[str, Any]:
+        """One snapshot section per readable pinned document (limits per document), the bridges that could not be read
+        listed as ``excluded``, the 256 KiB cap on the whole body (D-29)."""
         max_objects, max_params, max_bytes = (self._limits["max_objects"], self._limits["max_parameters"],
                                               self._limits["max_bytes"])
-        truncation: list[dict[str, Any]] = list(snapshot.source_truncation) if snapshot else []
+        truncation: list[dict[str, Any]] = [{"app": app, **entry} for app, snap in snapshots.items()
+                                            for entry in snap.source_truncation]
         # rules
         kept_rules = [{"ruleId": r["ruleId"], "text": r["text"][:RULE_TEXT_LIMIT]} for r in rules[:RULE_LIMIT]]
         if len(rules) > RULE_LIMIT:
             truncation.append({"what": "rules", "kept": len(kept_rules), "total": len(rules)})
-        # objects and parameters
-        objects: list[dict[str, Any]] = []
-        params_total = params_kept = 0
-        total_objects = 0
-        objects_key = "objects"
-        if snapshot is not None:
-            objects_key = _OBJECTS_KEY.get(snapshot.app, "objects")
-            total_objects = snapshot.total_objects if snapshot.total_objects is not None else len(snapshot.objects)
-            for obj in snapshot.objects[:max_objects]:
-                listed = obj.get(snapshot.params_key)
+        # objects and parameters, per document
+        objects: dict[str, list[dict[str, Any]]] = {}
+        totals: dict[str, int] = {}
+        for app, snap in snapshots.items():
+            params_total = params_kept = 0
+            totals[app] = snap.total_objects if snap.total_objects is not None else len(snap.objects)
+            kept: list[dict[str, Any]] = []
+            for obj in snap.objects[:max_objects]:
+                listed = obj.get(snap.params_key)
                 listed = listed if isinstance(listed, list) else []
                 host_total = obj.get("parametersTotal") if isinstance(obj.get("parametersTotal"), int) else len(listed)
                 params_total += max(host_total, len(listed))
                 trimmed = listed[:max_params]
                 params_kept += len(trimmed)
                 copy = dict(obj)
-                if snapshot.params_key in copy:
-                    copy[snapshot.params_key] = trimmed
-                objects.append(copy)
+                if snap.params_key in copy:
+                    copy[snap.params_key] = trimmed
+                kept.append(copy)
+            objects[app] = kept
             if params_kept < params_total:
-                truncation.append({"what": "parameters", "kept": params_kept, "total": params_total})
-        doc = _doc_info(pinned)
+                truncation.append({"app": app, "what": "parameters", "kept": params_kept, "total": params_total})
+        docs = [d for app in pins if (d := _doc_info(pins[app]))]
+        read_docs = [d for d in docs if d["app"] in snapshots]
 
-        def snapshot_body(n: int) -> dict[str, Any] | None:
-            if snapshot is None:
-                return None
-            body: dict[str, Any] = {"app": snapshot.app}
-            definition = snapshot.extras.get("definition")
+        def snapshot_body(app: str, n: int) -> dict[str, Any]:
+            snap = snapshots[app]
+            body: dict[str, Any] = {"app": app}
+            definition = snap.extras.get("definition")
             if definition is not None:
                 body["definition"] = definition
-            body[objects_key] = objects[:n]
-            ids = {str(o.get("instanceId", "")).lower() for o in objects[:n]}
-            wires = snapshot.extras.get("wires")
+            body[_OBJECTS_KEY.get(app, "objects")] = objects[app][:n]
+            ids = {str(o.get("instanceId", "")).lower() for o in objects[app][:n]}
+            wires = snap.extras.get("wires")
             if isinstance(wires, list):
                 body["wires"] = [w for w in wires if str(w.get("fromNode", "")).lower() in ids
                                  and str(w.get("toNode", "")).lower() in ids]
-            if snapshot.scope == "whole-definition":
-                body["object"] = snapshot.extras.get("object")
-                body["algorithms"] = snapshot.extras.get("algorithms") or []
+            if snap.scope == "whole-definition":
+                body["object"] = snap.extras.get("object")
+                body["algorithms"] = snap.extras.get("algorithms") or []
             return body
 
-        def object_entries(n: int) -> list[dict[str, Any]]:
-            return [{"what": "objects", "kept": n, "total": total_objects}] if snapshot is not None and n < total_objects else []
+        def counts(cap: int | None) -> dict[str, int]:
+            return {app: len(objs) if cap is None else min(len(objs), cap) for app, objs in objects.items()}
 
-        def render(n: int, rule_list: list[dict[str, Any]], structure: bool = True) -> str:
-            body_snapshot = snapshot_body(n)
-            if body_snapshot is not None and not structure:
-                body_snapshot.pop("algorithms", None)
-                body_snapshot.pop("object", None)
-                body_snapshot.pop("wires", None)
-            body = {"project": project, "scope": scope, "document": doc, "rules": rule_list, "fragments": [],
-                    "snapshot": body_snapshot, "truncation": truncation + object_entries(n), "missing": missing}
-            head = (f"DeGram context (scope: {scope})\nproject: {_line(project)}\n"
-                    f"document: {_line(doc['name']) + ' [' + str(doc['app']) + ']' if doc else '(none)'}\n")
+        def object_entries(kept: dict[str, int]) -> list[dict[str, Any]]:
+            return [{"app": app, "what": "objects", "kept": kept[app], "total": totals[app]}
+                    for app in snapshots if kept[app] < totals[app]]
+
+        def render(kept: dict[str, int], rule_list: list[dict[str, Any]], structure: bool = True) -> str:
+            sections = []
+            for app in snapshots:
+                section = snapshot_body(app, kept[app])
+                if not structure:
+                    for key in ("algorithms", "object", "wires"):
+                        section.pop(key, None)
+                sections.append(section)
+            body = {"project": project, "scope": scope, "documents": docs, "excluded": excluded, "rules": rule_list,
+                    "fragments": [], "snapshots": sections, "truncation": truncation + object_entries(kept),
+                    "missing": missing}
+            names = "; ".join(f"{_line(d['name'])} [{d['app']}]" for d in docs) if docs else "(none)"
+            head = f"DeGram context (scope: {scope})\nproject: {_line(project)}\ndocuments: {names}\n"
             return head + json.dumps(body, ensure_ascii=True, separators=(",", ":"))
 
-        n = len(objects)
-        payload = render(n, kept_rules)
+        def fits(kept: dict[str, int], rule_list: list[dict[str, Any]]) -> bool:
+            return len(render(kept, rule_list).encode("utf-8")) <= max_bytes
+
+        kept_counts = counts(None)
+        payload = render(kept_counts, kept_rules)
         full_bytes = len(payload.encode("utf-8"))
         if full_bytes > max_bytes:
-            lo, hi = 0, n  # largest n whose payload fits, rules and structure kept
-            if len(render(0, kept_rules).encode("utf-8")) <= max_bytes:
+            if fits(counts(0), kept_rules):
+                # largest per-document object cap whose payload fits, rules and structure kept
+                lo, hi = 0, max((len(o) for o in objects.values()), default=0)
                 while lo < hi:
                     mid = (lo + hi + 1) // 2
-                    if len(render(mid, kept_rules).encode("utf-8")) <= max_bytes:
+                    if fits(counts(mid), kept_rules):
                         lo = mid
                     else:
                         hi = mid - 1
-                n = lo
-                payload = render(n, kept_rules)
+                kept_counts = counts(lo)
+                payload = render(kept_counts, kept_rules)
             else:  # the rules and structure alone are too big: give up structure, then rules
-                n = 0
-                payload = render(0, kept_rules, structure=False)
+                kept_counts = counts(0)
+                payload = render(kept_counts, kept_rules, structure=False)
                 if len(payload.encode("utf-8")) > max_bytes:
                     missing.append({"what": "rules", "reason": "PAYLOAD_TOO_LARGE"})
                     kept_rules = []
-                    payload = render(0, kept_rules, structure=False)
+                    payload = render(kept_counts, kept_rules, structure=False)
         final_bytes = len(payload.encode("utf-8"))
-        shown = truncation + object_entries(n)
+        shown = truncation + object_entries(kept_counts)
         if final_bytes < full_bytes:
             shown = shown + [{"what": "bytes", "kept": final_bytes, "total": full_bytes}]
-        kept_params = sum(len(o.get(snapshot.params_key) or []) for o in objects[:n]) if snapshot else 0
-        summary = {
-            "project": project, "document": {k: doc[k] for k in ("app", "name", "path")} if doc else None,
-            "objects": n if snapshot else 0, "parameters": kept_params, "rules": len(kept_rules), "fragments": 0,
-            "bytes": final_bytes, "emptySelection": bool(snapshot and snapshot.empty_selection),
-        }
-        return {"payload": payload, "summary": summary, "truncation": shown, "missing": missing,
-                "document": doc, "_snapshot": snapshot_body(n)}
+        summary_docs = []
+        for d in read_docs:
+            app = d["app"]
+            snap = snapshots[app]
+            kept_params = sum(len(o.get(snap.params_key) or []) for o in objects[app][:kept_counts[app]])
+            summary_docs.append({
+                "app": app, "name": d["name"], "path": d["path"], "objects": kept_counts[app], "parameters": kept_params,
+                "truncated": any(t.get("app") == app for t in shown), "emptySelection": bool(snap.empty_selection)})
+        summary = {"project": project, "documents": summary_docs, "rules": len(kept_rules), "fragments": 0,
+                   "bytes": final_bytes, "excluded": excluded}
+        return {"payload": payload, "summary": summary, "truncation": shown, "missing": missing, "documents": docs,
+                "_snapshots": [snapshot_body(app, kept_counts[app]) for app in snapshots]}
 
     # -- agent tool ------------------------------------------------------------------------------
     def agent_snapshot(self, cancel: CancelToken | None = None) -> dict[str, Any]:
-        """The pinned document's current selection, bounded exactly like a preview, for the agent tool
+        """The current selection of every pinned document, bounded exactly like a preview, for the agent tool
         ``degram_document_snapshot``. Selection scope only: whole-definition goes through the context card and its
-        consent, never through a tool call. Raises ``BridgeError`` (no pin, identity, bridge outcomes)."""
+        consent, never through a tool call. A bridge that cannot be read is listed in ``excluded``; when none can be
+        read the first outcome is raised as ``BridgeError`` (no pin, identity, bridge outcomes)."""
         try:
             info = _credentials.require_info()
         except DegramCredentialsError as exc:
             raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
-        pinned = self._documents.pinned
-        if pinned is None:
+        pins = self._documents.pinned
+        if not pins:
             raise BridgeError(DOCUMENT_NOT_OPEN, "NO_DOCUMENT_PINNED", "No document is pinned. Ask the user to select one.")
-        snapshot = self._documents.read_snapshot("selection", info.project, cancel)
-        view = self._compose(info.project, pinned, "selection", snapshot, [], list(snapshot.missing) if snapshot else [])
-        return {"status": "ok", "scope": "selection", "document": view["document"], "summary": view["summary"],
-                "truncation": view["truncation"], "missing": view["missing"], "snapshot": view["_snapshot"]}
+        results = self._documents.read_snapshots("selection", info.project, cancel)
+        snapshots, excluded = _split_results(pins, results)
+        if not snapshots:
+            raise next(r for r in results.values() if isinstance(r, BridgeError))
+        view = self._compose(info.project, pins, "selection", snapshots, excluded, [],
+                             [m for snap in snapshots.values() for m in snap.missing])
+        return {"status": "ok", "scope": "selection", "documents": view["documents"], "summary": view["summary"],
+                "truncation": view["truncation"], "missing": view["missing"], "excluded": excluded,
+                "snapshots": view["_snapshots"]}
 
     # -- send ------------------------------------------------------------------------------------
     def prepare_send(self, preview_id: str, text: str, *, consent: bool = False, scope: str | None = None) -> SendPlan:

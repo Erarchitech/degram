@@ -10,7 +10,7 @@ import { useEffect } from 'react'
 import { useI18n } from '@/i18n'
 
 import { bridgeView, toSegment } from './bridge-status'
-import { refreshDocuments, scopeKeyOf, useDocuments } from './documents-store'
+import { pinnedApps, refreshDocuments, scopeKeyOf, useDocuments } from './documents-store'
 import { ScopeStrip } from './scope-strip'
 import type { BridgeApp } from './use-degram-gateway'
 import { useDegram } from './use-degram-state'
@@ -37,13 +37,28 @@ export function ConnectedScopeStrip() {
     const group =
       entry.group ?? (entry.failed ? { app, state: 'off' as const, documents: [], code: 'BRIDGE_OFF' } : undefined)
 
-    return toSegment(bridgeView(copy, group, pinned?.app === app ? pinned.name : undefined))
+    const pin = pinned[app]
+    const segment = toSegment(bridgeView(copy, group, pin?.name))
+
+    // D-29: each bridge carries its own pinned document. It shows with the accent dot while it is the one answering,
+    // and with a neutral «other file» when it is gone or replaced; any other bridge state (off, busy, setup) wins.
+    if (pin && (segment.status === 'ready' || segment.status === 'pinned' || segment.status === 'identity-mismatch')) {
+      return mismatch[pin.app]
+        ? {
+            status: 'identity-mismatch' as const,
+            label: copy.bridge.states.identityMismatch,
+            detail: copy.errors.pinnedGone(pin.name)
+          }
+        : { ...segment, status: 'pinned' as const, document: pin.name }
+    }
+
+    return segment
   }
 
   return (
     <ScopeStrip
       bridges={{ revit: view('revit'), grasshopper: view('grasshopper') }}
-      document={pinned ? { name: pinned.name, pinned: !mismatch } : null}
+      document={{ count: pinnedApps(documents).length }}
       documentPicker
     />
   )
