@@ -1404,6 +1404,38 @@ describe('sign-out while running (D-08, UI-SPEC)', () => {
     expect(actions.stopResponse).toHaveBeenCalledTimes(1)
   })
 
+  it('the tray entry reaches the same flow: main asks, the confirmation shows while a response runs (G-17)', async () => {
+    const h = await readyHarness()
+
+    $busy.set(true)
+    render(withActions(<DegramSignOutConfirm />))
+    h.emitRequestSignOut()
+
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText('Sign out of DG')).toBeTruthy()
+    expect(h.bridge.signOut).not.toHaveBeenCalled()
+  })
+
+  it('the tray request signs out at once when nothing is running', async () => {
+    const h = await readyHarness()
+
+    render(withActions(<DegramSignOutConfirm />))
+    h.emitRequestSignOut()
+    await waitFor(() => expect(h.bridge.signOut).toHaveBeenCalledTimes(1))
+  })
+
+  it('sends the localized sign-out label to the tray and stops listening on unmount', async () => {
+    const h = await readyHarness()
+
+    const { unmount } = render(withActions(<DegramSignOutConfirm />))
+
+    await waitFor(() => expect(h.bridge.setTrayLabels).toHaveBeenCalledWith({ signOut: 'Sign out of DG' }))
+    unmount()
+    h.emitRequestSignOut()
+    expect(h.bridge.signOut).not.toHaveBeenCalled()
+  })
+
   it('signs out at once when nothing is running', async () => {
     const h = await readyHarness()
 

@@ -80,7 +80,7 @@ export function SignInState() {
       <div className="relative min-h-0 w-full flex-1" ref={hostRef}>
         {unreachable ? (
           <div className="grid h-full place-items-center">
-            <DgUnreachable action={() => void degramBridge()?.reloadDg()} actionLabel={copy.cta.retry} />
+            <DgUnreachable action={() => void degramBridge()?.retryDg()} actionLabel={copy.cta.retry} />
           </div>
         ) : !showView ? (
           <div className="grid h-full place-items-center">

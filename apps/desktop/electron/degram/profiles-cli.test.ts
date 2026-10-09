@@ -67,6 +67,56 @@ describe('createProfilesCli', () => {
     expect((run.mock.calls[0]![0] as string[])[2]).toBe('purge')
   })
 
+  it('runs purge-project with user and project only and returns the removed profile names', async () => {
+    const run = vi.fn(async (_args: string[]) => ({ code: 0, stdout: '["scope-a","scope-b"]\n', stderr: '' }))
+
+    await expect(createProfilesCli({ run, home: HOME }).purgeProject('alice', '--user=mallory')).resolves.toEqual([
+      'scope-a',
+      'scope-b'
+    ])
+    expect(run).toHaveBeenCalledWith([
+      '-m',
+      'degram_variant.profiles',
+      'purge-project',
+      `--home=${HOME}`,
+      '--user=alice',
+      '--project=--user=mallory'
+    ])
+  })
+
+  it('surfaces a purge-project failure', async () => {
+    const run = vi.fn(async (_args: string[]) => ({
+      code: 1,
+      stdout: '',
+      stderr: '{"error":"could not remove profile"}'
+    }))
+
+    await expect(createProfilesCli({ run, home: HOME }).purgeProject('alice', 'alpha')).rejects.toThrow(
+      /could not remove profile/
+    )
+  })
+
+  it('runs cleanup-legacy with the kept scopes as one JSON flag', async () => {
+    const run = vi.fn(async (_args: string[]) => ({
+      code: 0,
+      stdout: '{"ran":true,"backfilled":["scope-a"],"removed":["scope-b"],"failed":[]}',
+      stderr: ''
+    }))
+
+    const result = await createProfilesCli({ run, home: HOME }).cleanupLegacy([
+      { user: 'alice', company: 'ACME', project: 'alpha' }
+    ])
+
+    expect(result).toEqual({ ran: true, backfilled: ['scope-a'], removed: ['scope-b'], failed: [] })
+
+    const args = run.mock.calls[0]![0] as string[]
+
+    expect(args.slice(0, 4)).toEqual(['-m', 'degram_variant.profiles', 'cleanup-legacy', `--home=${HOME}`])
+    expect(JSON.parse(args[4]!.replace('--keep-json=', ''))).toEqual([
+      { user: 'alice', company: 'ACME', project: 'alpha' }
+    ])
+  })
+
   it('turns a non-zero exit into a ProfilesCliError carrying the CLI error text', async () => {
     const run = vi.fn(async (_args: string[]) => ({ code: 1, stdout: '', stderr: '{"error":"user is required"}\n' }))
 

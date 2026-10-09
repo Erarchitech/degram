@@ -3,6 +3,12 @@ import path from 'node:path'
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from 'electron'
 
+/** An extra entry of the tray menu, placed between Show and Quit (variant degram: sign out of DG). */
+export interface TrayExtraItem {
+  label: string
+  click: () => void
+}
+
 export interface MinimizeToTrayStatus {
   enabled: boolean
   available: boolean
@@ -14,6 +20,8 @@ interface Options {
   restoreMainWindow: () => void
   /** The product name in the tray tooltip and menu (DeGram in variant degram, Phase 1301). */
   productName?: string
+  /** Extra entries between Show and Quit, read each time the menu is built so a label can change later. */
+  extraItems?: () => TrayExtraItem[]
   isQuittingForHandoff: () => boolean
   log: (message: string) => void
 }
@@ -134,6 +142,27 @@ export function createMinimizeToTray(options: Options) {
     broadcast()
   }
 
+  const buildMenu = () => {
+    const product = options.productName ?? 'Hermes'
+    const extra = options.extraItems?.() ?? []
+
+    return Menu.buildFromTemplate([
+      { label: `Show ${product}`, click: restore },
+      { type: 'separator' },
+      ...extra.map(item => ({ label: item.label, click: item.click })),
+      ...(extra.length > 0 ? [{ type: 'separator' as const }] : []),
+      // Do not bypass the ordinary active-work confirmation or teardown.
+      { label: `Quit ${product}`, click: () => app.quit() }
+    ])
+  }
+
+  /** Rebuild the native menu when an extra item's label changed (a locale loaded in the renderer). */
+  const refreshMenu = () => {
+    if (tray && !tray.isDestroyed()) {
+      tray.setContextMenu(buildMenu())
+    }
+  }
+
   const apply = async (on: boolean) => {
     enabled = on
 
@@ -185,17 +214,8 @@ export function createMinimizeToTray(options: Options) {
             height: process.platform === 'darwin' ? 18 : 24
           })
         )
-        const product = options.productName ?? 'Hermes'
-
-        tray.setToolTip(product)
-        tray.setContextMenu(
-          Menu.buildFromTemplate([
-            { label: `Show ${product}`, click: restore },
-            { type: 'separator' },
-            // Do not bypass the ordinary active-work confirmation or teardown.
-            { label: `Quit ${product}`, click: () => app.quit() }
-          ])
-        )
+        tray.setToolTip(options.productName ?? 'Hermes')
+        tray.setContextMenu(buildMenu())
 
         // macOS single-click opens the native menu, not the window behind it.
         if (process.platform !== 'darwin') {
@@ -351,6 +371,7 @@ export function createMinimizeToTray(options: Options) {
     setEnabled,
     registerWindow,
     restore,
+    refreshMenu,
     // Call only AFTER the active-work guard accepts the quit. Cancelling the
     // prompt must leave hiding and its recovery affordance intact.
     beginQuit: () => {

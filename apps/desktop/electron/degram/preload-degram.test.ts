@@ -64,7 +64,10 @@ it('exposes a typed degram namespace with exactly the capability bridge and no t
       'signOut',
       'setDgMode',
       'reloadDg',
+      'retryDg',
       'setDgBounds',
+      'setTrayLabels',
+      'onRequestSignOut',
       'reportOutcome',
       'openExternalConfirmed',
       'setPairing',
@@ -87,8 +90,10 @@ it('maps every method to its degram: channel and passes the argument through', a
   await degram.signOut()
   await degram.setDgMode('full')
   await degram.reloadDg()
+  await degram.retryDg()
   await degram.setDgBounds({ x: 1, y: 2, width: 3, height: 4 })
   await degram.setDgBounds(null)
+  await degram.setTrayLabels({ signOut: 'Sign out of DG' })
   await degram.reportOutcome('CREDENTIALS_EXPIRED')
   await degram.openExternalConfirmed('https://example.test/')
   await degram.setPairing('dgp_x')
@@ -100,8 +105,10 @@ it('maps every method to its degram: channel and passes the argument through', a
     [DEGRAM_CHANNELS.signOut],
     [DEGRAM_CHANNELS.setDgMode, 'full'],
     [DEGRAM_CHANNELS.reloadDg],
+    [DEGRAM_CHANNELS.retryDg],
     [DEGRAM_CHANNELS.setDgBounds, { x: 1, y: 2, width: 3, height: 4 }],
     [DEGRAM_CHANNELS.setDgBounds, null],
+    [DEGRAM_CHANNELS.setTrayLabels, { signOut: 'Sign out of DG' }],
     [DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED'],
     [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/'],
     [DEGRAM_CHANNELS.setPairing, 'dgp_x'],
@@ -128,4 +135,17 @@ it('subscribes to state and event pushes and returns a working unsubscribe', asy
 
   expect(host.handlers.has(DEGRAM_CHANNELS.stateChanged)).toBe(false)
   expect(host.handlers.has(DEGRAM_CHANNELS.event)).toBe(false)
+})
+
+it('subscribes to the tray sign-out request and returns a working unsubscribe', async () => {
+  const degram = await degramBridge()
+  const requests: unknown[] = []
+
+  const off = degram.onRequestSignOut(() => requests.push('asked'))
+
+  host.handlers.get(DEGRAM_CHANNELS.requestSignOut)?.({})
+  expect(requests).toEqual(['asked'])
+
+  off()
+  expect(host.handlers.has(DEGRAM_CHANNELS.requestSignOut)).toBe(false)
 })

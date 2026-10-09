@@ -1,12 +1,15 @@
 // sign-out-confirm.tsx — «Остановить и выйти / Продолжить работу» (Phase 1301-14, 1301-UI-SPEC "Destructive
 // confirmation — sign out while running").
 //
-// UI-SPEC specifies this confirmation but no visible sign-out control, and none was invented: any entry point (a menu,
-// a command, the tray) calls `requestDegramSignOut()`. With no response running it signs out at once; with one
-// running it asks first, because signing out stops the response and hides the project's chat.
+// UI-SPEC specifies this confirmation but no visible sign-out control, and none was invented: any entry point calls
+// `requestDegramSignOut()`. Plan 1301-20 (G-17) wired the two entry points: the project picker menu and the tray
+// menu (main asks the renderer through `onRequestSignOut`, because the confirmation and the label are renderer-owned).
+// With no response running it signs out at once; with one running it asks first, because signing out stops the
+// response and hides the project's chat.
 
 import { useStore } from '@nanostores/react'
 import { atom } from 'nanostores'
+import { useEffect } from 'react'
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { useI18n } from '@/i18n'
@@ -32,6 +35,15 @@ export function DegramSignOutConfirm() {
   const copy = t.degram
   const actions = useDegramActions()
   const open = useStore($signOutPending)
+  const trayLabel = copy.actions.signOut
+
+  // The tray menu is native: its sign-out text follows the renderer's locale once that has loaded.
+  useEffect(() => {
+    void degramBridge()?.setTrayLabels?.({ signOut: trayLabel })
+  }, [trayLabel])
+
+  // The tray's sign-out entry: main brings the window forward, the confirmation (if a response runs) is ours.
+  useEffect(() => degramBridge()?.onRequestSignOut?.(() => requestDegramSignOut()), [])
 
   return (
     <ConfirmDialog

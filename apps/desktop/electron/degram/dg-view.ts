@@ -43,6 +43,8 @@ export type DgViewWebPreferences = typeof DG_VIEW_WEB_PREFERENCES
 export interface DgWebContentsLike {
   loadURL: (url: string) => Promise<void>
   reload: () => void
+  /** The committed URL; the error page of a failed load is not a DG URL. */
+  getURL?: () => string
   on: (event: string, listener: (...args: any[]) => void) => unknown
   setWindowOpenHandler: (handler: (details: { url: string }) => { action: 'deny' }) => void
   isDestroyed: () => boolean
@@ -193,15 +195,35 @@ export function createDgView(deps: DgViewDeps): DgView {
     return { action: 'deny' }
   })
 
+  // A failed main-frame load is followed by did-finish-load of Chromium's error page (G-16); only a navigation
+  // that did not fail and committed a DG page may report DG reachable.
+  let navigationFailed = false
+
+  contents.on('did-start-loading', () => {
+    navigationFailed = false
+  })
   contents.on(
     'did-fail-load',
     (_event: unknown, errorCode: number, _description: string, _url: string, isMainFrame: boolean) => {
       if (isMainFrame && errorCode !== ABORTED) {
+        navigationFailed = true
         deps.emit({ type: 'dg-unreachable' })
       }
     }
   )
-  contents.on('did-finish-load', () => deps.emit({ type: 'dg-reachable' }))
+  contents.on('did-finish-load', () => {
+    if (navigationFailed) {
+      return
+    }
+
+    const committed = contents.getURL?.()
+
+    if (committed !== undefined && !isAllowedDgUrl(committed, origin)) {
+      return
+    }
+
+    deps.emit({ type: 'dg-reachable' })
+  })
 
   contents.session.setPermissionRequestHandler?.((_webContents, _permission, callback) => callback(false))
 

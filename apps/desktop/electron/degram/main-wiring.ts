@@ -36,6 +36,8 @@ export interface CookieSessionLike {
 }
 
 export interface DegramMainDeps extends Omit<DegramRuntimeDeps, 'send'> {
+  /** Bring the DeGram window forward (the tray's sign-out entry shows the window before it asks). */
+  showWindow?: () => void
   ipcMain: IpcMainLike
   /** `session.fromPartition(DEGRAM_DG_PARTITION)`. */
   cookieSession: CookieSessionLike
@@ -47,6 +49,8 @@ export interface DegramMainWiring {
   attachWindow: (window: DegramWindowLike) => void
   /** Resolves when the first auth check and DG page load of the runtime have settled. */
   started: () => Promise<void>
+  /** Extra native tray entries of this variant: sign out of DG, shown between Show and Quit (G-17). */
+  trayItems: () => { label: string; click: () => void }[]
 }
 
 export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
@@ -66,6 +70,7 @@ export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
     profiles: deps.profiles,
     backend: deps.backend,
     pairing: deps.pairing,
+    onTrayLabelsChanged: deps.onTrayLabelsChanged,
     send: (channel, payload) => live()?.webContents.send(channel, payload)
   })
 
@@ -109,5 +114,16 @@ export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
     }
   }
 
-  return { runtime, attachWindow, started: (): Promise<void> => startPromise ?? Promise.resolve() }
+  const trayItems = (): { label: string; click: () => void }[] => [
+    {
+      label: runtime.getTrayLabels().signOut,
+      click: () => {
+        // Show the window first: the confirmation (a response is running) and the sign-in surface live in it.
+        deps.showWindow?.()
+        runtime.requestSignOut()
+      }
+    }
+  ]
+
+  return { runtime, attachWindow, started: (): Promise<void> => startPromise ?? Promise.resolve(), trayItems }
 }

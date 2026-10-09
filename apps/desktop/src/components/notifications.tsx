@@ -11,6 +11,7 @@ import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { AlertCircle, AlertTriangle, CheckCircle2, type IconComponent, Info } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { $degramEnabled } from '@/store/degram-flag'
 import { noticeIdForToast, recordFriction } from '@/store/desktop-metrics'
 import {
   $notifications,
@@ -105,7 +106,10 @@ export function NotificationStack() {
 
 // Portaled to <body> on the over-modal rung so a toast clears an open dialog —
 // see the top-center variant below for why.
+// Variant degram (G-15): the full-window DegramGate surface sits on `--z-setup`, which is above the over-modal
+// rung, so its toast (access revoked, pairing revoked) has to ride one rung higher to stay visible over it.
 const REGION_BASE = 'pointer-events-none fixed z-(--z-over-modal) flex gap-2'
+const REGION_BASE_DEGRAM = 'pointer-events-none fixed z-(--z-degram-toast) flex gap-2'
 
 // Primary stack: top-center, collapsed to the latest toast with a "+N more"
 // expander + clear-all — the noisy/important surface (errors, warnings,
@@ -124,12 +128,13 @@ function TopCenterStack({
   onToggleExpanded: () => void
 }) {
   const older = notifications.slice(1)
+  const degram = useStore($degramEnabled)
 
   return createPortal(
     <div
       aria-label={copy.region}
       className={cn(
-        REGION_BASE,
+        degram ? REGION_BASE_DEGRAM : REGION_BASE,
         'left-1/2 top-[calc(var(--titlebar-height,34px)+0.75rem)] w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 flex-col p-1',
         expanded && 'max-h-[70vh] overflow-y-auto overscroll-contain'
       )}
@@ -170,6 +175,7 @@ function BottomRightStack({
 }) {
   const [expanded, setExpanded] = useState(false)
   const older = notifications.slice(1)
+  const degram = useStore($degramEnabled)
 
   useEffect(() => {
     if (!older.length) {
@@ -181,7 +187,7 @@ function BottomRightStack({
     <div
       aria-label={copy.region}
       className={cn(
-        REGION_BASE,
+        degram ? REGION_BASE_DEGRAM : REGION_BASE,
         'right-4 bottom-4 w-[min(24rem,calc(100%-2rem))] flex-col-reverse p-1',
         expanded && 'max-h-[70vh] overflow-y-auto overscroll-contain'
       )}

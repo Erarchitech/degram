@@ -731,7 +731,16 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     signOut: () => ipcRenderer.invoke(DEGRAM_CHANNELS.signOut),
     setDgMode: mode => ipcRenderer.invoke(DEGRAM_CHANNELS.setDgMode, mode),
     reloadDg: () => ipcRenderer.invoke(DEGRAM_CHANNELS.reloadDg),
+    retryDg: () => ipcRenderer.invoke(DEGRAM_CHANNELS.retryDg),
     setDgBounds: bounds => ipcRenderer.invoke(DEGRAM_CHANNELS.setDgBounds, bounds),
+    // Phase 1301-20 (G-17): the tray's sign-out entry (label from the renderer, click back to the renderer).
+    setTrayLabels: labels => ipcRenderer.invoke(DEGRAM_CHANNELS.setTrayLabels, labels),
+    onRequestSignOut: callback => {
+      const listener = () => callback()
+      ipcRenderer.on(DEGRAM_CHANNELS.requestSignOut, listener)
+
+      return () => ipcRenderer.removeListener(DEGRAM_CHANNELS.requestSignOut, listener)
+    },
     reportOutcome: code => ipcRenderer.invoke(DEGRAM_CHANNELS.reportOutcome, code),
     openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url),
     // Phase 1301-17: the pasted pairing token goes to main once; there is no getter for it.

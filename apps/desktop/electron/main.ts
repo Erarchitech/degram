@@ -13872,6 +13872,8 @@ const minimizeToTray = createMinimizeToTray({
   restoreMainWindow: () =>
     ensureMainWindow(mainWindow, { isReady: app.isReady(), createWindow, focusWindow: activateWindow }),
   productName: APP_WINDOW_TITLE,
+  // Variant degram (Phase 1301-20, G-17): a sign-out entry between Show and Quit.
+  extraItems: () => (degramWiring ? degramWiring.trayItems() : []),
   isQuittingForHandoff: () => isQuittingForHandoff,
   log: rememberLog
 })
@@ -15318,7 +15320,10 @@ function ensureDegramWiring(): DegramMainWiring | null {
         })
       : undefined,
     ipcMain,
-    cookieSession: dgSession
+    cookieSession: dgSession,
+    // Phase 1301-20 (G-17): the tray's sign-out entry brings the window forward and its label follows the locale.
+    showWindow: () => minimizeToTray.restore(),
+    onTrayLabelsChanged: () => minimizeToTray.refreshMenu()
   })
 
   return degramWiring

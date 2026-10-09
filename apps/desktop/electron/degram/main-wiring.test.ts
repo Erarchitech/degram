@@ -61,15 +61,24 @@ function rig() {
   dg.setMe(dg.signedInMe('alpha'))
 
   const handle: BackendHandle = { call: async () => ({}) }
+  const showWindow = vi.fn()
+  const trayChanged = vi.fn()
 
   const wiring = createDegramMainWiring({
+    showWindow,
+    onTrayLabelsChanged: trayChanged,
     origin: dg.origin,
     fetch: dg.fetch,
     clock,
     logger,
     createView: viewFactory.factory,
     openExternal: vi.fn(),
-    profiles: { ensure: async () => ({ profile: 'p' }), purge: async () => undefined },
+    profiles: {
+      ensure: async () => ({ profile: 'p' }),
+      purge: async () => undefined,
+      purgeProject: async () => [],
+      cleanupLegacy: async () => ({ ran: false, failed: [] })
+    },
     backend: { ensure: async () => handle, release: async () => undefined },
     ipcMain: { handle: (channel, handler) => void handlers.set(channel, handler as Handler) },
     cookieSession: {
@@ -81,8 +90,49 @@ function rig() {
     }
   })
 
-  return { dg, wiring, handlers, cookieListeners, fake: viewFactory.fake, logger }
+  return { dg, wiring, handlers, cookieListeners, fake: viewFactory.fake, logger, showWindow, trayChanged }
 }
+
+describe('degram main wiring: tray entry (G-17)', () => {
+  it('offers one sign-out entry that shows the window, then asks the renderer to run its sign-out flow', async () => {
+    const { wiring, showWindow } = rig()
+    const w = fakeWindow()
+
+    wiring.attachWindow(w.window as never)
+    await wiring.started()
+
+    const items = wiring.trayItems()
+
+    expect(items.map(item => item.label)).toEqual(['Выйти из DG'])
+
+    const requests = (): number => w.sent.filter(s => s.channel === DEGRAM_CHANNELS.requestSignOut).length
+    let requestsWhenShown = -1
+
+    showWindow.mockImplementation(() => {
+      requestsWhenShown = requests()
+    })
+
+    items[0]!.click()
+
+    expect(showWindow).toHaveBeenCalledTimes(1)
+    expect(requestsWhenShown).toBe(0) // the window is shown first
+    expect(requests()).toBe(1)
+    // asking is not signing out: the renderer owns the confirmation
+    expect(w.sent.some(s => s.channel === DEGRAM_CHANNELS.signOut)).toBe(false)
+  })
+
+  it('a label sent by the renderer replaces the default and asks for the native menu to be rebuilt', async () => {
+    const { wiring, handlers, trayChanged } = rig()
+    const w = fakeWindow()
+
+    wiring.attachWindow(w.window as never)
+    await wiring.started()
+    await handlers.get(DEGRAM_CHANNELS.setTrayLabels)!({ sender: w.webContents }, { signOut: 'Sign out of DG' })
+
+    expect(wiring.trayItems()[0]!.label).toBe('Sign out of DG')
+    expect(trayChanged).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('degram main wiring', () => {
   it('registers the degram IPC handlers once, at construction', () => {

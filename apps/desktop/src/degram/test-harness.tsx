@@ -44,12 +44,15 @@ export interface Harness {
   bridge: DegramBridge
   emitState: (state: DegramState) => void
   emitEvent: (event: DegramEvent) => void
+  /** The tray's sign-out entry was clicked (main to renderer). */
+  emitRequestSignOut: () => void
   stop: () => void
 }
 
 export function install(initial: DegramState): Harness {
   let stateListener: ((state: DegramState) => void) | null = null
   let eventListener: ((event: DegramEvent) => void) | null = null
+  let signOutListener: (() => void) | null = null
 
   const bridge: DegramBridge = {
     getState: vi.fn(async () => initial),
@@ -71,7 +74,16 @@ export function install(initial: DegramState): Harness {
     signOut: vi.fn(async () => undefined),
     setDgMode: vi.fn(async () => undefined),
     reloadDg: vi.fn(async () => undefined),
+    retryDg: vi.fn(async () => undefined),
     setDgBounds: vi.fn(async () => undefined),
+    setTrayLabels: vi.fn(async () => undefined),
+    onRequestSignOut: vi.fn(cb => {
+      signOutListener = cb
+
+      return () => {
+        signOutListener = null
+      }
+    }),
     reportOutcome: vi.fn(async () => true),
     openExternalConfirmed: vi.fn(async () => true),
     setPairing: vi.fn(async () => ({ ok: true }) as never),
@@ -86,6 +98,7 @@ export function install(initial: DegramState): Harness {
     bridge,
     emitState: s => act(() => stateListener?.(s)),
     emitEvent: e => act(() => eventListener?.(e)),
+    emitRequestSignOut: () => act(() => signOutListener?.()),
     stop
   }
 }

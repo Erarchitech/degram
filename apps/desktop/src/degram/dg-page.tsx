@@ -87,7 +87,7 @@ export function DgPage() {
       <div className="relative min-h-0 flex-1" ref={hostRef}>
         {unreachable ? (
           <div className="grid h-full place-items-center">
-            <DgUnreachable action={() => void bridge?.reloadDg()} actionLabel={copy.dgPage.reloadPage} />
+            <DgUnreachable action={() => void bridge?.retryDg()} actionLabel={copy.dgPage.reloadPage} />
           </div>
         ) : !painted ? (
           <div className="grid h-full place-items-center">

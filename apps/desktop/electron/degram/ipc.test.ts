@@ -31,6 +31,7 @@ function rig(
   const openExternal = vi.fn()
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const memberships = options.memberships ?? [{ project: 'alpha', company: 'ACME' }]
+  const trayChanged = vi.fn()
 
   if (options.signedIn !== false) {
     dg.setMe({
@@ -69,17 +70,36 @@ function rig(
       ensure: async (scope: ScopeKey) => ({ profile: `scope-${scope.project}` }),
       purge: async scope => {
         log.push(`profiles.purge:${scope.project}`)
-      }
+      },
+      purgeProject: async (_user: string, project: string) => {
+        log.push(`profiles.purgeProject:${project}`)
+
+        return []
+      },
+      cleanupLegacy: async () => ({ ran: false, failed: [] })
     },
     backend: { ensure: async () => handle, release: async () => undefined },
     pairing: options.pairing === null ? undefined : (options.pairing ?? createFakePairing()),
+    onTrayLabelsChanged: trayChanged,
     send: (channel, payload) => {
       log.push(`send:${channel}${channel === DEGRAM_CHANNELS.event ? `:${(payload as { type: string }).type}` : ''}`)
       sent.push({ channel, payload })
     }
   })
 
-  return { log, dg, clock, viewFactory, fake: viewFactory.fake, sent, rpcCalls, openExternal, runtime, logger }
+  return {
+    log,
+    dg,
+    clock,
+    viewFactory,
+    fake: viewFactory.fake,
+    sent,
+    rpcCalls,
+    openExternal,
+    runtime,
+    logger,
+    trayChanged
+  }
 }
 
 const states = (sent: Sent[]) => sent.filter(s => s.channel === DEGRAM_CHANNELS.stateChanged).map(s => s.payload as any)
@@ -127,19 +147,115 @@ describe('degram runtime: sign-in page and initial state', () => {
     expect(states(r.sent).pop().auth.kind).toBe('signed-in')
   })
 
-  it('an unreachable DG server on start still loads the sign-in page and reports unreachable', async () => {
+  it('an unreachable DG server on start reports it at once, loads nothing and publishes reachable false (G-16)', async () => {
     const r = rig({ signedIn: false })
 
     r.dg.setMe('network-error')
     await r.runtime.start()
-    r.fake.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', `${r.dg.origin}/`, true)
+
+    expect(r.fake.loaded).toEqual([])
+    expect(r.runtime.getState().dg.reachable).toBe(false)
+    expect(r.runtime.getState().auth.kind).toBe('unknown')
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'dg-unreachable' })
+    expect(states(r.sent).pop().dg.reachable).toBe(false)
+  })
+})
+
+describe('degram runtime: retryDg after DG was unreachable (G-16)', () => {
+  const meRequests = (r: ReturnType<typeof rig>): number => r.dg.requests.filter(q => q.url.endsWith('/auth/me')).length
+
+  it('re-runs /auth/me and loads the sign-in page when DG answers signed out; a finished load restores reachable', async () => {
+    const r = rig({ signedIn: false })
+
+    r.dg.setMe('network-error')
+    await r.runtime.start()
+    expect(r.fake.loaded).toEqual([])
+
+    r.dg.setMe({ status: 401, body: { detail: 'not signed in' } })
+    await r.runtime.retryDg()
 
     expect(r.fake.loaded).toEqual([`${r.dg.origin}/`])
-    expect(r.runtime.getState().dg.reachable).toBe(false)
-    expect(eventsOf(r.sent)).toContainEqual({ type: 'dg-unreachable' })
 
+    r.fake.emit('did-start-loading')
     r.fake.emit('did-finish-load')
+
     expect(r.runtime.getState().dg.reachable).toBe(true)
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'dg-reachable' })
+  })
+
+  it('loads the DG page once when DG answers signed in', async () => {
+    const r = rig({ signedIn: false })
+
+    r.dg.setMe('network-error')
+    await r.runtime.start()
+    r.dg.setMe(r.dg.signedInMe('alpha'))
+    await r.runtime.retryDg()
+
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`])
+    expect(r.runtime.getState().auth.kind).toBe('signed-in')
+  })
+
+  it('reloads the DG page of a session that stayed signed in while DG was unreachable', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`])
+
+    r.fake.emit('did-start-loading')
+    r.fake.emit('did-fail-load', {}, -101, 'ERR_CONNECTION_RESET', `${r.dg.origin}/#degram`, true)
+    r.fake.emit('did-finish-load')
+    expect(r.runtime.getState().dg.reachable).toBe(false)
+
+    await r.runtime.retryDg()
+
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`, `${r.dg.origin}/#degram`])
+  })
+
+  it('stays unreachable and loads nothing while /auth/me still fails', async () => {
+    const r = rig({ signedIn: false })
+
+    r.dg.setMe('network-error')
+    await r.runtime.start()
+    await r.runtime.retryDg()
+
+    expect(r.fake.loaded).toEqual([])
+    expect(r.runtime.getState().dg.reachable).toBe(false)
+    expect(eventsOf(r.sent).filter(e => e.type === 'dg-unreachable')).toHaveLength(1)
+  })
+
+  it('runs at most one re-check at a time', async () => {
+    const r = rig({ signedIn: false })
+
+    r.dg.setMe('network-error')
+    await r.runtime.start()
+
+    const before = meRequests(r)
+
+    await Promise.all([r.runtime.retryDg(), r.runtime.retryDg(), r.runtime.retryDg()])
+
+    expect(meRequests(r) - before).toBe(1)
+  })
+
+  it('window focus re-checks only while DG is unreachable', async () => {
+    const r = rig({ signedIn: false })
+
+    r.dg.setMe('network-error')
+    await r.runtime.start()
+
+    const before = meRequests(r)
+
+    await r.runtime.onWindowFocus()
+    expect(meRequests(r)).toBeGreaterThan(before)
+
+    const healthy = rig()
+
+    await healthy.runtime.start()
+
+    const healthyBefore = meRequests(healthy)
+
+    await healthy.runtime.onWindowFocus()
+    // the ordinary focus check (checkAccess) is the only request; no extra retry
+    expect(meRequests(healthy) - healthyBefore).toBeLessThanOrEqual(1)
   })
 })
 
@@ -325,6 +441,8 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.signOut,
         DEGRAM_CHANNELS.setDgMode,
         DEGRAM_CHANNELS.reloadDg,
+        DEGRAM_CHANNELS.retryDg,
+        DEGRAM_CHANNELS.setTrayLabels,
         DEGRAM_CHANNELS.setDgBounds,
         DEGRAM_CHANNELS.reportOutcome,
         DEGRAM_CHANNELS.openExternalConfirmed,
@@ -573,5 +691,50 @@ describe('DeGram pairing over IPC (Phase 1301-17, D-25)', () => {
     expect(r.runtime.getState().pairing.status).toBe('revoked')
     expect(eventsOf(r.sent).filter(e => e.type === 'pairing-revoked')).toHaveLength(1)
     expect(states(r.sent).at(-1).pairing.status).toBe('revoked')
+  })
+})
+
+describe('degram runtime: tray sign-out entry (G-17)', () => {
+  function register(runtime: DegramRuntime, trusted: (sender: unknown) => boolean) {
+    const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+
+    registerDegramIpc({ handle: (channel, handler) => void handlers.set(channel, handler as never) }, runtime, trusted)
+
+    return handlers
+  }
+
+  it('starts with the Russian default label and swaps in the renderer label, rebuilding the native menu', () => {
+    const r = rig()
+
+    expect(r.runtime.getTrayLabels()).toEqual({ signOut: 'Выйти из DG' })
+
+    r.runtime.setTrayLabels({ signOut: 'Sign out of DG' })
+
+    expect(r.runtime.getTrayLabels()).toEqual({ signOut: 'Sign out of DG' })
+    expect(r.trayChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('requestSignOut asks the renderer on the request-sign-out channel and carries no payload', () => {
+    const r = rig()
+
+    r.runtime.requestSignOut()
+
+    expect(r.sent).toContainEqual({ channel: DEGRAM_CHANNELS.requestSignOut, payload: null })
+  })
+
+  it('the set-tray-labels handler validates its payload and refuses a stranger', async () => {
+    const r = rig()
+    const handlers = register(r.runtime, sender => sender === 'main')
+    const set = handlers.get(DEGRAM_CHANNELS.setTrayLabels)!
+
+    await set({ sender: 'main' }, { signOut: '  Sign out of DG  ' })
+    expect(r.runtime.getTrayLabels().signOut).toBe('Sign out of DG')
+
+    await expect(set({ sender: 'main' }, { signOut: '' })).rejects.toThrow(/tray labels/)
+    await expect(set({ sender: 'main' }, { signOut: 'x'.repeat(200) })).rejects.toThrow(/tray labels/)
+    await expect(set({ sender: 'main' }, { signOut: 'a\nb' })).rejects.toThrow(/tray labels/)
+    await expect(set({ sender: 'main' }, null)).rejects.toThrow(/tray labels/)
+    await expect(set({ sender: 'other' }, { signOut: 'ok' })).rejects.toThrow(/untrusted/)
+    expect(r.runtime.getTrayLabels().signOut).toBe('Sign out of DG')
   })
 })

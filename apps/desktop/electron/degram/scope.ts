@@ -80,6 +80,16 @@ export interface ScopeDeps {
   profiles: {
     ensure: (scope: ScopeKey) => Promise<{ profile: string }>
     purge: (scope: ScopeKey) => Promise<void>
+    /**
+     * Remove every profile of this user + project under any company key (each profile carries a manifest, G-15).
+     * Resolves to the removed profile names.
+     */
+    purgeProject: (user: string, project: string) => Promise<string[]>
+    /**
+     * One-time D-30 cleanup of profiles made before manifests existed: the kept scopes are back-filled first.
+     * The CLI keeps a marker file, so calling it on every start is cheap and removes nothing twice.
+     */
+    cleanupLegacy: (keep: ScopeKey[]) => Promise<{ ran: boolean; failed: string[] }>
   }
   backend: {
     ensure: (profile: string) => Promise<BackendHandle>
@@ -288,6 +298,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
           }
 
           await deps.profiles.purge(options.purge.key)
+          // Also every other profile of this user + project (opened under another company key, G-15, D-19).
+          await deps.profiles.purgeProject(options.purge.key.user, options.purge.key.project)
         } catch {
           purged = false
           logger.warn('[degram] could not purge the local profile of a revoked scope')
@@ -357,6 +369,34 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
   }
 
+  /**
+   * The D-30 one-time cleanup of manifest-less profiles, at most once per run and never concurrent with a
+   * selection (selectProject awaits it before it ensures a profile). The signed-in user's current scopes are
+   * back-filled first, so a profile the user can still open keeps its history; a failure is logged only.
+   */
+  let legacyCleanup: Promise<void> | null = null
+
+  const runLegacyCleanup = (me: Extract<MeResult, { kind: 'signed-in' }>): Promise<void> => {
+    if (!legacyCleanup) {
+      const keep: ScopeKey[] = me.memberships.map(m => ({ user: me.username, company: m.company, project: m.project }))
+
+      legacyCleanup = deps.profiles
+        .cleanupLegacy(keep)
+        .then(result => {
+          if (result.ran) {
+            logger.info('[degram] cleaned up local profiles made before scope manifests existed')
+          }
+
+          if (result.failed.length > 0) {
+            logger.warn('[degram] some local profiles from before scope manifests could not be removed')
+          }
+        })
+        .catch(() => logger.warn('[degram] could not clean up local profiles from before scope manifests'))
+    }
+
+    return legacyCleanup
+  }
+
   const fail = (code: ScopeErrorCode, forget: boolean): SelectResult => {
     if (code !== 'SUPERSEDED') {
       setState({ ...(forget ? IDLE : {}), status: forget ? 'no-project' : 'error', error: forget ? null : code })
@@ -379,6 +419,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
 
       return { ok: false, code: 'NOT_SIGNED_IN', state }
     }
+
+    await runLegacyCleanup(me)
 
     const membership = me.memberships.find(m => m.project === project)
 
@@ -448,6 +490,13 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
             : minted.kind === 'forbidden'
               ? 'ACCESS_DENIED'
               : 'MINT_FAILED'
+
+      if (minted.kind === 'forbidden') {
+        // DG says the access ended (G-15, D-19): the same revoke path as a lost membership, not a bare error.
+        await revokeActive()
+
+        return { ok: false, code, state }
+      }
 
       return fail(code, false)
     }
@@ -554,6 +603,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
 
       return
     }
+
+    void runLegacyCleanup(me)
 
     const target = active
 

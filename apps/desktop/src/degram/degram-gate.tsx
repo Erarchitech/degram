@@ -16,7 +16,7 @@ import { IsolationBootFailure } from './isolation-boot-failure'
 import { PairingPanel } from './pairing-panel'
 import { ProjectPicker } from './project-picker'
 import { DgConnecting, DgUnreachable, SignInState } from './sign-in-state'
-import { refreshDegramState, useDegram } from './use-degram-state'
+import { degramBridge, refreshDegramState, useDegram } from './use-degram-state'
 
 function Surface({ children }: { children: React.ReactNode }) {
   // Popovers opened from inside the surface (the project picker) portal into it: a body-level popover would sit
@@ -38,6 +38,12 @@ function Surface({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** Retry for a DG-unreachable choice: main re-checks DG and reloads the view, then the state is re-read (G-16). */
+async function retryDgAndRefresh(): Promise<void> {
+  await degramBridge()?.retryDg()
+  await refreshDegramState()
+}
+
 /** The content-column choice shown while signed in without a project (also used standalone by the DG page). */
 export function ProjectChoice() {
   const { t } = useI18n()
@@ -55,7 +61,7 @@ export function ProjectChoice() {
   if (state?.scope.status === 'error' && state.scope.error === 'DG_UNREACHABLE') {
     return (
       <div className="grid h-full place-items-center">
-        <DgUnreachable action={() => void refreshDegramState()} actionLabel={copy.cta.retry} />
+        <DgUnreachable action={() => void retryDgAndRefresh()} actionLabel={copy.cta.retry} />
       </div>
     )
   }

@@ -9,7 +9,15 @@ import { useStore } from '@nanostores/react'
 import { type ReactNode, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator
+} from '@/components/ui/command'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { ErrorState } from '@/components/ui/error-state'
 import { Loader } from '@/components/ui/loader'
@@ -18,6 +26,7 @@ import { OverflowTip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { $busy } from '@/store/session'
 
+import { requestDegramSignOut } from './sign-out-confirm'
 import { degramBridge, refreshDegramState, useDegram, useDegramActions } from './use-degram-state'
 
 /** Above this many projects the list gets a search field (UI-SPEC zero-one-many). */
@@ -109,6 +118,22 @@ export function ProjectPicker({ children }: { children: ReactNode }) {
                       )}
                     </CommandItem>
                   ))}
+                </CommandGroup>
+                {/* G-17, DGCL-05: the user can leave DG from DeGram itself. forceMount keeps it out of the search. */}
+                <CommandSeparator />
+                <CommandGroup forceMount>
+                  <CommandItem
+                    forceMount
+                    onSelect={() => {
+                      setOpen(false)
+                      requestDegramSignOut()
+                    }}
+                    value="degram-sign-out"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] leading-[1.4]">
+                      {copy.actions.signOut}
+                    </span>
+                  </CommandItem>
                 </CommandGroup>
               </CommandList>
             </Command>

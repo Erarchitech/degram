@@ -294,6 +294,8 @@
     --z-onboarding-popover: 1310;
     --z-setup: 1400;
     --z-crash: 1500;
+    /* Variant degram: toasts ride above the full-window DegramGate surface (--z-setup). */
+    --z-degram-toast: 1500;
     --ui-bg-chrome: color-mix(
       in srgb,
       var(--theme-background-seed) var(--theme-mix-chrome),

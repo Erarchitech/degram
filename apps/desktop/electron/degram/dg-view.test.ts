@@ -251,15 +251,41 @@ describe('modes, sign-in page and reset', () => {
     expect(fake.loaded[fake.loaded.length - 1]).toBe('about:blank')
   })
 
-  it('a failed main-frame load reports dg-unreachable and a finished load reports dg-reachable', () => {
-    const { fake, events } = setup()
+  it('a failed main-frame load reports dg-unreachable and a finished DG load reports dg-reachable', async () => {
+    const { dgView, fake, events } = setup()
 
+    await dgView.showDg()
     fake.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', `${ORIGIN}/`, true)
     fake.emit('did-fail-load', {}, -3, 'ERR_ABORTED', `${ORIGIN}/`, true)
     fake.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', `${ORIGIN}/sub`, false)
+    expect(events).toEqual([{ type: 'dg-unreachable' }])
+
+    // the next navigation succeeds
+    fake.emit('did-start-loading')
     fake.emit('did-finish-load')
 
     expect(events).toEqual([{ type: 'dg-unreachable' }, { type: 'dg-reachable' }])
+  })
+
+  it('did-finish-load of the error page after a failed load does not report DG reachable (G-16)', async () => {
+    const { dgView, fake, events } = setup()
+
+    await dgView.showDg()
+    fake.emit('did-start-loading')
+    fake.emit('did-fail-load', {}, -101, 'ERR_CONNECTION_RESET', `${ORIGIN}/#degram`, true)
+    fake.emit('did-finish-load')
+    fake.emit('did-finish-load')
+
+    expect(events).toEqual([{ type: 'dg-unreachable' }])
+  })
+
+  it('a finished load that is not a DG page (about:blank after a reset) reports nothing', async () => {
+    const { dgView, fake, events } = setup()
+
+    await dgView.reset()
+    fake.emit('did-finish-load')
+
+    expect(events).toEqual([])
   })
 
   it('a load rejection is logged without a URL query and does not throw', async () => {

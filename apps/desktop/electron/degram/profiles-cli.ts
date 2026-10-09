@@ -42,22 +42,40 @@ function argsFor(command: 'ensure' | 'purge', home: string, scope: ScopeKey): st
   ]
 }
 
-function parseObject(text: string): Record<string, unknown> | null {
+function parseJson(text: string): unknown {
   try {
-    const parsed: unknown = JSON.parse(text.trim().split(/\r?\n/).filter(Boolean).pop() ?? '')
-
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+    return JSON.parse(text.trim().split(/\r?\n/).filter(Boolean).pop() ?? '')
   } catch {
     return null
   }
 }
 
-export function createProfilesCli(deps: ProfilesCliDeps): {
+function parseObject(text: string): Record<string, unknown> | null {
+  const parsed = parseJson(text)
+
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+}
+
+/** What the one-time legacy cleanup did (D-30). */
+export interface LegacyCleanupResult {
+  ran: boolean
+  backfilled: string[]
+  removed: string[]
+  failed: string[]
+}
+
+export interface ProfilesCli {
   ensure: (scope: ScopeKey) => Promise<{ profile: string }>
   purge: (scope: ScopeKey) => Promise<void>
-} {
-  const execute = async (command: 'ensure' | 'purge', scope: ScopeKey): Promise<Record<string, unknown>> => {
-    const result: ProfilesCliRun = await deps.run(argsFor(command, deps.home, scope))
+  /** Remove every profile of `user` + `project` under any company key (the manifest names the owner, G-15). */
+  purgeProject: (user: string, project: string) => Promise<string[]>
+  /** One-time D-30 cleanup: back-fill the given scopes' manifests, remove profiles still without one. */
+  cleanupLegacy: (keep: ScopeKey[]) => Promise<LegacyCleanupResult>
+}
+
+export function createProfilesCli(deps: ProfilesCliDeps): ProfilesCli {
+  const executeRaw = async (command: string, args: string[]): Promise<unknown> => {
+    const result: ProfilesCliRun = await deps.run(args)
 
     if (result.code !== 0) {
       const detail = parseObject(result.stderr)?.error
@@ -65,14 +83,27 @@ export function createProfilesCli(deps: ProfilesCliDeps): {
       throw new ProfilesCliError(command, typeof detail === 'string' ? detail : `exit code ${result.code ?? 'unknown'}`)
     }
 
-    const parsed = parseObject(result.stdout)
+    const parsed = parseJson(result.stdout)
 
-    if (!parsed) {
+    if (parsed === null || typeof parsed !== 'object') {
       throw new ProfilesCliError(command, 'the CLI printed no JSON result')
     }
 
     return parsed
   }
+
+  const execute = async (command: 'ensure' | 'purge', scope: ScopeKey): Promise<Record<string, unknown>> => {
+    const parsed = await executeRaw(command, argsFor(command, deps.home, scope))
+
+    if (Array.isArray(parsed)) {
+      throw new ProfilesCliError(command, 'the CLI printed no JSON result')
+    }
+
+    return parsed as Record<string, unknown>
+  }
+
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
   return {
     ensure: async (scope: ScopeKey): Promise<{ profile: string }> => {
@@ -86,6 +117,34 @@ export function createProfilesCli(deps: ProfilesCliDeps): {
     },
     purge: async (scope: ScopeKey): Promise<void> => {
       await execute('purge', scope)
+    },
+    purgeProject: async (user: string, project: string): Promise<string[]> => {
+      const parsed = await executeRaw('purge-project', [
+        '-m',
+        'degram_variant.profiles',
+        'purge-project',
+        `--home=${deps.home}`,
+        `--user=${user}`,
+        `--project=${project}`
+      ])
+
+      return strings(parsed)
+    },
+    cleanupLegacy: async (keep: ScopeKey[]): Promise<LegacyCleanupResult> => {
+      const parsed = (await executeRaw('cleanup-legacy', [
+        '-m',
+        'degram_variant.profiles',
+        'cleanup-legacy',
+        `--home=${deps.home}`,
+        `--keep-json=${JSON.stringify(keep.map(k => ({ user: k.user, company: k.company, project: k.project })))}`
+      ])) as Record<string, unknown>
+
+      return {
+        ran: parsed.ran === true,
+        backfilled: strings(parsed.backfilled),
+        removed: strings(parsed.removed),
+        failed: strings(parsed.failed)
+      }
     }
   }
 }

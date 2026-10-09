@@ -34,6 +34,11 @@ interface Rig {
   logger: { info: LogFn; warn: LogFn; error: LogFn }
   rpcCalls: { profile: string; method: string; params: Record<string, unknown> }[]
   purged: ScopeKey[]
+  /** purgeProject(user, project) calls: the profiles of that project under every company key. */
+  purgedProjects: { user: string; project: string }[]
+  /** cleanupLegacy(keep) calls (the one-time D-30 cleanup). */
+  cleanups: ScopeKey[][]
+  cleanupFail: { error: Error | null }
   ensured: ScopeKey[]
   released: string[]
   viewResets: number
@@ -69,6 +74,9 @@ function rig(
   const events: DegramEvent[] = []
   const rpcCalls: Rig['rpcCalls'] = []
   const purged: ScopeKey[] = []
+  const purgedProjects: Rig['purgedProjects'] = []
+  const cleanups: ScopeKey[][] = []
+  const cleanupFail: Rig['cleanupFail'] = { error: null }
   const ensured: ScopeKey[] = []
   const released: string[] = []
   const rpcFail = new Map<string, Error>()
@@ -99,6 +107,9 @@ function rig(
     logger,
     rpcCalls,
     purged,
+    purgedProjects,
+    cleanups,
+    cleanupFail,
     ensured,
     released,
     viewResets: 0,
@@ -134,6 +145,26 @@ function rig(
 
         log.push(`profiles.purge:${scope.project}`)
         purged.push(scope)
+      },
+      purgeProject: async (user, project) => {
+        if (purgeFail.error) {
+          throw purgeFail.error
+        }
+
+        log.push(`profiles.purgeProject:${project}`)
+        purgedProjects.push({ user, project })
+
+        return []
+      },
+      cleanupLegacy: async keep => {
+        log.push('profiles.cleanupLegacy')
+        cleanups.push(keep)
+
+        if (cleanupFail.error) {
+          throw cleanupFail.error
+        }
+
+        return { ran: true, failed: [] }
       }
     },
     backend: {
@@ -225,6 +256,7 @@ describe('createScopeController: explicit project selection (D-19)', () => {
     const profile = 'scope-alice-ACME-alpha'
 
     expect(r.log.entries.filter(e => !e.startsWith('event:'))).toEqual([
+      'profiles.cleanupLegacy',
       'profiles.ensure:alpha',
       `backend.ensure:${profile}`,
       `rpc:${profile}:degram.credentials.set`
@@ -389,7 +421,12 @@ describe('createScopeController: failures before the credential exists', () => {
       clock: r.clock,
       logger: r.logger,
       emit: () => undefined,
-      profiles: { ensure, purge: async () => undefined },
+      profiles: {
+        ensure,
+        purge: async () => undefined,
+        purgeProject: async () => [],
+        cleanupLegacy: async () => ({ ran: false, failed: [] })
+      },
       backend: { ensure: vi.fn(), release: vi.fn() },
       view: { reset: async () => undefined, clearStorage: async () => undefined }
     })
@@ -655,10 +692,13 @@ describe('access revoked for the active project (403 / membership loss)', () => 
       CLEAR_ALPHA,
       'backend.release:scope-alice-ACME-alpha',
       'profiles.purge:alpha',
+      'profiles.purgeProject:alpha',
       'view.reset',
       'event:access-revoked'
     ])
     expect(r.purged).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
+    // every profile of this user + project under any company key goes too (G-15)
+    expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'alpha' }])
     expect(r.events).toEqual([{ type: 'access-revoked', project: 'alpha', purged: true }])
     expect(r.scope.getState()).toMatchObject({ status: 'no-project', project: null })
     // tenant storage of the view is wiped, the DG sign-in cookie and the session are kept
@@ -705,6 +745,35 @@ describe('access revoked for the active project (403 / membership loss)', () => 
 
     expect(r.events).toEqual([{ type: 'access-revoked', project: 'alpha', purged: false }])
     expect(r.rpcCalls.map(c => c.method)).toContain('degram.credentials.clear')
+    expect(r.scope.getState().status).toBe('no-project')
+  })
+
+  it('a 403 from the mint at selection takes the revoke path: purge, access-revoked, no-project (G-15)', async () => {
+    const r = rig()
+
+    r.dg.setMint({ status: 403, body: { detail: { code: 'PROJECT_FORBIDDEN' } } })
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'ACCESS_DENIED' })
+    expect(r.purged).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
+    expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'alpha' }])
+    expect(r.released).toEqual(['scope-alice-ACME-alpha'])
+    expect(r.events).toEqual([{ type: 'access-revoked', project: 'alpha', purged: true }])
+    expect(r.scope.getState()).toMatchObject({ status: 'no-project', project: null, profile: null, error: null })
+    expect(r.rpcCalls.map(c => c.method)).not.toContain('degram.credentials.set')
+  })
+
+  it('a 403 from the pairing exchange at selection also takes the revoke path', async () => {
+    const r = rig([{ project: 'alpha' }], createFakePairing(PAIRING_TOKEN))
+
+    r.dg.setExchange({ status: 403, body: { detail: { code: 'DELEGATED_SCOPE_CHANGED' } } })
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'ACCESS_DENIED' })
+    expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'alpha' }])
+    expect(r.events).toEqual([{ type: 'access-revoked', project: 'alpha', purged: true }])
     expect(r.scope.getState().status).toBe('no-project')
   })
 
@@ -951,5 +1020,45 @@ describe('DeGram pairing as the credential source (Phase 1301-17, D-25, D-27)', 
 
     expect(result).toMatchObject({ ok: false, code: 'MINT_FAILED' })
     expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set')).toEqual([])
+  })
+})
+
+describe('one-time cleanup of profiles made before scope manifests (D-30)', () => {
+  it('runs once before the first selection ensures a profile, with the signed-in scopes to keep', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta', company: null }])
+
+    await r.scope.selectProject('alpha')
+    await r.scope.selectProject('beta')
+
+    expect(r.cleanups).toEqual([
+      [
+        { user: 'alice', company: 'ACME', project: 'alpha' },
+        { user: 'alice', company: null, project: 'beta' }
+      ]
+    ])
+    expect(r.log.indexOf('profiles.cleanupLegacy')).toBeLessThan(r.log.indexOf('profiles.ensure:alpha'))
+  })
+
+  it('a failing cleanup never blocks opening a project and is not retried within the run', async () => {
+    const r = rig()
+
+    r.cleanupFail.error = new Error('python exploded')
+
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: true })
+    expect(r.logger.warn).toHaveBeenCalled()
+
+    await r.scope.selectProject('alpha')
+
+    expect(r.cleanups).toHaveLength(1)
+  })
+
+  it('also runs from the access check after sign-in, before any project is opened', async () => {
+    const r = rig()
+
+    await r.session.refresh()
+    await r.scope.checkAccess('heartbeat')
+
+    expect(r.cleanups).toHaveLength(1)
+    expect(r.ensured).toHaveLength(0)
   })
 })

@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { NotificationStack } from '@/components/notifications'
 import { I18nProvider, useI18n } from '@/i18n'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $notifications } from '@/store/notifications'
@@ -79,7 +80,9 @@ describe('sign-in state (D-05, UI loading/error E7)', () => {
       screen.getByText("The DG server can't be reached. Check your network or VPN, then retry the request.")
     ).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry request' }))
-    expect(h.bridge.reloadDg).toHaveBeenCalledTimes(1)
+    // G-16: Retry re-checks DG (/auth/me) and reloads the view in main, not a bare page reload
+    expect(h.bridge.retryDg).toHaveBeenCalledTimes(1)
+    expect(h.bridge.reloadDg).not.toHaveBeenCalled()
   })
 
   it('reports the placeholder rectangle to main so the sign-in view can be shown, and hides it on unmount', async () => {
@@ -214,12 +217,33 @@ describe('project picker (UI E2)', () => {
       { project: 'Beta', role: 'member', company: null }
     ])
 
-    const rows = screen.getAllByRole('option')
+    // the last row is the separated Sign out of DG command (G-17), not a project
+    const rows = screen.getAllByRole('option').slice(0, -1)
 
     expect(rows).toHaveLength(2)
     expect(within(rows[0]).getByText('Alpha')).toBeTruthy()
     expect(within(rows[0]).getByText('Acme')).toBeTruthy()
     expect(rows[1].textContent).toBe('Beta')
+  })
+
+  it('ends with a separated Sign out of DG command that signs out at once when nothing is running (G-17)', async () => {
+    const h = await open([{ project: 'Alpha', role: 'member', company: 'Acme' }])
+    const rows = screen.getAllByRole('option')
+
+    expect(rows[rows.length - 1]!.textContent).toBe('Sign out of DG')
+    expect(screen.getByRole('listbox').querySelector('[cmdk-separator]')).toBeTruthy()
+
+    fireEvent.click(rows[rows.length - 1]!)
+    await waitFor(() => expect(h.bridge.signOut).toHaveBeenCalledTimes(1))
+    expect(h.bridge.selectProject).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Sign out of DG command visible while the search narrows the project list (G-17)', async () => {
+    await open(Array.from({ length: 8 }, (_, i) => ({ project: `P${i}`, role: 'member', company: null })))
+
+    fireEvent.change(screen.getByPlaceholderText('Search projects'), { target: { value: 'P3' } })
+
+    await waitFor(() => expect(screen.getAllByRole('option').map(row => row.textContent)).toContain('Sign out of DG'))
   })
 
   it('selecting a project calls selectProject once the list is loaded', async () => {
@@ -235,7 +259,7 @@ describe('project picker (UI E2)', () => {
   it('never auto-selects a single membership (T-1301-13-04)', async () => {
     const h = await open([{ project: 'Only', role: 'member', company: 'Acme' }])
 
-    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getAllByRole('option').filter(row => row.textContent?.startsWith('Only'))).toHaveLength(1)
     expect(h.bridge.selectProject).not.toHaveBeenCalled()
   })
 
@@ -544,7 +568,7 @@ describe('DG page (D-07, UI E6)', () => {
       screen.getByText("The DG server can't be reached. Check your network or VPN, then retry the request.")
     ).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Reload page' }))
-    expect(h.bridge.reloadDg).toHaveBeenCalledTimes(1)
+    expect(h.bridge.retryDg).toHaveBeenCalledTimes(1)
   })
 
   it('has no scrolling shell: the section clips and the web view owns its own scrolling', async () => {
@@ -553,5 +577,78 @@ describe('DG page (D-07, UI E6)', () => {
     render(<DgPage />)
 
     expect(screen.getByTestId('dg-page').className).toContain('overflow-hidden')
+  })
+})
+
+describe('DG unreachable at start and the revoke toast (G-15, G-16)', () => {
+  it('the gate shows the DG-unreachable ErrorState, not a blank surface, when /auth/me never answered', async () => {
+    const h = install(makeState())
+
+    h.emitState({
+      ...makeState(),
+      auth: { kind: 'unknown', username: null, isAdmin: false, memberships: [] },
+      dg: { mode: 'graph', page: 'blank', reachable: false }
+    })
+    render(<DegramGate />)
+
+    expect(
+      screen.getByText("The DG server can't be reached. Check your network or VPN, then retry the request.")
+    ).toBeTruthy()
+    // the native DG view stays hidden while the state is unreachable
+    expect(h.bridge.setDgBounds).not.toHaveBeenCalledWith(expect.objectContaining({ width: expect.any(Number) }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry request' }))
+    expect(h.bridge.retryDg).toHaveBeenCalledTimes(1)
+  })
+
+  it('a project choice that failed with DG_UNREACHABLE retries through main, then re-reads the state', async () => {
+    const h = install(makeState())
+
+    h.emitState({
+      ...makeState(),
+      scope: { ...noScope, status: 'error', error: 'DG_UNREACHABLE' }
+    })
+    render(withActions(<DegramGate />))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry request' }))
+    await waitFor(() => expect(h.bridge.retryDg).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(h.bridge.getState).toHaveBeenCalledTimes(2))
+  })
+
+  it('the access-revoked toast is rendered above the full-window gate surface in variant degram', async () => {
+    const h = install(makeState())
+
+    $degramEnabled.set(true)
+    h.emitState(makeState())
+    render(
+      <I18nProvider>
+        <DegramGate />
+        <NotificationStack />
+      </I18nProvider>
+    )
+
+    h.emitEvent({ type: 'access-revoked', project: 'alpha', purged: true })
+
+    const toast = await screen.findByText(/alpha/)
+    const region = toast.closest('[role="region"]')
+
+    expect(screen.getByTestId('degram-gate').className).toContain('z-(--z-setup)')
+    expect(region?.className).toContain('z-(--z-degram-toast)')
+    expect(region?.className).not.toContain('z-(--z-over-modal)')
+  })
+
+  it('outside variant degram the toast stays on the over-modal rung', async () => {
+    const h = install(makeState())
+
+    $degramEnabled.set(false)
+    render(
+      <I18nProvider>
+        <NotificationStack />
+      </I18nProvider>
+    )
+    h.emitEvent({ type: 'access-revoked', project: 'alpha', purged: true })
+
+    const toast = await screen.findByText(/alpha/)
+
+    expect(toast.closest('[role="region"]')?.className).toContain('z-(--z-over-modal)')
   })
 })

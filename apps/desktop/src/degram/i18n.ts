@@ -34,6 +34,8 @@ export interface DegramCopy {
   /** The product wordmark. Brand text, identical in every locale. */
   brand: string
   nav: { dg: string }
+  /** Commands that leave the current session (the project menu and the tray menu). */
+  actions: { signOut: string }
   cta: {
     selectDocument: string
     signIn: string
@@ -169,6 +171,7 @@ export interface DegramCopy {
 export const degramEn: DegramCopy = {
   brand: 'DeGram',
   nav: { dg: 'DG' },
+  actions: { signOut: 'Sign out of DG' },
   cta: {
     selectDocument: 'Select document',
     signIn: 'Sign in with DG',
@@ -332,6 +335,7 @@ export const degramEn: DegramCopy = {
 export const degramRu: DegramCopy = {
   brand: 'DeGram',
   nav: { dg: 'DG' },
+  actions: { signOut: 'Выйти из DG' },
   cta: {
     selectDocument: 'Выбрать документ',
     signIn: 'Войти через DG',

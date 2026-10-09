@@ -39,6 +39,14 @@ export interface DegramPairingView {
   available: boolean
 }
 
+/** Texts of native menus (the tray) that the renderer owns because it owns the locale. */
+export interface DegramTrayLabels {
+  signOut: string
+}
+
+/** Shown in the tray until the renderer has loaded its locale and sent the real label (G-17). */
+export const DEFAULT_TRAY_LABELS: DegramTrayLabels = { signOut: 'Выйти из DG' }
+
 export interface DegramState {
   auth: DegramAuthView
   scope: ScopeState
@@ -55,8 +63,14 @@ export interface DegramBridge {
   signOut: () => Promise<void>
   setDgMode: (mode: DgMode) => Promise<void>
   reloadDg: () => Promise<void>
+  /** DG was unreachable: re-run the /auth/me check, then show the sign-in or the DG page (G-16). */
+  retryDg: () => Promise<void>
   /** The rectangle (window content coordinates) the DG page occupies; `null` hides the view. */
   setDgBounds: (bounds: DgBounds | null) => Promise<void>
+  /** Send the localized text of the tray's sign-out entry (the renderer owns the locale). */
+  setTrayLabels: (labels: DegramTrayLabels) => Promise<void>
+  /** The tray's sign-out entry was clicked: the renderer shows its confirmation or signs out (G-17). */
+  onRequestSignOut: (callback: () => void) => () => void
   /** Forward an operational outcome code the agent reported (for example CREDENTIALS_EXPIRED). */
   reportOutcome: (code: string) => Promise<boolean>
   /** Open a URL the DG view refused to show in the system browser. Call only from a user action. */
@@ -80,6 +94,8 @@ export interface DegramRuntimeDeps {
   pairing?: PairingStore
   /** Renderer sender (`webContents.send`). */
   send: (channel: string, payload: unknown) => void
+  /** The tray labels changed: rebuild the native menu. */
+  onTrayLabelsChanged?: () => void
 }
 
 export interface DegramRuntime {
@@ -93,7 +109,12 @@ export interface DegramRuntime {
   signOut: () => Promise<void>
   setDgMode: (mode: DgMode) => Promise<void>
   reloadDg: () => Promise<void>
+  retryDg: () => Promise<void>
   setDgBounds: (bounds: DgBounds | null) => void
+  setTrayLabels: (labels: DegramTrayLabels) => void
+  getTrayLabels: () => DegramTrayLabels
+  /** Ask the renderer to run its sign-out flow (the tray entry). */
+  requestSignOut: () => void
   openExternalConfirmed: (url: string) => boolean
   setPairing: (token: string) => PairingSetResult
   clearPairing: () => void
@@ -128,6 +149,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   let reachable = true
   let lastPublished = ''
   let viewChain: Promise<void> = Promise.resolve()
+  let trayLabels: DegramTrayLabels = { ...DEFAULT_TRAY_LABELS }
 
   /** View work runs one step at a time so loads cannot overlap into a stale page. */
   const viewTask = (task: () => Promise<void>): Promise<void> => {
@@ -227,12 +249,55 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   const start = async (): Promise<void> => {
     const me = await session.refresh()
 
-    if (me.kind !== 'signed-in') {
+    if (me.kind === 'unreachable') {
+      // G-16: DG reset or refused the first check. Say so now (the renderer shows the DG-unreachable state with
+      // a Retry) instead of loading a page that would fail into a blank window.
+      onEvent({ type: 'dg-unreachable' })
+    } else if (me.kind !== 'signed-in') {
       await viewTask(() => dgView.showSignIn())
     }
 
     await viewChain
     publish()
+  }
+
+  /** At most one re-check in flight, so a burst of Retry clicks or focus events never floods DG (T-1301-20-03). */
+  let retrying: Promise<void> | null = null
+
+  const retryDg = (): Promise<void> => {
+    if (retrying) {
+      return retrying
+    }
+
+    retrying = (async (): Promise<void> => {
+      const wasSignedIn = previousKind === 'signed-in'
+      const me = await session.refresh()
+
+      if (me.kind === 'unreachable') {
+        if (reachable) {
+          onEvent({ type: 'dg-unreachable' })
+        }
+
+        return
+      }
+
+      if (me.kind === 'signed-in') {
+        // A first sign-in already queued the DG page through the auth listener; a session that was signed in all
+        // along (unreachable in between) has to be loaded here.
+        if (wasSignedIn) {
+          await viewTask(() => dgView.showDg())
+        }
+      } else {
+        await viewTask(() => dgView.showSignIn())
+      }
+
+      await viewChain
+      publish()
+    })().finally(() => {
+      retrying = null
+    })
+
+    return retrying
   }
 
   return {
@@ -267,7 +332,14 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       publish()
     },
     reloadDg: (): Promise<void> => viewTask(() => dgView.reload()),
+    retryDg,
     setDgBounds: (bounds: DgBounds | null): void => dgView.setBounds(bounds),
+    setTrayLabels: (labels: DegramTrayLabels): void => {
+      trayLabels = { signOut: labels.signOut }
+      deps.onTrayLabelsChanged?.()
+    },
+    getTrayLabels: (): DegramTrayLabels => trayLabels,
+    requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
     setPairing: (token: string): PairingSetResult => {
       if (!deps.pairing) {
@@ -294,6 +366,12 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       return known
     },
     onWindowFocus: async (): Promise<void> => {
+      if (!reachable) {
+        // D-08: focus is the re-check trigger while DG is unreachable (no timer polling), through the same
+        // single-flight path as the Retry button.
+        await retryDg()
+      }
+
       await scope.checkAccess('focus')
       await viewChain
       publish()
@@ -383,6 +461,23 @@ function asPairing(value: unknown): string {
   return value
 }
 
+const MAX_LABEL_LENGTH = 80
+
+function asTrayLabels(value: unknown): DegramTrayLabels {
+  const signOut = (value as { signOut?: unknown } | null)?.signOut
+
+  if (typeof signOut !== 'string' || !signOut.trim() || signOut.length > MAX_LABEL_LENGTH || hasControl(signOut)) {
+    throw invalid('tray labels')
+  }
+
+  return { signOut: signOut.trim() }
+}
+
+function hasControl(text: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /[\u0000-\u001f]/.test(text)
+}
+
 function asUrl(value: unknown): string {
   if (typeof value !== 'string' || !value || value.length > 4096) {
     throw invalid('url')
@@ -429,6 +524,14 @@ export function registerDegramIpc(
   ipc.handle(
     DEGRAM_CHANNELS.reloadDg,
     guarded(() => runtime.reloadDg())
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.retryDg,
+    guarded(() => runtime.retryDg())
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.setTrayLabels,
+    guarded((labels: unknown) => runtime.setTrayLabels(asTrayLabels(labels)))
   )
   ipc.handle(
     DEGRAM_CHANNELS.setDgBounds,

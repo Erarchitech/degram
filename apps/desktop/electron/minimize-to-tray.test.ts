@@ -146,6 +146,70 @@ function setup() {
   }
 }
 
+test('extra items sit between Show and Quit, with a separator on each side (variant degram, G-17)', async () => {
+  const signOut = vi.fn()
+
+  const controller = createMinimizeToTray({
+    preferencesPath: path.join(home, 'minimize-to-tray.json'),
+    getIconPath: () => 'icon.png',
+    restoreMainWindow: () => undefined,
+    productName: 'DeGram',
+    extraItems: () => [{ label: 'Sign out of DG', click: signOut }],
+    isQuittingForHandoff: () => false,
+    log: vi.fn()
+  })
+
+  await controller.start()
+  await controller.setEnabled(true)
+
+  const menu = native.trays[0].menu as { label?: string; type?: string; click?: () => void }[]
+
+  expect(menu.map(item => item.label ?? item.type)).toEqual([
+    'Show DeGram',
+    'separator',
+    'Sign out of DG',
+    'separator',
+    'Quit DeGram'
+  ])
+  menu[2]!.click?.()
+  expect(signOut).toHaveBeenCalledOnce()
+})
+
+test('refreshMenu rebuilds the native menu so a changed extra label shows up', async () => {
+  let label = 'Sign out of DG'
+
+  const controller = createMinimizeToTray({
+    preferencesPath: path.join(home, 'minimize-to-tray.json'),
+    getIconPath: () => 'icon.png',
+    restoreMainWindow: () => undefined,
+    extraItems: () => [{ label, click: () => undefined }],
+    isQuittingForHandoff: () => false,
+    log: vi.fn()
+  })
+
+  controller.refreshMenu() // no tray yet: nothing to rebuild, nothing thrown
+  await controller.start()
+  await controller.setEnabled(true)
+
+  label = 'Sign out (changed)'
+  controller.refreshMenu()
+
+  expect(native.trays[0].menu.map((item: { label?: string }) => item.label)).toContain('Sign out (changed)')
+})
+
+test('without extra items the upstream menu is unchanged: Show, separator, Quit', async () => {
+  const { controller } = setup()
+
+  await controller.start()
+  await controller.setEnabled(true)
+
+  expect(native.trays[0].menu.map((item: { label?: string; type?: string }) => item.label ?? item.type)).toEqual([
+    'Show Hermes',
+    'separator',
+    'Quit Hermes'
+  ])
+})
+
 function flushDeferredHide() {
   return new Promise<void>(resolve => setImmediate(resolve))
 }
