@@ -198,6 +198,31 @@ function newPreviewId(): string {
 
 const IDENTITY_OUTCOME: OutcomeInfo = { code: 'IDENTITY_MISMATCH', bridgeState: 'identity-mismatch' }
 
+const RPC_TIMEOUT = /request timed out after (\d+(?:\.\d+)?)s/i
+
+// A failure of the gateway connection itself (the socket is gone, never opened, or stopped answering heartbeats).
+const GATEWAY_TRANSPORT = /gateway not connected|socket|websocket|connection|econn|network|heartbeat|closed|disconnected/i
+
+/**
+ * What a failed preview RPC means (1301-19, G-14). A timeout names itself and its seconds (the bridge's own BUSY comes
+ * back as an answer, not as an exception), and only a broken gateway connection reads as «DG unreachable»: an error
+ * the agent returned, or anything unrecognised, is the generic outcome instead of a wrong cause.
+ */
+export function classifyPreviewError(err: unknown): OutcomeInfo {
+  const text = err instanceof Error ? err.message : String(err)
+  const timeout = RPC_TIMEOUT.exec(text)
+
+  if (timeout) {
+    return { code: 'PREVIEW_TIMEOUT', message: `PREVIEW_TIMEOUT: request timed out after ${timeout[1]}s` }
+  }
+
+  if (GATEWAY_TRANSPORT.test(text)) {
+    return { code: 'DG_UNAVAILABLE', message: text }
+  }
+
+  return { code: 'UNKNOWN', message: text }
+}
+
 /**
  * Read the pinned document and show exactly what would be sent. Without a pinned document there is nothing to
  * read (the card says so and the request carries project data only). With a mismatch no read is made at all.
@@ -259,9 +284,9 @@ export async function refreshPreview(): Promise<void> {
 
     noteBridgeOutcome(pinned.app, result.outcome)
     dispatch({ type: 'preview-failed', previewId, outcome: result.outcome })
-  } catch {
+  } catch (error) {
     if (currentKey() === key) {
-      dispatch({ type: 'preview-failed', previewId, outcome: { code: 'DG_UNAVAILABLE' } })
+      dispatch({ type: 'preview-failed', previewId, outcome: classifyPreviewError(error) })
     }
   }
 }

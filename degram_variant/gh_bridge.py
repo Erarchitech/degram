@@ -37,7 +37,11 @@ GH_APP = "grasshopper"
 # Mirror of CanvasBridgeCommands.ReadCommands (the Python side cannot import the C# constant).
 GH_READ_COMMANDS = frozenset({"get_canvas_context", "get_selection", "get_preview_status", "get_document_identity"})
 CONNECT_TIMEOUT_S = 2.0
-READ_TIMEOUT_S = 30.0
+READ_TIMEOUT_S = 30.0  # agent/tool reads
+# The context PREVIEW read (1301-19, G-14): one budget for the whole snapshot (identity + selection + canvas context),
+# below the renderer's preview RPC timeout (PREVIEW_RPC_TIMEOUT_MS = 45_000), so a busy canvas answers BUSY instead
+# of the RPC timing out first. Three sequential 20 s reads would still outlive the RPC, hence a shared budget.
+GH_PREVIEW_READ_TIMEOUT_S = 20.0
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MiB, counted in bytes
 
 _monotonic = time.monotonic  # patched by tests to simulate a listener that never answers
@@ -52,7 +56,8 @@ class GhBridgeClient:
     def _address(self) -> tuple[str, int]:
         return GH_HOST, self._port if self._port is not None else GH_PORT
 
-    def call(self, command: str, parameters: dict | None = None, *, cancel: CancelToken | None = None) -> Any:
+    def call(self, command: str, parameters: dict | None = None, *, cancel: CancelToken | None = None,
+             read_timeout_s: float | None = None) -> Any:
         if command not in GH_READ_COMMANDS:  # raises before any connection is opened
             raise BridgeError(DEGRAM_LOCKED, "GH_COMMAND_NOT_ALLOWED",
                               f"Grasshopper bridge command {command!r} is not a read command.")
@@ -64,7 +69,7 @@ class GhBridgeClient:
                 sock.sendall(request.encode("utf-8"))
             except OSError as exc:
                 raise BridgeError(BRIDGE_OFF, "CONNECTION_LOST", f"Grasshopper bridge connection failed: {exc}") from exc
-            line = self._read_line(sock, cancel)
+            line = self._read_line(sock, cancel, read_timeout_s)
         finally:
             try:
                 sock.close()
@@ -83,8 +88,8 @@ class GhBridgeClient:
         sock.settimeout(POLL_INTERVAL_S)
         return sock
 
-    def _read_line(self, sock: socket.socket, cancel: CancelToken | None) -> bytes:
-        deadline = _monotonic() + READ_TIMEOUT_S
+    def _read_line(self, sock: socket.socket, cancel: CancelToken | None, read_timeout_s: float | None = None) -> bytes:
+        deadline = _monotonic() + (READ_TIMEOUT_S if read_timeout_s is None else read_timeout_s)
         buffer = bytearray()
         while True:
             check(cancel)
@@ -161,11 +166,25 @@ class GhDocumentSource:
         return [self._row(identity)]
 
     def read_snapshot(self, pinned: dict[str, Any], scope: str, project: str,
-                      cancel: CancelToken | None = None) -> Snapshot:
+                      cancel: CancelToken | None = None, deadline_s: float | None = None) -> Snapshot:
         """Identity first, then the existing DG serializer (D-14/D-15): ``get_canvas_context`` filtered by
-        ``get_selection``. The pinned document is the only document that can answer."""
+        ``get_selection``. The pinned document is the only document that can answer. ``deadline_s`` bounds the whole
+        read (all three bridge calls share it); without it each call keeps the tool read timeout."""
         wanted = (pinned.get("identity") or {}).get("documentId")
-        identity = self.client.call("get_document_identity", {}, cancel=cancel)
+        end = None if deadline_s is None else _monotonic() + deadline_s
+        asked = {"n": 0}
+
+        def ask(command: str, parameters: dict) -> Any:
+            if end is None:
+                return self.client.call(command, parameters, cancel=cancel)
+            # The first call always gets the whole budget; later ones only what the earlier ones left.
+            left = deadline_s if asked["n"] == 0 else end - _monotonic()
+            asked["n"] += 1
+            if left <= 0:
+                raise BridgeError(BUSY, "NO_RESPONSE", "Grasshopper did not answer in time.")
+            return self.client.call(command, parameters, cancel=cancel, read_timeout_s=left)
+
+        identity = ask("get_document_identity", {})
         if not isinstance(identity, dict) or identity.get("documentId") != wanted:
             raise BridgeError(IDENTITY_MISMATCH, "DOCUMENT_ID_DIFFERS",
                               "The Grasshopper document answering is not the pinned document; nothing was read.")
@@ -173,13 +192,13 @@ class GhDocumentSource:
                     "path": identity.get("filePath") or None}
         selected: set[str] = set()
         if scope == "selection":
-            reply = self.client.call("get_selection", {}, cancel=cancel)
+            reply = ask("get_selection", {})
             guids = reply.get("selection") if isinstance(reply, dict) else None
             selected = {str(g).lower() for g in guids or []}
             if not selected:
                 return Snapshot(app=GH_APP, document=document, objects=[], params_key="inputParams", scope=scope,
                                 empty_selection=True, total_objects=0)
-        context = self.client.call("get_canvas_context", {"project": project}, cancel=cancel)
+        context = ask("get_canvas_context", {"project": project})
         if not isinstance(context, dict):
             raise BridgeError(SETUP_INCOMPLETE, "BRIDGE_PROTOCOL", "get_canvas_context returned no document.")
         if (context.get("definition") or {}).get("documentId") != wanted:

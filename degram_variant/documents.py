@@ -21,7 +21,7 @@ class DocumentSource(Protocol):
     def list_documents(self, cancel: CancelToken | None = None) -> list[dict[str, Any]]: ...
 
     def read_snapshot(self, pinned: dict[str, Any], scope: str, project: str,
-                      cancel: CancelToken | None = None) -> Snapshot: ...
+                      cancel: CancelToken | None = None, deadline_s: float | None = None) -> Snapshot: ...
 
 
 def _same_identity(app: str, a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -126,12 +126,17 @@ class DocumentsService:
             self._generation += 1
 
     # -- reads -----------------------------------------------------------------------------------
-    def read_snapshot(self, scope: str, project: str, cancel: CancelToken | None = None) -> Snapshot | None:
-        """The pinned document's snapshot, or None when nothing is pinned. The source re-checks the identity first."""
+    def read_snapshot(self, scope: str, project: str, cancel: CancelToken | None = None,
+                      deadline_s: float | None = None) -> Snapshot | None:
+        """The pinned document's snapshot, or None when nothing is pinned. The source re-checks the identity first.
+        ``deadline_s`` (the preview path) bounds the bridge wait; None keeps the source's own tool deadline."""
         pinned = self.pinned
         if pinned is None:
             return None
-        return self._sources[pinned["app"]].read_snapshot(pinned, scope, project, cancel)
+        source = self._sources[pinned["app"]]
+        if deadline_s is None:
+            return source.read_snapshot(pinned, scope, project, cancel)
+        return source.read_snapshot(pinned, scope, project, cancel, deadline_s=deadline_s)
 
     def reset(self) -> None:
         """Scope change or sign-out (D-08): forget the pinned document."""

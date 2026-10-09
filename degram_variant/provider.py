@@ -51,6 +51,15 @@ RELAY_ERROR_CODES = frozenset({
     "PROVIDER_UNAVAILABLE", "PROVIDER_ERROR", "CONTEXT_SCOPE_INVALID", "RELAY_BODY_TOO_LARGE"})
 _RELAY_EXTRA_FIELDS = ("reason", "retryAfter", "upstreamStatus")
 
+# A relay 401/403 that names no code of its own is still the relay refusing the delegated credential or the project
+# access, never a provider key problem: it maps to a named DeGram outcome so the stock auth/api_key surface (which
+# names the provider and offers key actions) is never reached (1301-19, G-4, DGCL-02).
+STATUS_OUTCOME_CODES = {401: "CREDENTIALS_INVALID", 403: "ACCESS_DENIED"}
+_STATUS_OUTCOME_MESSAGES = {
+    401: "the DG relay did not accept the delegated credential.",
+    403: "the DG relay denied access to this project.",
+}
+
 
 def _error_bodies(error: BaseException):
     """Candidate JSON bodies of an SDK status error and its cause chain."""
@@ -70,9 +79,24 @@ def _error_bodies(error: BaseException):
         current = current.__cause__ or current.__context__
 
 
+def _error_status(error: BaseException) -> int | None:
+    """The HTTP status of an SDK status error or of anything in its cause chain."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for holder in (current, getattr(current, "response", None)):
+            status = getattr(holder, "status_code", None)
+            if isinstance(status, int) and not isinstance(status, bool):
+                return status
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def relay_outcome(error: BaseException) -> dict[str, Any] | None:
     """The relay's named operational outcome behind an API error (``{"code", "message", "hint", "reason"?, ...}``), or
-    None when the error is not one of the relay's own answers."""
+    None when the error is not one of the relay's own answers. In variant degram a 401/403 that names no code maps to
+    CREDENTIALS_INVALID / ACCESS_DENIED."""
     for body in _error_bodies(error):
         for candidate in (body.get("detail"), body.get("error"), body):
             if isinstance(candidate, dict) and candidate.get("code") in RELAY_ERROR_CODES:
@@ -80,6 +104,11 @@ def relay_outcome(error: BaseException) -> dict[str, Any] | None:
                                        "hint": str(candidate.get("hint") or "").strip()}
                 out.update({k: candidate[k] for k in _RELAY_EXTRA_FIELDS if candidate.get(k) is not None})
                 return out
+    from .lockdown import is_degram
+
+    status = _error_status(error) if is_degram() else None
+    if status in STATUS_OUTCOME_CODES:
+        return {"code": STATUS_OUTCOME_CODES[status], "message": _STATUS_OUTCOME_MESSAGES[status], "hint": ""}
     return None
 
 
@@ -108,7 +137,8 @@ def named_outcome_copy(summary: str) -> str | None:
     mislabels a policy deny or a timeout. None outside variant degram or for any other summary."""
     from .lockdown import is_degram
 
-    if is_degram() and isinstance(summary, str) and summary.split(":", 1)[0] in RELAY_ERROR_CODES:
+    named = RELAY_ERROR_CODES | frozenset(STATUS_OUTCOME_CODES.values())
+    if is_degram() and isinstance(summary, str) and summary.split(":", 1)[0] in named:
         return summary
     return None
 
@@ -131,8 +161,12 @@ def terminal_verdict(error: BaseException) -> dict[str, Any] | None:
             return {"reason": FailoverReason.auth_permanent, "retryable": False,
                     "should_rotate_credential": False, "should_fallback": False}
         current = current.__cause__ or current.__context__
-    if relay_outcome(error) is not None:
+    outcome = relay_outcome(error)
+    if outcome is not None:
         from agent.error_classifier import FailoverReason
+        if outcome["code"] in STATUS_OUTCOME_CODES.values():
+            return {"reason": FailoverReason.auth_permanent, "retryable": False, "should_compress": False,
+                    "should_rotate_credential": False, "should_fallback": False}
         return {"reason": FailoverReason.format_error, "retryable": False, "should_compress": False,
                 "should_rotate_credential": False, "should_fallback": False}
     return None

@@ -9,8 +9,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { degramEn } from '@/degram/i18n'
 import { en } from '@/i18n/en'
 import type { ErrorCardCopy } from '@/i18n/types'
+import { $degramEnabled } from '@/store/degram-flag'
 import { $displayTimestamps } from '@/store/display-timestamps'
 
 import { stubThreadEnvironment } from '../test-utils'
@@ -51,6 +53,8 @@ stubThreadEnvironment()
 
 afterEach(() => {
   cleanup()
+  $degramEnabled.set(false)
+  delete (window as { hermesDesktop?: unknown }).hermesDesktop
   requestFreshSession.mockClear()
   startManualProviderOAuth.mockClear()
   requestModelMenuToggle.mockReset().mockReturnValue(true)
@@ -508,5 +512,91 @@ describe('message timeline timestamps', () => {
     )
 
     expect(stamps.filter(stamp => stamp === formatTimelineRange(startedAt, completedAt))).toHaveLength(1)
+  })
+})
+
+describe('variant degram: the failed-turn card (1301-19, G-4, DGCL-02)', () => {
+  // What 0.1.5 showed: provider "custom" rejected "your API key", with key, provider and diagnostics actions.
+  const relayRefusal = () =>
+    failedMessage(
+      {
+        apiKeyEnv: 'OPENAI_API_KEY',
+        authKind: 'api_key',
+        code: 'auth',
+        layer: 'auth',
+        provider: 'custom',
+        providerLabel: 'custom',
+        retryable: false
+      },
+      'Authentication failed: CREDENTIALS_INVALID: custom rejected your API key.'
+    )
+
+  const stockActions = [
+    'Update API key',
+    'Switch provider',
+    'Open logs',
+    'Send diagnostics',
+    'Copy error details'
+  ] as const
+
+  const showLocalFolders = () => {
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = { logsRoot: async () => 'C:/logs' }
+  }
+
+  it('headlines the DeGram outcome sentence and shows no provider, key or diagnostics surface', async () => {
+    $degramEnabled.set(true)
+    showLocalFolders()
+
+    render(
+      <MemoryRouter>
+        <Harness assistant={relayRefusal()} />
+      </MemoryRouter>
+    )
+
+    const headline = await screen.findByTestId('degram-error-headline')
+
+    expect(headline.textContent).toBe(degramEn.errors.credentialsRefresh)
+
+    for (const name of stockActions) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull()
+    }
+
+    expect(screen.queryByRole('button', { name: /Sign in to .* again/ })).toBeNull()
+
+    const card = screen.getByRole('alert')
+
+    expect(card.textContent ?? '').not.toMatch(/API key|provider|diagnostics|custom/i)
+    expect(card.querySelector('details')).toBeNull()
+  })
+
+  it('reads an unnamed failure as the model-unavailable sentence, not the raw text', async () => {
+    $degramEnabled.set(true)
+
+    render(
+      <MemoryRouter>
+        <Harness assistant={failedMessage({ code: 'unknown', layer: 'provider', retryable: true })} />
+      </MemoryRouter>
+    )
+
+    expect((await screen.findByTestId('degram-error-headline')).textContent).toBe(degramEn.errors.modelUnavailable)
+    expect(screen.getByRole('alert').textContent).not.toMatch(/HTTP 400|raw provider body/)
+  })
+
+  it('leaves the stock card and every action untouched outside the DeGram variant', async () => {
+    showLocalFolders()
+
+    render(
+      <MemoryRouter>
+        <Harness assistant={relayRefusal()} />
+      </MemoryRouter>
+    )
+
+    await screen.findByText(copy(en.assistant.thread.errorAuthKinds.api_key.title, 'custom'))
+
+    for (const name of stockActions) {
+      expect(screen.getByRole('button', { name }), name).toBeTruthy()
+    }
+
+    expect(screen.queryByTestId('degram-error-headline')).toBeNull()
   })
 })

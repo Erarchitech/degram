@@ -1,4 +1,7 @@
 import { isSessionNotOwnedError } from '@/app/session/hooks/use-prompt-actions/utils'
+import { $documents } from '@/degram/documents-store'
+import { degramFailureHeadline } from '@/degram/outcome-copy'
+import { $degram } from '@/degram/use-degram-state'
 import { runtimeTranslations, translateNow } from '@/i18n'
 import { textPart } from '@/lib/chat-messages'
 import { coerceGatewayText } from '@/lib/chat-runtime'
@@ -9,6 +12,7 @@ import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgent
 import { clearSettledClarifyRequest } from '@/store/clarify'
 import { reconcileSessionCompacting, setSessionCompacting, takeCompressDeferred } from '@/store/compaction'
 import { refreshBackgroundProcesses } from '@/store/composer-status'
+import { $degramEnabled } from '@/store/degram-flag'
 import { applyGoalStatusText } from '@/store/goals'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { isDiskFullErrorMessage, notify, notifyError } from '@/store/notifications'
@@ -304,7 +308,18 @@ export function handleStatusEvent(ctx: GatewayEventContext): boolean {
     // burying it under a generic "couldn't finish" gloss would hide the one
     // instruction the user needs.
     const card = surface ? errorCardText(runtimeTranslations().assistant.thread, surface) : null
-    const toastMessage = card ? `${card.title}. ${card.body}` : errorMessage
+    // Variant degram (1301-19, G-4): the toast carries the same DeGram sentence as the card, never the stock gloss or
+    // the raw text (which can name a provider or a key).
+    const degramToast = $degramEnabled.get()
+
+    const toastMessage = degramToast
+      ? degramFailureHeadline(runtimeTranslations().degram, errorMessage, {
+          document: $documents.get().pinned?.name,
+          project: $degram.get().state?.scope.project ?? undefined
+        })
+      : card
+        ? `${card.title}. ${card.body}`
+        : errorMessage
 
     // A turn that errors out has also ended — drop any open blocking prompt
     // for this session so an approval/sudo/secret overlay can't linger past
@@ -344,8 +359,8 @@ export function handleStatusEvent(ctx: GatewayEventContext): boolean {
       // No Retry action: assistant-ui's reload is per-thread, and for the
       // codes recovered above a retry would fail identically anyway.
       notify({
-        detail: surface ? errorMessage : undefined,
-        id: `gateway-error:${errorMessage}`,
+        detail: surface && !degramToast ? errorMessage : undefined,
+        id: `gateway-error:${degramToast ? toastMessage : errorMessage}`,
         kind: 'error',
         message: toastMessage,
         title: translateNow('assistant.thread.errorToastTitle')

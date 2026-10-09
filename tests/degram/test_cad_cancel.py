@@ -116,12 +116,12 @@ class TestCancelBridgeReads:
 
 
 class TestDeadlinesAndNoRetry:
-    def test_a_gh_read_with_no_answer_for_30_seconds_is_busy(self, rt, gh, monkeypatch):
+    def test_a_gh_preview_read_with_no_answer_is_busy_within_its_deadline(self, rt, gh, monkeypatch):
         rt.documents.pin(**GH_PIN)
         gh.silent = True
         gh.requests.clear()
         before = gh.connections
-        # Every clock read advances 31 s, so each read's deadline (start + 30 s) has
+        # Every clock read advances 31 s, so each read's deadline (start + 20 s preview budget) has
         # passed by its next poll regardless of when the fake records the request.
         ticks = {"n": 0}
 
@@ -146,9 +146,17 @@ class TestDeadlinesAndNoRetry:
         assert gh.connections == before, "the refused port is not the fake listener"
 
     def test_the_deadline_constants_are_the_plan_values(self):
-        from degram_variant import revit_bridge
+        """1301-19, G-14: tool calls keep 40 s / 30 s; the preview path is shorter than the renderer's 45 s RPC."""
+        from degram_variant import context_composer, dg_client, revit_bridge
         assert gh_bridge.READ_TIMEOUT_S == 30.0 and gh_bridge.CONNECT_TIMEOUT_S == 2.0
         assert revit_bridge.REVIT_DEADLINE_S == 40.0
+        assert revit_bridge.REVIT_PREVIEW_DEADLINE_S == 20.0
+        assert gh_bridge.GH_PREVIEW_READ_TIMEOUT_S == 20.0
+        assert context_composer.PREVIEW_RULES_READ_TIMEOUT_S == 15.0
+        preview_rpc_timeout_s = 45.0  # PREVIEW_RPC_TIMEOUT_MS in ui: use-degram-gateway.ts
+        for bridge in context_composer.PREVIEW_BRIDGE_DEADLINE_S.values():
+            worst = bridge + dg_client.CONNECT_TIMEOUT_S + context_composer.PREVIEW_RULES_READ_TIMEOUT_S
+            assert worst < preview_rpc_timeout_s, worst
 
 
 def _arm_relay(relay):

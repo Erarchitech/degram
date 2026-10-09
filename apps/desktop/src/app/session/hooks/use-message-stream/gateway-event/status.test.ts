@@ -5,6 +5,8 @@
 // where retrying reproduces the failure.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { degramEn } from '@/degram/i18n'
+import { $degramEnabled } from '@/store/degram-flag'
 import { $notifications } from '@/store/notifications'
 import { requestDesktopOnboarding } from '@/store/onboarding'
 
@@ -46,6 +48,7 @@ function errorContext(message: string, code?: string) {
 }
 
 afterEach(() => {
+  $degramEnabled.set(false)
   $notifications.set([])
   vi.mocked(requestDesktopOnboarding).mockClear()
 })
@@ -111,5 +114,31 @@ describe('gateway `error` event → error card + toast', () => {
     const toast = $notifications.get()[0]
     expect(toast.message).toBe(serverCopy)
     expect(toast.detail).toBeUndefined()
+  })
+})
+
+describe('variant degram: the error toast reads as DeGram copy (1301-19, G-4)', () => {
+  it('names the outcome in DeGram words, with no provider, key or raw detail', () => {
+    $degramEnabled.set(true)
+
+    const { ctx } = errorContext('Authentication failed: CREDENTIALS_INVALID: custom rejected your API key.')
+
+    handleStatusEvent(ctx)
+
+    const toast = $notifications.get()[0]
+
+    expect(toast.message).toBe(degramEn.errors.credentialsRefresh)
+    expect(toast.message).not.toMatch(/custom|API key|provider|diagnostics/i)
+    expect(toast.detail).toBeUndefined()
+  })
+
+  it('reads an unnamed failure as the model-unavailable sentence, never the raw text', () => {
+    $degramEnabled.set(true)
+
+    const { ctx } = errorContext('HTTP 502: custom provider exploded')
+
+    handleStatusEvent(ctx)
+
+    expect($notifications.get()[0].message).toBe(degramEn.errors.modelUnavailable)
   })
 })

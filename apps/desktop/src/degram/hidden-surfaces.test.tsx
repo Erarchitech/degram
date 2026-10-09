@@ -48,6 +48,19 @@ describe('HIDDEN_SURFACES gate (DGCL-02)', () => {
     }
   })
 
+  it('lists the failed-turn card actions (1301-19, G-4)', () => {
+    for (const id of [
+      'stock-error-update-key',
+      'stock-error-switch-provider',
+      'stock-error-sign-in',
+      'stock-error-open-logs',
+      'stock-error-send-diagnostics',
+      'stock-error-copy-details'
+    ] as const) {
+      expect(HIDDEN_SURFACES).toContain(id)
+    }
+  })
+
   it('hides every listed surface in variant degram and none elsewhere', () => {
     $degramEnabled.set(false)
     expect(HIDDEN_SURFACES.filter(id => isSurfaceHidden(id))).toEqual([])
@@ -113,7 +126,13 @@ describe('upstream entry points consult the gate', () => {
     ['fallback-models', ['app/settings/fallback-models-field.tsx']],
     ['update-status', ['app/shell/hooks/use-statusbar-items.tsx']],
     ['remote-setup', ['app/shell/hooks/use-statusbar-items.tsx', 'app/chat/sidebar/local-device-switch.tsx']],
-    ['stock-error-retry', ['components/assistant-ui/thread/assistant-message.tsx']]
+    ['stock-error-retry', ['components/assistant-ui/thread/assistant-message.tsx']],
+    ['stock-error-update-key', ['components/assistant-ui/thread/assistant-message.tsx']],
+    ['stock-error-switch-provider', ['components/assistant-ui/thread/assistant-message.tsx']],
+    ['stock-error-sign-in', ['components/assistant-ui/thread/assistant-message.tsx']],
+    ['stock-error-open-logs', ['components/assistant-ui/thread/assistant-message.tsx']],
+    ['stock-error-send-diagnostics', ['components/assistant-ui/thread/assistant-message.tsx']],
+    ['stock-error-copy-details', ['components/assistant-ui/thread/assistant-message.tsx']]
   ]
 
   it.each(SITES)('%s', (id, files) => {

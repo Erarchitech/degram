@@ -17,7 +17,8 @@ from .credentials import DegramCredentials, DegramCredentialsError, credentials 
 from .outcomes import ACCESS_DENIED, DG_UNAVAILABLE, BridgeError
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-TIMEOUT = httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
+CONNECT_TIMEOUT_S = 5.0
+TIMEOUT = httpx.Timeout(connect=CONNECT_TIMEOUT_S, read=20.0, write=5.0, pool=5.0)
 READ_ROUTES = ("graph", "rules")  # the whole surface of this client
 
 
@@ -25,7 +26,7 @@ class DgClient:
     def __init__(self, store: DegramCredentials | None = None) -> None:
         self._store = store or _credentials
 
-    def _get(self, route: str, cancel: CancelToken | None, query: str = "") -> Any:
+    def _get(self, route: str, cancel: CancelToken | None, query: str = "", read_timeout_s: float | None = None) -> Any:
         if route not in READ_ROUTES:
             raise BridgeError(DG_UNAVAILABLE, "ROUTE_NOT_ALLOWED", f"DG route {route!r} is not readable by DeGram.")
         check(cancel)
@@ -36,7 +37,9 @@ class DgClient:
             raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
         url = f"{info.relay_base_url}/{route}/{quote(info.project, safe='')}{query}"
         try:
-            with httpx.Client(timeout=TIMEOUT, follow_redirects=False) as client:
+            timeout = TIMEOUT if read_timeout_s is None else httpx.Timeout(
+                connect=CONNECT_TIMEOUT_S, read=read_timeout_s, write=5.0, pool=5.0)
+            with httpx.Client(timeout=timeout, follow_redirects=False) as client:
                 with client.stream("GET", url, headers={"Authorization": f"Bearer {token}",
                                                          "Accept": "application/json"}) as response:
                     status = response.status_code
@@ -62,8 +65,8 @@ class DgClient:
         except ValueError as exc:
             raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG backend answered with malformed JSON.") from exc
 
-    def get_rules(self, cancel: CancelToken | None = None) -> list[dict[str, Any]]:
-        data = self._get("rules", cancel)
+    def get_rules(self, cancel: CancelToken | None = None, read_timeout_s: float | None = None) -> list[dict[str, Any]]:
+        data = self._get("rules", cancel, read_timeout_s=read_timeout_s)
         rules = data.get("rules") if isinstance(data, dict) else None
         if not isinstance(rules, list):
             raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG rules answer has no rules list.")

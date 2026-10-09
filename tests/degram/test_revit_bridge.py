@@ -154,6 +154,46 @@ class TestRevitDocuments:
         assert len([c for c in adapter.calls() if c["tool"] == "list_open_documents"]) == 1, "no retry"
 
 
+class TestRevitPreviewDeadline:
+    """1301-19, G-14: a context preview answers BUSY at REVIT_PREVIEW_DEADLINE_S, below the preview RPC timeout;
+    agent tool calls keep REVIT_DEADLINE_S."""
+
+    def test_a_hung_adapter_answers_busy_at_the_preview_deadline_not_the_tool_deadline(self, rt, adapter, monkeypatch):
+        from degram_variant import context_composer
+        rt.documents.pin(**REVIT_PIN)
+        adapter.mode(mode="hang")
+        monkeypatch.setattr(revit_bridge, "REVIT_DEADLINE_S", 30.0)  # would fail the test if the preview used it
+        monkeypatch.setattr(context_composer, "PREVIEW_BRIDGE_DEADLINE_S", {"revit": 0.6, "grasshopper": 0.6})
+        started = time.monotonic()
+        view = rt.composer.preview("selection")
+        assert view["status"] == "error" and view["code"] == "BUSY" and view["bridgeState"] == "busy"
+        assert time.monotonic() - started < 10
+        assert len([c for c in adapter.calls() if c["tool"] == "get_selection_snapshot"]) == 1, "no retry"
+
+    def test_a_tool_call_still_uses_the_tool_deadline(self, rt, adapter, monkeypatch):
+        from degram_variant import context_composer
+        adapter.mode(mode="hang")
+        monkeypatch.setattr(revit_bridge, "REVIT_DEADLINE_S", 0.6)
+        monkeypatch.setattr(context_composer, "PREVIEW_BRIDGE_DEADLINE_S", {"revit": 30.0, "grasshopper": 30.0})
+        started = time.monotonic()
+        assert _group(rt.documents.list(), "revit")["code"] == "BUSY"
+        assert time.monotonic() - started < 10
+
+    def test_read_snapshot_hands_its_deadline_to_the_bounded_run(self, monkeypatch):
+        seen = {}
+
+        class _Client:
+            def call(self, tool, arguments=None, *, cancel=None, deadline_s=None):
+                seen["deadline_s"] = deadline_s
+                return {"elements": [], "emptySelection": True}
+
+        source = revit_bridge.RevitDocumentSource(client=_Client())
+        source.read_snapshot(REVIT_PIN, "selection", "tower", deadline_s=20.0)
+        assert seen["deadline_s"] == 20.0
+        source.read_snapshot(REVIT_PIN, "selection", "tower")
+        assert seen["deadline_s"] is None, "without a deadline the bounded run keeps REVIT_DEADLINE_S"
+
+
 class TestRevitSnapshot:
     def test_preview_uses_the_identity_pinned_snapshot_tool(self, rt, adapter):
         rt.documents.pin(**REVIT_PIN)

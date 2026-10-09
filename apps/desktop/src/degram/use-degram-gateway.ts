@@ -316,6 +316,13 @@ export async function unpinDocument(): Promise<void> {
   await request<unknown>('degram.documents.pin', { app: null })
 }
 
+/**
+ * How long the renderer waits for `degram.context.preview`. The agent bounds the bridge read at 20 s (Revit or
+ * Grasshopper) and the DG rules read at 5 s connect + 15 s read, 40 s in the worst case, so a busy host answers with
+ * its own BUSY outcome before this timeout; the stock 30 s default fired first (1301-19, G-14).
+ */
+export const PREVIEW_RPC_TIMEOUT_MS = 45_000
+
 export type PreviewResult = { outcome: OutcomeInfo; preview: null } | { outcome: null; preview: ContextPreview }
 
 /** Read the pinned document and get the exact payload. `previewId` is chosen by the caller so a cancel can name it. */
@@ -324,7 +331,7 @@ export async function previewContext(
   previewId: string,
   project: string
 ): Promise<PreviewResult> {
-  const raw = await request<unknown>('degram.context.preview', { scope, previewId })
+  const raw = await request<unknown>('degram.context.preview', { scope, previewId }, PREVIEW_RPC_TIMEOUT_MS)
   const preview = parsePreview(raw, project)
 
   if (preview) {

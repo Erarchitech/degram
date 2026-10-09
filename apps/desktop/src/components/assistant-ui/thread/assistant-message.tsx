@@ -38,8 +38,11 @@ import { formatElapsed } from '@/components/chat/activity-timer'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
 import { Codicon } from '@/components/ui/codicon'
 import { CopyButton } from '@/components/ui/copy-button'
+import { useDocuments } from '@/degram/documents-store'
 import { isSurfaceHidden } from '@/degram/hidden-surfaces'
 import { InterruptedBadge } from '@/degram/interrupted-badge'
+import { degramFailureHeadline } from '@/degram/outcome-copy'
+import { useDegram } from '@/degram/use-degram-state'
 import { useI18n } from '@/i18n'
 import {
   errorRecoveryPlan,
@@ -69,6 +72,7 @@ import { markAssistantIdSpoken } from '@/lib/spoken-reply'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
+import { $degramEnabled } from '@/store/degram-flag'
 import { DESKTOP_BUTTON_ACTIONS, recordAction } from '@/store/desktop-metrics'
 import { openFreeTierSignIn } from '@/store/free-tier-sign-in'
 import { notifyError } from '@/store/notifications'
@@ -597,6 +601,23 @@ const ErrorCardHeadline: FC = () => {
   const { t } = useI18n()
   const surface = useErrorSurface()
   const errorText = useErrorText()
+  const degramEnabled = useStore($degramEnabled)
+  const documents = useDocuments()
+  const degram = useDegram()
+
+  // Variant degram: the failure reads as DeGram's own sentence for its outcome code. The stock card names the
+  // provider and the key, and its raw text can carry both, so neither the card copy nor the raw "Details" show.
+  if (degramEnabled) {
+    return (
+      <div data-testid="degram-error-headline">
+        {degramFailureHeadline(t.degram, errorText, {
+          document: documents.pinned?.name,
+          project: degram.state?.scope.project ?? undefined
+        })}
+      </div>
+    )
+  }
+
   const { body, title } = errorCardText(t.assistant.thread, surface)
 
   return (
@@ -845,6 +866,17 @@ const ErrorRecoveryActions: FC = () => {
   const plan = errorRecoveryPlan(surface)
   // Variant degram: the banner above the composer owns the one manual retry (it re-sends with the context).
   const retryShown = plan.retry && !isSurfaceHidden('stock-error-retry')
+  // Variant degram (1301-19, G-4): the card offers no provider, key, log or diagnostics action. Every one is gated
+  // by its own hidden-surface id; the model picker and free tier reuse the ids that already hide their doors.
+  const showChooseModel = plan.chooseModel && !isSurfaceHidden('model-picker-overlay')
+  const showSignInAgain = plan.signInAgain && isOAuthReauthSurface(surface) && !isSurfaceHidden('stock-error-sign-in')
+  const showSignInFreeTier = plan.signInFreeTier && !isSurfaceHidden('free-tier')
+  const showUpdateApiKey = plan.updateApiKey && inRouter && !isSurfaceHidden('stock-error-update-key')
+  const showOpenHermesFolder = plan.openHermesFolder && !isSurfaceHidden('stock-error-open-logs')
+  const showSwitchProvider = plan.switchProvider && inRouter && !isSurfaceHidden('stock-error-switch-provider')
+  const showOpenLogs = !isSurfaceHidden('stock-error-open-logs')
+  const showSendDiagnostics = !isSurfaceHidden('stock-error-send-diagnostics')
+  const showCopyDetails = !isSurfaceHidden('stock-error-copy-details')
 
   // An expired/revoked OAuth grant (HTTP 401 on nous / openai-codex / ...):
   // the one-click fix is re-running that provider's sign-in, which the
@@ -939,7 +971,7 @@ const ErrorRecoveryActions: FC = () => {
     <div className="flex flex-wrap items-center gap-1.5">
       {plan.editMessage && <EditPreviousMessageAction label={copy.editMessage} />}
       {plan.compress && <CompressConversationAction label={copy.errorCompressConversation} />}
-      {plan.chooseModel && (
+      {showChooseModel && (
         <button className="aui-error-action" onClick={chooseModel} type="button">
           {copy.errorChooseModel}
         </button>
@@ -949,26 +981,26 @@ const ErrorRecoveryActions: FC = () => {
           {copy.errorStartNewSession}
         </button>
       )}
-      {plan.signInAgain && isOAuthReauthSurface(surface) && (
+      {showSignInAgain && isOAuthReauthSurface(surface) && (
         <button className="aui-error-action" onClick={signInAgain} type="button">
           <KeyRound className="size-3" />
           {copy.errorSignInAgain(surface.providerLabel || surface.provider)}
         </button>
       )}
-      {plan.signInFreeTier && (
+      {showSignInFreeTier && (
         <button className="aui-error-action" onClick={signInFreeTier} type="button">
           <KeyRound className="size-3" />
           {copy.errorSignInFreeTier}
         </button>
       )}
-      {plan.updateApiKey && inRouter && (
+      {showUpdateApiKey && (
         <SettingsLinkAction
           icon={<KeyRound className="size-3" />}
           label={copy.errorUpdateApiKey}
           to={updateApiKeyRoute(surface)}
         />
       )}
-      {plan.openHermesFolder && localFolders && (
+      {showOpenHermesFolder && localFolders && (
         <button className="aui-error-action" onClick={() => void openHermesFolder()} type="button">
           {copy.errorOpenHermesFolder}
         </button>
@@ -994,22 +1026,26 @@ const ErrorRecoveryActions: FC = () => {
         </span>
       )}
       {retryShown && surface?.resetsAt !== undefined && <ScheduledRetryAction resetsAt={surface.resetsAt} />}
-      {plan.switchProvider && inRouter && <SwitchProviderAction label={copy.errorSwitchProvider} />}
-      {localFolders && (
+      {showSwitchProvider && <SwitchProviderAction label={copy.errorSwitchProvider} />}
+      {showOpenLogs && localFolders && (
         <button className="aui-error-action" onClick={() => void openLogs()} type="button">
           {remoteConnection ? copy.errorOpenDesktopLogs : copy.errorOpenLogs}
         </button>
       )}
-      <button className="aui-error-action" onClick={() => requestSendDiagnostics(diagnosticsText())} type="button">
-        <Upload className="size-3" />
-        {copy.errorSendDiagnostics}
-      </button>
-      <CopyButton
-        appearance="inline"
-        className="aui-error-action"
-        label={copy.errorCopyDiagnostics}
-        text={diagnosticsText}
-      />
+      {showSendDiagnostics && (
+        <button className="aui-error-action" onClick={() => requestSendDiagnostics(diagnosticsText())} type="button">
+          <Upload className="size-3" />
+          {copy.errorSendDiagnostics}
+        </button>
+      )}
+      {showCopyDetails && (
+        <CopyButton
+          appearance="inline"
+          className="aui-error-action"
+          label={copy.errorCopyDiagnostics}
+          text={diagnosticsText}
+        />
+      )}
     </div>
   )
 }

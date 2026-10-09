@@ -30,6 +30,7 @@ import { InterruptedBadge } from './interrupted-badge'
 import { copyKeyForOutcome, failureSentence, FORWARDED_TO_MAIN, OUTCOME_CODES, parseFailureText } from './outcome-copy'
 import {
   $lifecycle,
+  classifyPreviewError,
   composerGate,
   handleTurnEvent,
   markSent,
@@ -41,7 +42,7 @@ import {
 } from './request-lifecycle'
 import { $signOutPending, DegramSignOutConfirm, requestDegramSignOut } from './sign-out-confirm'
 import { install, makeState, withActions } from './test-harness'
-import { DegramOutcomeError, setDegramGatewayForTests } from './use-degram-gateway'
+import { DegramOutcomeError, PREVIEW_RPC_TIMEOUT_MS, setDegramGatewayForTests } from './use-degram-gateway'
 import { resetDegramStore } from './use-degram-state'
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1492,5 +1493,85 @@ describe('stock composer seams (variant degram, one line each)', () => {
     expect(src('app/session/hooks/use-prompt-actions/submit.ts')).not.toMatch(
       /requestGateway<PromptSubmitResult>\(\s*'prompt\.submit'/
     )
+  })
+})
+
+describe('preview failures name their cause (1301-19, G-14)', () => {
+  it('gives the preview RPC more time than the agent needs to answer BUSY itself', async () => {
+    $degramEnabled.set(true)
+    await readyHarness()
+
+    const gw = fakeGateway(ghHandlers())
+
+    render(withActions(<ContextCard />))
+    await pinGh()
+    await screen.findByText(/2 objects/)
+
+    const call = gw.request.mock.calls.find(c => c[0] === 'degram.context.preview') as unknown as unknown[]
+
+    expect(call[2]).toBe(PREVIEW_RPC_TIMEOUT_MS)
+    // The agent bounds a bridge read at 20 s and the rules read at 5 + 15 s: 40 s, below the RPC timeout.
+    expect(PREVIEW_RPC_TIMEOUT_MS).toBe(45_000)
+  })
+
+  it('classifies the exception a preview RPC rejects with', () => {
+    expect(classifyPreviewError(new Error('request timed out after 45s: degram.context.preview'))).toEqual({
+      code: 'PREVIEW_TIMEOUT',
+      message: 'PREVIEW_TIMEOUT: request timed out after 45s'
+    })
+    expect(classifyPreviewError(new Error('gateway not connected')).code).toBe('DG_UNAVAILABLE')
+    expect(classifyPreviewError(new Error('WebSocket connection closed')).code).toBe('DG_UNAVAILABLE')
+    expect(classifyPreviewError(new Error('{"code":4400}')).code).toBe('UNKNOWN')
+    expect(classifyPreviewError('boom').code).toBe('UNKNOWN')
+  })
+
+  it('a preview RPC that times out reads as a timeout with its seconds, not as an unreachable DG', async () => {
+    $degramEnabled.set(true)
+    await readyHarness()
+    fakeGateway(
+      ghHandlers({
+        'degram.context.preview': () => {
+          throw new Error('request timed out after 45s: degram.context.preview')
+        }
+      })
+    )
+
+    render(withActions(<ContextCard />))
+    await pinGh()
+
+    expect(await screen.findByText(/No answer within 45 s/)).toBeTruthy()
+    expect(screen.queryByText(/can't be reached/)).toBeNull()
+  })
+
+  it('a dropped gateway connection still reads as an unreachable DG', async () => {
+    $degramEnabled.set(true)
+    await readyHarness()
+    fakeGateway(
+      ghHandlers({
+        'degram.context.preview': () => {
+          throw new Error('gateway not connected')
+        }
+      })
+    )
+
+    render(withActions(<ContextCard />))
+    await pinGh()
+
+    expect(await screen.findByText(/can't be reached/)).toBeTruthy()
+  })
+
+  it('a BUSY preview outcome renders the Revit and the Grasshopper busy copy', async () => {
+    $degramEnabled.set(true)
+    await readyHarness()
+    fakeGateway(
+      ghHandlers({
+        'degram.context.preview': () => ({ status: 'error', code: 'BUSY', bridgeState: 'busy', message: 'no answer' })
+      })
+    )
+
+    render(withActions(<ContextCard />))
+    await pinGh()
+
+    expect(await screen.findByText(/Grasshopper is busy|Revit is busy/)).toBeTruthy()
   })
 })

@@ -155,3 +155,43 @@ class TestVocabulary:
         block = text.split("degram-outcomes:codes:start -->", 1)[1].split("<!-- degram-outcomes:codes:end", 1)[0]
         closed = {line.strip() for line in block.splitlines() if line.strip() and not line.startswith("```")}
         assert EMITTED_CODES <= closed, sorted(EMITTED_CODES - closed)
+
+
+class TestPreviewBudget:
+    """1301-19, G-14: the preview snapshot shares ONE read budget across its three bridge calls."""
+
+    class _Client:
+        def __init__(self, clock, spend):
+            self.clock, self.spend, self.timeouts = clock, spend, []
+
+        def call(self, command, parameters=None, *, cancel=None, read_timeout_s=None):
+            self.timeouts.append((command, read_timeout_s))
+            self.clock["now"] += self.spend
+            if command == "get_document_identity":
+                return gh_identity()
+            if command == "get_selection":
+                return {"selection": ["a"]}
+            return {"definition": {"documentId": gh_identity()["documentId"]}, "nodes": []}
+
+    def _source(self, monkeypatch, spend):
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(gh_bridge, "_monotonic", lambda: clock["now"])
+        client = self._Client(clock, spend)
+        return gh_bridge.GhDocumentSource(client=client), client
+
+    def test_each_call_gets_what_the_earlier_calls_left(self, monkeypatch):
+        source, client = self._source(monkeypatch, spend=6.0)
+        source.read_snapshot(GH_PIN, "selection", "tower", deadline_s=20.0)
+        assert [t for _, t in client.timeouts] == [20.0, 14.0, 8.0]
+
+    def test_an_exhausted_budget_is_busy_before_the_next_call(self, monkeypatch):
+        source, client = self._source(monkeypatch, spend=11.0)
+        with pytest.raises(BridgeError) as exc:
+            source.read_snapshot(GH_PIN, "selection", "tower", deadline_s=20.0)
+        assert exc.value.code == "BUSY"
+        assert [c for c, _ in client.timeouts] == ["get_document_identity", "get_selection"], "no third call"
+
+    def test_without_a_deadline_the_tool_read_timeout_is_kept(self, monkeypatch):
+        source, client = self._source(monkeypatch, spend=6.0)
+        source.read_snapshot(GH_PIN, "selection", "tower")
+        assert [t for _, t in client.timeouts] == [None, None, None]

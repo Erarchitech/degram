@@ -341,3 +341,43 @@ class TestRpc:
         assert rt.documents.pinned is None
         with pytest.raises(ContextError):
             rt.composer.prepare_send(view["previewId"], "hi")
+
+
+class TestPreviewBudget:
+    """1301-19, G-14: the preview reads the bridge and the DG rules with bounded timeouts (worst case 40 s < 45 s)."""
+
+    def test_the_preview_passes_its_deadlines_down(self, rt, monkeypatch):
+        from degram_variant import context_composer
+        seen = {}
+        real_rules = rt.composer._dg.get_rules
+        real_snapshot = rt.documents.read_snapshot
+
+        def rules(cancel=None, read_timeout_s=None):
+            seen["rules"] = read_timeout_s
+            return real_rules(cancel, read_timeout_s=read_timeout_s)
+
+        def snapshot(scope, project, cancel=None, deadline_s=None):
+            seen["bridge"] = deadline_s
+            return real_snapshot(scope, project, cancel, deadline_s=deadline_s)
+
+        monkeypatch.setattr(rt.composer._dg, "get_rules", rules)
+        monkeypatch.setattr(rt.documents, "read_snapshot", snapshot)
+        rt.documents.pin(**GH_PIN)
+        assert rt.composer.preview("selection")["status"] == "ok"
+        assert seen == {"rules": context_composer.PREVIEW_RULES_READ_TIMEOUT_S, "bridge": 20.0}
+
+    def test_a_dg_that_is_slow_to_answer_is_dg_unavailable_within_the_rules_budget(self, rt, dg, monkeypatch):
+        """The rules read uses the short timeout; the preview then lists rules as missing instead of timing out."""
+        import httpx
+        from degram_variant import dg_client
+        seen = {}
+        real = httpx.Client
+
+        def client(*args, timeout=None, **kwargs):
+            seen["timeout"] = timeout
+            return real(*args, timeout=timeout, **kwargs)
+
+        monkeypatch.setattr(dg_client.httpx, "Client", client)
+        rt.documents.pin(**GH_PIN)
+        rt.composer.preview("selection")
+        assert seen["timeout"].read == 15.0 and seen["timeout"].connect == 5.0

@@ -188,7 +188,8 @@ _LONG_HANDLERS = frozenset({
     "session.resume", "session.save", "session.workspace.move", "shell.exec", "skills.manage", "slash.exec",
     "command.dispatch",  # /goal draft invokes the auxiliary model; never block the RPC reader
     "shared_metrics.set",  # consent reconcile waits on the metrics store's write lock
-    # variant degram: bridge reads wait up to 30 s on a CAD host; degram.context.cancel stays inline so it can land meanwhile
+    # variant degram: a context preview waits at most 20 s for the CAD bridge + 5 s DG connect + 15 s rules read = 40 s, under
+    # the renderer's 45 s preview RPC timeout (1301-19); degram.context.cancel stays inline so it can land meanwhile
     "degram.documents.list", "degram.documents.pin", "degram.context.preview",
 })
 

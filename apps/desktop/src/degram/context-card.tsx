@@ -24,7 +24,7 @@ import { useI18n } from '@/i18n'
 
 import { scopeKeyOf, useDocuments } from './documents-store'
 import { type DegramCopy } from './i18n'
-import { failureSentence, isRetryable } from './outcome-copy'
+import { failureSentence, isRetryable, parseFailureText } from './outcome-copy'
 import {
   $lifecycle,
   type FailureInfo,
@@ -164,7 +164,13 @@ export function ContextCard() {
   const readError = previewError
     ? (failureSentence(
         copy,
-        { code: previewError.code, reason: previewError.reason, message: previewError.message ?? '' },
+        {
+          code: previewError.code,
+          reason: previewError.reason,
+          message: previewError.message ?? '',
+          // «No answer within N s»: the seconds the failing request itself reports (PREVIEW_TIMEOUT).
+          seconds: parseFailureText(previewError.message ?? '').seconds
+        },
         { app: pinned?.app, document: pinned?.name, reason: previewError.reason }
       ) ?? copy.errors.unknown)
     : null

@@ -49,7 +49,10 @@ const EXTRA_CODES = [
   'RELAY_BODY_TOO_LARGE',
   // Renderer-side refusal (plan 1301-18): the chat's route is not on the ready scope's profile. The composer is
   // blocked before it can show, so no closer copy exists.
-  'ROUTE_MISMATCH'
+  'ROUTE_MISMATCH',
+  // Renderer-side (plan 1301-19): the preview RPC itself got no answer in time (the gateway, not the bridge, went
+  // quiet). A busy bridge answers BUSY first; this names the case where nothing answered at all.
+  'PREVIEW_TIMEOUT'
 ] as const
 
 /** Codes main verifies against DG and acts on (re-mint, end the session, revoke): forwarded by `reportOutcome`. */
@@ -122,7 +125,8 @@ const CODE_COPY: Record<OutcomeCode | (typeof EXTRA_CODES)[number], CopyKey> = {
   DELEGATED_SESSION_ENDED: 'errors.sessionEnded',
   CONTEXT_SCOPE_INVALID: 'errors.unknown',
   RELAY_BODY_TOO_LARGE: 'errors.unknown',
-  ROUTE_MISMATCH: 'errors.unknown'
+  ROUTE_MISMATCH: 'errors.unknown',
+  PREVIEW_TIMEOUT: 'errors.timeout'
 }
 
 const ALL_CODES = [...OUTCOME_CODES, ...EXTRA_CODES] as readonly string[]
@@ -251,6 +255,17 @@ export function failureSentence(copy: DegramCopy, failure: ParsedFailure, ctx: T
     default:
       return copy.errors[key.slice('errors.'.length) as keyof typeof copy.errors] as string
   }
+}
+
+/**
+ * The headline of a failed turn in variant degram (1301-19, G-4): DeGram's own sentence for the code the failure text
+ * carries. A text that names no code (a transport drop, an unclassified model error) reads as `modelUnavailable`:
+ * the raw text, which can carry a provider name or a key hint, is never the headline.
+ */
+export function degramFailureHeadline(copy: DegramCopy, errorText: string, ctx: TextContext = {}): string {
+  const failure = parseFailureText(errorText)
+
+  return (failure.code ? failureSentence(copy, failure, ctx) : null) ?? copy.errors.modelUnavailable
 }
 
 /** The retry affordance applies unless the failure is a policy deny (the server decided; consent cannot override). */

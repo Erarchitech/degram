@@ -36,7 +36,17 @@ export const HIDDEN_SURFACES = [
   'gateway-settings',
   // The transcript's own failure card offers a Retry (and a scheduled one) that resubmits without the disclosed
   // context; DeGram's banner owns the one manual «Повторить запрос» (plan 14).
-  'stock-error-retry'
+  'stock-error-retry',
+  // The failed-turn card's provider-flavoured actions and raw text (1301-19, G-4): update API key, switch
+  // provider, sign in again, open logs, send diagnostics, copy error details. The card keeps only DeGram's own
+  // sentence and the allowed Retry; none of them can work against the relay, and «Send diagnostics» is an outbound
+  // upload path (T-1301-19-01/02).
+  'stock-error-update-key',
+  'stock-error-switch-provider',
+  'stock-error-sign-in',
+  'stock-error-open-logs',
+  'stock-error-send-diagnostics',
+  'stock-error-copy-details'
 ] as const
 
 export type HiddenSurface = (typeof HIDDEN_SURFACES)[number]

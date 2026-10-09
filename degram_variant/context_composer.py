@@ -24,6 +24,7 @@ from .cancel import CancelRegistry, CancelToken
 from .credentials import DegramCredentialsError, credentials as _credentials
 from .dg_client import DgClient
 from .documents import DocumentsService
+from .gh_bridge import GH_PREVIEW_READ_TIMEOUT_S
 from .outcomes import (
     ACCESS_DENIED,
     CANCELLED,
@@ -33,8 +34,15 @@ from .outcomes import (
     SCOPE_NOT_SUPPORTED,
     BridgeError,
 )
+from .revit_bridge import REVIT_PREVIEW_DEADLINE_S
 from .snapshot import Snapshot
 
+# Preview budget (1301-19, G-14): bridge read <= 20 s (REVIT_PREVIEW_DEADLINE_S / GH_PREVIEW_READ_TIMEOUT_S) + DG
+# connect 5 s + rules read PREVIEW_RULES_READ_TIMEOUT_S = 15 s -> worst case 40 s, under the renderer's 45 s preview
+# RPC timeout (PREVIEW_RPC_TIMEOUT_MS), so a blocked bridge or a slow DG answers with a named outcome, never a timeout.
+PREVIEW_RULES_READ_TIMEOUT_S = 15.0
+PREVIEW_BRIDGE_DEADLINE_S = MappingProxyType({
+    "revit": REVIT_PREVIEW_DEADLINE_S, "grasshopper": GH_PREVIEW_READ_TIMEOUT_S})
 SNAPSHOT_LIMITS = MappingProxyType({"max_objects": 200, "max_parameters": 50, "max_bytes": 256 * 1024})
 RULE_LIMIT = 200
 RULE_TEXT_LIMIT = 2000
@@ -128,10 +136,13 @@ class ContextComposer:
         if scope == "whole-definition" and pinned and pinned["app"] != "grasshopper":
             raise BridgeError(SCOPE_NOT_SUPPORTED, "WHOLE_DEFINITION_GH_ONLY",
                               "Whole-definition scope is offered for Grasshopper definitions only.")
-        snapshot = self._documents.read_snapshot(scope, info.project, cancel) if scope != "none" else None
+        snapshot = None
+        if scope != "none":
+            snapshot = self._documents.read_snapshot(
+                scope, info.project, cancel, deadline_s=PREVIEW_BRIDGE_DEADLINE_S.get(pinned["app"] if pinned else ""))
         missing: list[dict[str, Any]] = list(snapshot.missing) if snapshot else []
         try:
-            rules = self._dg.get_rules(cancel)
+            rules = self._dg.get_rules(cancel, read_timeout_s=PREVIEW_RULES_READ_TIMEOUT_S)
         except BridgeError as exc:
             if exc.code in (DG_UNAVAILABLE, ACCESS_DENIED):
                 rules = []

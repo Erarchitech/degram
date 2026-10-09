@@ -42,7 +42,11 @@ TOOL_PREFIX = f"mcp__{REVIT_SERVER}__"
 # The only adapter tools DeGram's own reads use (the other six stay available to the agent as allowlisted reads).
 LIST_TOOL = "list_open_documents"
 SNAPSHOT_TOOL = "get_selection_snapshot"
-REVIT_DEADLINE_S = 40.0  # matches mcp_servers.revit.timeout in config_template.yaml
+REVIT_DEADLINE_S = 40.0  # agent tool calls: matches mcp_servers.revit.timeout in config_template.yaml
+# The context PREVIEW read (1301-19, G-14): must answer BUSY before the renderer's preview RPC gives up
+# (PREVIEW_RPC_TIMEOUT_MS = 45_000 in use-degram-gateway.ts), so a blocked Revit reads as "busy", not as a timeout.
+# Measured selection reads were under 2 s on the pilot PC, so 20 s only trips on a real block (dialog, modal command).
+REVIT_PREVIEW_DEADLINE_S = 20.0
 
 _monotonic = time.monotonic  # patched by tests
 
@@ -135,7 +139,7 @@ class RevitBridgeClient:
     """Calls one allowlisted adapter tool through the registered MCP handler."""
 
     def call(self, tool: str, arguments: dict[str, Any] | None = None, *,
-             cancel: CancelToken | None = None) -> dict[str, Any]:
+             cancel: CancelToken | None = None, deadline_s: float | None = None) -> dict[str, Any]:
         from degram_variant.lockdown import REVIT_TOOL_NAMES
         from tools.registry import registry
 
@@ -148,7 +152,7 @@ class RevitBridgeClient:
         if entry is None:
             raise BridgeError(SETUP_INCOMPLETE, "REVIT_ADAPTER_NOT_CONNECTED",
                               "The Revit adapter is not connected. Check the DeGram settings and the pyRevit extension.")
-        output = _run_bounded(lambda: registry.dispatch(name, dict(arguments or {})), cancel)
+        output = _run_bounded(lambda: registry.dispatch(name, dict(arguments or {})), cancel, deadline_s)
         return _parse(output, tool)
 
 
@@ -177,7 +181,7 @@ class RevitDocumentSource:
         return [self._row(d) for d in docs if isinstance(d, dict) and d.get("creationGuid")]
 
     def read_snapshot(self, pinned: dict[str, Any], scope: str, project: str,
-                      cancel: CancelToken | None = None) -> Snapshot:
+                      cancel: CancelToken | None = None, deadline_s: float | None = None) -> Snapshot:
         from .context_composer import SNAPSHOT_LIMITS
 
         if scope != "selection":
@@ -187,7 +191,7 @@ class RevitDocumentSource:
         result = self.client.call(SNAPSHOT_TOOL, {
             "identity": {"creationGuid": identity.get("creationGuid"), "pathName": identity.get("pathName") or ""},
             "max_elements": SNAPSHOT_LIMITS["max_objects"], "max_parameters": SNAPSHOT_LIMITS["max_parameters"],
-        }, cancel=cancel)
+        }, cancel=cancel, deadline_s=deadline_s)
         elements = [e for e in result.get("elements") or [] if isinstance(e, dict)]
         trunc = result.get("truncation") if isinstance(result.get("truncation"), dict) else {}
         total = trunc.get("elementsTotal") if isinstance(trunc.get("elementsTotal"), int) else len(elements)
