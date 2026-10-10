@@ -140,7 +140,14 @@ def stage_pm_runtime(root: Path, python: Path, repo: Path, *, offline: bool = Fa
 
     destination = root / "pm-runtime"
     if destination.exists():
-        shutil.rmtree(destination)
+        def _remove_readonly(func, path, _exc_info):
+            try:
+                os.chmod(path, 0o700)
+            except OSError:
+                pass
+            func(path)
+
+        shutil.rmtree(destination, onexc=_remove_readonly)
     stage_manager_runtime(python=python, destination=destination, project=repo / "pm", offline=offline, cache=cache)
     seal_pm_runtime(root, python)
 
