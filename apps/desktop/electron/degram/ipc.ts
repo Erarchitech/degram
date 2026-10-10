@@ -238,6 +238,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     // Signing in inside the DG page: show the DG page once the session is confirmed.
     if (auth.kind === 'signed-in' && !wasSignedIn) {
       void viewTask(() => dgView.showDg())
+      void session.probePairing().then(result => { if (result === 'revoked') onEvent({ type: 'pairing-revoked' }) })
     }
 
     publish()
@@ -248,6 +249,10 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
   const start = async (): Promise<void> => {
     const me = await session.refresh()
+    if (me.kind === 'signed-in') {
+      const pairingProbe = await session.probePairing()
+      if (pairingProbe === 'revoked') onEvent({ type: 'pairing-revoked' })
+    }
 
     if (me.kind === 'unreachable') {
       // G-16: DG reset or refused the first check. Say so now (the renderer shows the DG-unreachable state with

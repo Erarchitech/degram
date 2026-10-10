@@ -344,6 +344,28 @@ describe('createDgSession: pairing exchange (Phase 1301-17, D-25, D-27)', () => 
     expect(session.pairing().status).toBe('stored')
   })
 
+  it('probes a stored pairing once, discards its delegated token, and does not open a scope', async () => {
+    const { dg, pairing, session } = paired()
+    await session.refresh()
+
+    await session.probePairing()
+
+    expect(session.pairing().status).toBe('connected')
+    expect(dg.exchangeCount()).toBe(1)
+    const discard = dg.requests.find(q => q.method === 'DELETE' && q.url.endsWith('/auth/delegated-token'))
+    expect(discard?.headers?.Authorization).toMatch(/^Bearer dgd_/)
+    expect(pairing.get()).toBe(PAIRING_TOKEN)
+  })
+
+  it('clears a pairing refused by the start probe and leaves network failures stored', async () => {
+    const { dg, pairing, session } = paired()
+    await session.refresh()
+    dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    await session.probePairing()
+    expect(pairing.get()).toBeNull()
+    expect(session.pairing().status).toBe('revoked')
+  })
+
   it('notePairingChanged reflects a newly stored or cleared pairing', () => {
     const { pairing, session } = paired(null)
 

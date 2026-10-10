@@ -237,8 +237,8 @@ export const degramEn: DegramCopy = {
     modelUnavailable:
       "The model service is unavailable. Your message wasn't processed; retry the request in a few minutes.",
     timeout: seconds => `No answer within ${seconds} s, so the request was stopped. Retry it, or narrow the selection.`,
-    limit: time => `The request limit for this project is reached. Retry after ${time}, or ask the DG operator.`,
-    limitUnknown: 'The request limit for this project is reached. Retry later, or ask the DG operator when it resets.',
+    limit: time => `The model request limit is reached. Retry after ${time}, or ask the DG operator.`,
+    limitUnknown: 'The model request limit is reached. Retry later, or ask the DG operator when it resets.',
     revitOff: "Revit isn't responding. Open Revit 2024 with the DeGram pyRevit extension, then refresh.",
     routesDisabled: 'pyRevit Routes are turned off. Enable Routes in pyRevit settings, restart Revit, then refresh.',
     extensionNotLoaded:
@@ -402,9 +402,9 @@ export const degramRu: DegramCopy = {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',
     modelUnavailable: 'Сервис модели недоступен. Сообщение не обработано; повторите запрос через несколько минут.',
     timeout: seconds => `Ответа нет за ${seconds} с, запрос остановлен. Повторите его или сократите выделение.`,
-    limit: time => `Достигнут лимит запросов для проекта. Повторите после ${time} или обратитесь к оператору DG.`,
+    limit: time => `Лимит запросов к модели исчерпан. Повторите после ${time} или обратитесь к оператору DG.`,
     limitUnknown:
-      'Достигнут лимит запросов для проекта. Повторите позже или уточните у оператора DG, когда лимит обновится.',
+      'Лимит запросов к модели исчерпан. Повторите позже или уточните у оператора DG, когда лимит обновится.',
     revitOff: 'Revit не отвечает. Откройте Revit 2024 с расширением DeGram для pyRevit и обновите список.',
     routesDisabled:
       'Маршруты pyRevit (Routes) выключены. Включите их в настройках pyRevit, перезапустите Revit и обновите список.',

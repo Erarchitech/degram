@@ -1528,12 +1528,12 @@ describe('named failures (D-18, UI E5)', () => {
     ],
     [
       'PROVIDER_RATE_LIMITED: Too many requests. (retryAfter: 30)',
-      'The request limit for this project is reached. Retry after 30 s, or ask the DG operator.',
+      'The model request limit is reached. Retry after 30 s, or ask the DG operator.',
       {}
     ],
     [
       'PROVIDER_RATE_LIMITED: Too many requests.',
-      'The request limit for this project is reached. Retry later, or ask the DG operator when it resets.',
+      'The model request limit is reached. Retry later, or ask the DG operator when it resets.',
       {}
     ],
     ['DG_UNAVAILABLE: The graph route timed out. (reason: TIMEOUT)', "The DG server can't be reached.", {}],

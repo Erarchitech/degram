@@ -354,6 +354,39 @@ describe('createScopeController: scope switch fully resets context', () => {
     expect(r.rpcCalls.find(c => c.profile === 'scope-alice-GLOBEX-beta')!.params.token).toBe(TOKEN_B)
   })
 
+  it('releases the prior backend after clearing its credential before ensuring the next scope', async () => {
+    const r = rig([{ project: 'alpha', company: 'ACME' }, { project: 'beta', company: 'GLOBEX' }, { project: 'gamma', company: 'ACME' }])
+
+    await r.scope.selectProject('alpha')
+    r.log.entries.length = 0
+    await r.scope.selectProject('beta')
+    await r.scope.selectProject('gamma')
+
+    expect(r.released).toEqual(['scope-alice-ACME-alpha', 'scope-alice-GLOBEX-beta'])
+    expectOrdered(r, [
+      'rpc:scope-alice-ACME-alpha:degram.credentials.clear',
+      'backend.release:scope-alice-ACME-alpha',
+      'profiles.ensure:beta',
+      'rpc:scope-alice-GLOBEX-beta:degram.credentials.clear',
+      'backend.release:scope-alice-GLOBEX-beta',
+      'profiles.ensure:gamma'
+    ])
+  })
+
+  it('warns but still opens the next scope when releasing its predecessor fails', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+    await r.scope.selectProject('alpha')
+    const failing = createScopeController({
+      session: r.session, origin: r.dg.origin, clock: r.clock, logger: r.logger, emit: event => r.events.push(event),
+      profiles: { ensure: async key => ({ profile: profileFor(key) }), purge: async () => undefined, purgeProject: async () => [], cleanupLegacy: async () => ({ ran: false, failed: [] }) },
+      backend: { ensure: async () => ({ call: async () => undefined }), release: async () => { throw new Error('release failed') } },
+      view: { reset: async () => undefined, clearStorage: async () => undefined }
+    })
+    await failing.selectProject('alpha')
+    expect(await failing.selectProject('beta')).toMatchObject({ ok: true })
+    expect(r.logger.warn).toHaveBeenCalledWith('[degram] could not release the agent backend of the previous scope')
+  })
+
   it('re-selecting the same project reopens it (fresh epoch) rather than reusing silently', async () => {
     const r = rig()
 

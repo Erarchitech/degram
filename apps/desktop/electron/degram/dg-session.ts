@@ -106,6 +106,8 @@ export interface DgSession {
   state: () => AuthState
   refresh: () => Promise<MeResult>
   mint: (project: string) => Promise<MintResult>
+  /** Probe a stored pairing once per saved token without opening a scope. */
+  probePairing: () => Promise<'ok' | 'revoked' | 'unchanged'>
   pairing: () => PairingView
   /** Re-read whether a pairing is stored (after the runtime set or cleared it). */
   notePairingChanged: () => void
@@ -179,6 +181,7 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
   let inFlight: Promise<MeResult> | null = null
   const pairingListeners = new Set<(view: PairingView) => void>()
   let pairingView: PairingView = { status: deps.pairing?.get() ? 'stored' : 'none', company: null }
+  let pairingProbed = false
 
   const setPairing = (next: PairingView): void => {
     if (next.status === pairingView.status && next.company === pairingView.company) {
@@ -348,6 +351,23 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
     return minted
   }
 
+  const probePairing = async (): Promise<'ok' | 'revoked' | 'unchanged'> => {
+    const pairing = deps.pairing?.get() ?? null
+    const membership = state.memberships[0]
+    if (!pairing || !membership || pairingProbed) return 'unchanged'
+    pairingProbed = true
+    const minted = await exchange(membership.project, pairing)
+    if (minted.kind === 'ok') {
+      try {
+        await deps.fetch({ method: 'DELETE', url: url('/auth/delegated-token'), headers: { Authorization: `Bearer ${minted.token}` } })
+      } catch {
+        logger.warn('[degram] could not discard the pairing probe delegated token')
+      }
+      return 'ok'
+    }
+    return minted.kind === 'pairing-revoked' ? 'revoked' : 'unchanged'
+  }
+
   const mint = async (project: string): Promise<MintResult> => {
     const pairing = deps.pairing?.get() ?? null
 
@@ -415,10 +435,12 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
     state: (): AuthState => state,
     refresh,
     mint,
+    probePairing,
     logout,
     markSignedOut,
     pairing: (): PairingView => pairingView,
     notePairingChanged: (): void => {
+      pairingProbed = false
       setPairing({ status: deps.pairing?.get() ? 'stored' : 'none', company: null })
     },
     onPairing: (listener): (() => void) => {

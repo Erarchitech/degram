@@ -15301,7 +15301,7 @@ function ensureDegramWiring(): DegramMainWiring | null {
     profiles,
     backend: {
       ensure: async (profile: string) => {
-        await ensureBackend(profile)
+        await ensureBackend(profile, { spawnPriority: 'foreground' })
 
         return {
           call: async (method: string, params: unknown): Promise<unknown> =>

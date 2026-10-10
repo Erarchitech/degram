@@ -134,6 +134,20 @@ describe('degram runtime: sign-in page and initial state', () => {
     expect(r.rpcCalls).toEqual([])
   })
 
+  it('probes a stored pairing once on start and publishes revoked status after a refused probe', async () => {
+    const pairing = createFakePairing(PAIRING_TOKEN)
+    const r = rig({ pairing })
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+
+    await r.runtime.start()
+
+    expect(r.dg.exchangeCount()).toBe(1)
+    expect(pairing.get()).toBeNull()
+    expect(r.runtime.getState().pairing.status).toBe('revoked')
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'pairing-revoked' })
+    expect(r.runtime.getState().scope.status).toBe('no-project')
+  })
+
   it('a sign-in completed inside the DG page is picked up from the cookie change and opens the DG page', async () => {
     const r = rig({ signedIn: false })
 

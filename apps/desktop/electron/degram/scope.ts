@@ -43,6 +43,7 @@ export type DegramEvent =
   | { type: 'dg-reachable' }
   /** DG refused the stored pairing (revoked on the Connectors tab); the scope closed, the sign-in stays. */
   | { type: 'pairing-revoked' }
+  | { type: 'backend-start-failed'; project: string }
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
 
@@ -63,7 +64,7 @@ export type ScopeErrorCode =
   | 'SUPERSEDED'
   | 'DG_UNREACHABLE'
   | 'PROFILE_FAILED'
-  | 'BACKEND_FAILED'
+  | 'BACKEND_START_FAILED'
   | 'CREDENTIALS_REJECTED'
   | 'ACCESS_DENIED'
   | 'MINT_FAILED'
@@ -138,7 +139,7 @@ export type CheckSource = 'heartbeat' | 'focus' | 'outcome'
 
 /** Agent outcomes that signal a change of access. Anything else is not an access signal. */
 const OUTCOMES_END_SESSION = new Set(['DELEGATED_SESSION_ENDED'])
-const OUTCOMES_VERIFY_AND_RENEW = new Set(['CREDENTIALS_EXPIRED', 'DELEGATED_EXPIRED', 'DELEGATED_AUTH_FAILED'])
+const OUTCOMES_VERIFY_AND_RENEW = new Set(['CREDENTIALS_EXPIRED', 'CREDENTIALS_INVALID', 'DELEGATED_EXPIRED', 'DELEGATED_AUTH_FAILED'])
 const OUTCOMES_REVOKE = new Set(['DELEGATED_SCOPE_CHANGED', 'ACCESS_DENIED'])
 /**
  * The agent the chat talked to holds no credential (G-5, G-7): hand the open scope's credential to its backend
@@ -249,6 +250,13 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
         logger.warn('[degram] could not clear the agent credential of the previous scope')
       }
     }
+    if (open?.profile) {
+      try {
+        await deps.backend.release(open.profile)
+      } catch {
+        logger.warn('[degram] could not release the agent backend of the previous scope')
+      }
+    }
   }
 
   /** Run one clearing sequence at a time; a concurrent trigger waits for it and is skipped (never doubled). */
@@ -286,6 +294,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     let purged: boolean | null = null
 
     try {
+      const releasedByClose = current?.profile ?? null
       await closeCurrent()
       active = null
 
@@ -293,10 +302,9 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
         purged = true
 
         try {
-          if (options.purge.profile) {
+          if (options.purge.profile && options.purge.profile !== releasedByClose) {
             await deps.backend.release(options.purge.profile)
           }
-
           await deps.profiles.purge(options.purge.key)
           // Also every other profile of this user + project (opened under another company key, G-15, D-19).
           await deps.profiles.purgeProject(options.purge.key.user, options.purge.key.project)
@@ -460,8 +468,12 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       handle = await deps.backend.ensure(profile)
     } catch {
       logger.error('[degram] could not start the agent backend for the scope')
-
-      return superseded() ? fail('SUPERSEDED', false) : fail('BACKEND_FAILED', false)
+      try { await deps.backend.release(profile) } catch { logger.warn('[degram] could not release a backend after failed start') }
+      if (superseded()) return fail('SUPERSEDED', false)
+      active = null
+      setState({ ...IDLE, epoch: mine, error: 'BACKEND_START_FAILED' })
+      deps.emit({ type: 'backend-start-failed', project })
+      return { ok: false, code: 'BACKEND_START_FAILED', state }
     }
 
     if (superseded()) {
@@ -475,10 +487,9 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
 
     if (minted.kind === 'pairing-revoked') {
-      active = null
-      deps.emit({ type: 'pairing-revoked' })
-
-      return fail('PAIRING_REVOKED', false)
+      current = { key, profile, handle, source: 'pairing' }
+      await pairingEnded()
+      return { ok: false, code: 'PAIRING_REVOKED', state }
     }
 
     if (minted.kind !== 'ok') {

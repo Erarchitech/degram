@@ -58,6 +58,7 @@ const EXTRA_CODES = [
 /** Codes main verifies against DG and acts on (re-mint, end the session, revoke): forwarded by `reportOutcome`. */
 export const FORWARDED_TO_MAIN: readonly string[] = [
   'CREDENTIALS_EXPIRED',
+  'CREDENTIALS_INVALID',
   'DELEGATED_EXPIRED',
   'DELEGATED_AUTH_FAILED',
   'DELEGATED_SESSION_ENDED',
@@ -118,7 +119,7 @@ const CODE_COPY: Record<OutcomeCode | (typeof EXTRA_CODES)[number], CopyKey> = {
   SCOPE_NOT_SUPPORTED: 'errors.scopeNotSupported',
   SETUP_INCOMPLETE: 'errors.setupIncomplete',
   // Not in the vocabulary: the agent's own credential/handoff codes and two relay refusals.
-  CREDENTIALS_INVALID: 'errors.credentialsRefresh',
+  CREDENTIALS_INVALID: 'errors.credentialsMissing',
   DELEGATED_AUTH_FAILED: 'errors.credentialsRefresh',
   DELEGATED_EXPIRED: 'errors.credentialsRefresh',
   DELEGATED_SCOPE_CHANGED: 'errors.accessRevoked',
