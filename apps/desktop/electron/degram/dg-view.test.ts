@@ -2,13 +2,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { DEGRAM_DG_PARTITION } from './dg-config'
-import { createDgView, DG_VIEW_WEB_PREFERENCES, isAllowedDgUrl } from './dg-view'
+import { createDgView, dgUrlFor, DG_VIEW_WEB_PREFERENCES, isAllowedDgUrl } from './dg-view'
 import type { DegramEvent } from './scope'
 import { createFakeNavigationEvent, createFakeViewFactory, createLog } from './test-support'
 
 const ORIGIN = 'http://dg.test:8080'
 
-function setup(options: { log?: ReturnType<typeof createLog> } = {}) {
+function setup(options: { log?: ReturnType<typeof createLog>; onProjectAnnounced?: (name: string) => void } = {}) {
   const log = options.log ?? createLog()
   const viewFactory = createFakeViewFactory(log)
   const events: DegramEvent[] = []
@@ -20,7 +20,8 @@ function setup(options: { log?: ReturnType<typeof createLog> } = {}) {
     createView: viewFactory.factory,
     emit: event => events.push(event),
     openExternal,
-    logger
+    logger,
+    onProjectAnnounced: options.onProjectAnnounced
   })
 
   return { ...viewFactory, dgView, events, openExternal, logger, log }
@@ -181,7 +182,7 @@ describe('modes, sign-in page and reset', () => {
 
     await dgView.setMode('full')
     expect(dgView.getState()).toEqual({ page: 'dg', mode: 'full' })
-    expect(fake.loaded).toEqual([`${ORIGIN}/#degram`, `${ORIGIN}/`])
+    expect(fake.loaded).toEqual([`${ORIGIN}/#degram`, `${ORIGIN}/?host=degram`])
   })
 
   it('remembers a mode chosen before the DG page is shown and does not load while on sign-in', async () => {
@@ -190,11 +191,11 @@ describe('modes, sign-in page and reset', () => {
     await dgView.showSignIn()
     await dgView.setMode('full')
 
-    expect(fake.loaded).toEqual([`${ORIGIN}/`])
+    expect(fake.loaded).toEqual([`${ORIGIN}/?host=degram`])
     expect(dgView.getState()).toEqual({ page: 'sign-in', mode: 'full' })
 
     await dgView.showDg()
-    expect(fake.loaded).toEqual([`${ORIGIN}/`, `${ORIGIN}/`])
+    expect(fake.loaded).toEqual([`${ORIGIN}/?host=degram`, `${ORIGIN}/?host=degram`])
   })
 
   it('rejects an unknown mode', async () => {
@@ -210,7 +211,7 @@ describe('modes, sign-in page and reset', () => {
     await dgView.showSignIn()
 
     expect(dgView.getState().page).toBe('sign-in')
-    expect(fake.loaded).toEqual([`${ORIGIN}/`])
+    expect(fake.loaded).toEqual([`${ORIGIN}/?host=degram`])
     expect(created()).toBe(1)
   })
 
@@ -313,5 +314,35 @@ describe('modes, sign-in page and reset', () => {
 
     dgView.destroy()
     expect(fake.closed()).toBe(true)
+  })
+})
+
+
+describe('project announcements from the DG landing (D-33)', () => {
+  it('loads host mode for full and sign-in pages while graph mode stays unchanged', async () => {
+    const { dgView, fake } = setup()
+
+    expect(dgUrlFor(ORIGIN, 'graph')).toBe(`${ORIGIN}/#degram`)
+    expect(dgUrlFor(ORIGIN, 'full')).toBe(`${ORIGIN}/?host=degram`)
+    await dgView.showSignIn()
+    await dgView.setMode('full')
+    await dgView.showDg()
+    expect(fake.loaded).toEqual([`${ORIGIN}/?host=degram`, `${ORIGIN}/?host=degram`])
+  })
+
+  it('accepts exactly one valid main-frame same-origin selection hash', () => {
+    const announced = vi.fn()
+    const { fake } = setup({ onProjectAnnounced: announced })
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-select=Alpha%20One`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-select=too%26many`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-select=${'a'.repeat(65)}`, true)
+    fake.emit('did-navigate-in-page', {}, 'https://evil.test/#degram-select=Alpha', true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-select=Alpha`, false)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#wrong=Alpha`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-select=%E0%A4%A`, true)
+
+    expect(announced).toHaveBeenCalledTimes(1)
+    expect(announced).toHaveBeenCalledWith('Alpha One')
   })
 })

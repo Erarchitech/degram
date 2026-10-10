@@ -43,6 +43,7 @@ export type DegramEvent =
   | { type: 'dg-reachable' }
   /** DG refused the stored pairing (revoked on the Connectors tab); the scope closed, the sign-in stays. */
   | { type: 'pairing-revoked' }
+  | { type: 'pairing-required' }
   | { type: 'backend-start-failed'; project: string }
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
@@ -107,6 +108,7 @@ export interface ScopeController {
   getState: () => ScopeState
   onState: (listener: (state: ScopeState) => void) => () => void
   selectProject: (project: string) => Promise<SelectResult>
+  announceProject: (project: string) => Promise<void>
   /**
    * End the DG session on purpose: POST /auth/logout through the partition, then clear the agent credential,
    * close the scope, wipe the partition storage and blank the DG view. Local scope profiles are kept (their
@@ -413,6 +415,15 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     return { ok: false, code, state }
   }
 
+  const announceProject = async (project: string): Promise<void> => {
+    const pairing = session.pairing()
+    if (pairing.status !== 'stored' && pairing.status !== 'connected') {
+      deps.emit({ type: 'pairing-required' })
+      return
+    }
+    await selectProject(project)
+  }
+
   const selectProject = async (project: string): Promise<SelectResult> => {
     const me = await session.refresh()
 
@@ -471,7 +482,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       try { await deps.backend.release(profile) } catch { logger.warn('[degram] could not release a backend after failed start') }
       if (superseded()) return fail('SUPERSEDED', false)
       active = null
-      setState({ ...IDLE, epoch: mine, error: 'BACKEND_START_FAILED' })
+      setState({ status: 'error', project, company: membership.company, profile: null, epoch: mine, error: 'BACKEND_START_FAILED' })
       deps.emit({ type: 'backend-start-failed', project })
       return { ok: false, code: 'BACKEND_START_FAILED', state }
     }
@@ -729,7 +740,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
         listeners.delete(listener)
       }
     },
-    selectProject
+    selectProject,
+    announceProject
   }
 }
 

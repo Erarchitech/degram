@@ -56,7 +56,7 @@ export function DgUnreachable({ action, actionLabel }: { action: () => void; act
   )
 }
 
-export function SignInState() {
+export function SignInState({ children }: { children?: React.ReactNode } = {}) {
   const { t } = useI18n()
   const copy = t.degram
   const { loaded, painted, sessionEnded, state } = useDegram()
@@ -70,6 +70,8 @@ export function SignInState() {
   return (
     <section className="flex h-full min-h-0 flex-col items-center gap-8 px-6 pt-12 pb-6" data-testid="degram-sign-in">
       <DegramWordmark />
+
+      {children}
 
       {sessionEnded && (
         <p className="max-w-prose text-center text-[0.8125rem] leading-[1.4] text-muted-foreground" role="status">

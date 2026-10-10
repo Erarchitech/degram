@@ -9,14 +9,12 @@ import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { DialogPortalContainerContext } from '@/components/ui/dialog-portal-context'
-import { EmptyState } from '@/components/ui/empty-state'
 import { useI18n } from '@/i18n'
 
 import { IsolationBootFailure } from './isolation-boot-failure'
 import { PairingPanel } from './pairing-panel'
-import { ProjectPicker } from './project-picker'
 import { DgConnecting, DgUnreachable, SignInState } from './sign-in-state'
-import { degramBridge, refreshDegramState, useDegram } from './use-degram-state'
+import { degramBridge, dismissDegramNotice, refreshDegramState, useDegram } from './use-degram-state'
 
 function Surface({ children }: { children: React.ReactNode }) {
   // Popovers opened from inside the surface (the project picker) portal into it: a body-level popover would sit
@@ -44,44 +42,30 @@ async function retryDgAndRefresh(): Promise<void> {
   await refreshDegramState()
 }
 
-/** The content-column choice shown while signed in without a project (also used standalone by the DG page). */
-export function ProjectChoice() {
+/** The single start screen, before sign-in and until an explicit project is open. */
+export function FirstScreen() {
   const { t } = useI18n()
-  const copy = t.degram
-  const { state } = useDegram()
+  const { accessRevoked, backendFailed, pairingNotice, state } = useDegram()
+  const signedIn = state?.auth.kind === 'signed-in'
+  const hasPairing = state?.pairing.status === 'stored' || state?.pairing.status === 'connected'
+  const opening = state?.scope.status === 'opening'
+  const unreachable = state?.dg.reachable === false || state?.scope.error === 'DG_UNREACHABLE'
 
-  if (state?.scope.status === 'opening') {
-    return (
-      <div className="grid h-full place-items-center">
-        <DgConnecting label={copy.signIn.connecting} />
-      </div>
-    )
-  }
-
-  if (state?.scope.status === 'error' && state.scope.error === 'DG_UNREACHABLE') {
-    return (
-      <div className="grid h-full place-items-center">
-        <DgUnreachable action={() => void retryDgAndRefresh()} actionLabel={copy.cta.retry} />
-      </div>
-    )
-  }
-
-  const none = (state?.auth.memberships.length ?? 0) === 0
-  const empty = none ? copy.empty.noAccessible : copy.empty.noProject
-
-  return (
-    <div className="grid h-full place-items-center px-6">
-      <div className="flex max-w-prose flex-col items-center gap-6">
-        <EmptyState className="min-h-0" description={empty.body} title={empty.title} />
-        {!none && (
-          <ProjectPicker>
-            <Button variant="secondary">{copy.cta.chooseProject}</Button>
-          </ProjectPicker>
-        )}
-        <PairingPanel />
-      </div>
+  return <SignInState>
+    <div className="grid w-full max-w-prose gap-2" data-testid="degram-first-screen">
+      {accessRevoked && <Notice onDismiss={() => dismissDegramNotice('access')}>{t.degram.errors.accessRevoked(accessRevoked.project)}</Notice>}
+      {pairingNotice && <Notice onDismiss={() => dismissDegramNotice('pairing')}>{pairingNotice === 'revoked' ? t.degram.pairing.revokedNotice : t.degram.pairing.requiredNotice}</Notice>}
+      {backendFailed && <Notice onDismiss={() => dismissDegramNotice('backend')} action={() => void degramBridge()?.selectProject(backendFailed.project)}>{t.degram.errors.backendStartFailed(backendFailed.project)}</Notice>}
     </div>
-  )
+    {signedIn && !hasPairing && <PairingPanel focusRequest={pairingNotice !== null} />}
+    {opening && !unreachable && <DgConnecting label={t.degram.signIn.connecting} />}
+    {state?.scope.error === 'DG_UNREACHABLE' && state.dg.reachable && <DgUnreachable action={() => void retryDgAndRefresh()} actionLabel={t.degram.cta.retry} />}
+  </SignInState>
+}
+
+function Notice({ children, onDismiss, action }: { children: React.ReactNode; onDismiss: () => void; action?: () => void }) {
+  const { t } = useI18n()
+  return <div role="status" className="flex gap-2 text-sm"><span>{children}</span>{action && <Button onClick={action} variant="secondary">{t.degram.cta.retry}</Button>}<Button aria-label={t.degram.notice.dismiss} onClick={onDismiss} variant="text">×</Button></div>
 }
 
 export function DegramGate() {
@@ -95,20 +79,8 @@ export function DegramGate() {
     )
   }
 
-  if (!loaded || state?.auth.kind !== 'signed-in') {
-    return (
-      <Surface>
-        <SignInState />
-      </Surface>
-    )
-  }
-
-  if (state.scope.status !== 'ready') {
-    return (
-      <Surface>
-        <ProjectChoice />
-      </Surface>
-    )
+  if (!loaded || state?.auth.kind !== 'signed-in' || state.scope.status !== 'ready') {
+    return <Surface><FirstScreen /></Surface>
   }
 
   return null

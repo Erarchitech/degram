@@ -320,6 +320,28 @@ describe('createScopeController: explicit project selection (D-19)', () => {
   })
 })
 
+describe('project announcements (D-33)', () => {
+  it('requires pairing before opening an announced project', async () => {
+    const r = rig()
+
+    await r.scope.announceProject('alpha')
+
+    expect(r.events).toEqual([{ type: 'pairing-required' }])
+    expect(r.ensured).toEqual([])
+    expect(r.scope.getState().status).toBe('no-project')
+  })
+
+  it('does not open an announced project the user is not a member of', async () => {
+    const r = rig([{ project: 'alpha' }], createFakePairing(PAIRING_TOKEN))
+
+    await r.scope.announceProject('beta')
+
+    expect(r.events).toEqual([])
+    expect(r.ensured).toEqual([])
+    expect(r.scope.getState().status).toBe('no-project')
+  })
+})
+
 describe('createScopeController: scope switch fully resets context', () => {
   it('clears the old scope credentials, opens a different profile and bumps the epoch', async () => {
     const r = rig([

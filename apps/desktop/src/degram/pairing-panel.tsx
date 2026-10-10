@@ -6,7 +6,7 @@
 // pairing replaces only how the agent's short-lived token is minted. Shown in the project choice, so a
 // revoked pairing (the scope closes) lands the user right here.
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Field, FieldHint } from '@/components/ui/field'
@@ -19,13 +19,16 @@ const PAIRING_PATTERN = /^dgp_[A-Za-z0-9_-]{32,200}$/
 
 type Problem = 'invalid' | 'failed' | 'unavailable' | null
 
-export function PairingPanel() {
+export function PairingPanel({ focusRequest = false }: { focusRequest?: boolean }) {
   const { t } = useI18n()
   const copy = t.degram.pairing
   const { state } = useDegram()
   const [value, setValue] = useState('')
   const [problem, setProblem] = useState<Problem>(null)
   const [busy, setBusy] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { if (focusRequest) inputRef.current?.focus() }, [focusRequest])
 
   const pairing = state?.pairing
 
@@ -133,6 +136,7 @@ export function PairingPanel() {
               <Field htmlFor="degram-pairing-token" label={copy.fieldLabel}>
                 <Input
                   id="degram-pairing-token"
+                  ref={inputRef}
                   onChange={event => setValue(event.target.value)}
                   placeholder="dgp_…"
                   spellCheck={false}

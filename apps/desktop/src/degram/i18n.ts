@@ -96,6 +96,7 @@ export interface DegramCopy {
     /** CREDENTIALS_MISSING: the scope's backend holds no DG credential yet (plan 1301-18, G-5); not a session end. */
     credentialsMissing: (project: string) => string
     accessRevoked: (project: string) => string
+    backendStartFailed: (project: string) => string
     policyDeny: (reason: string) => string
     isolation: (path: string) => string
     /** Not in the 1301-UI-SPEC table: outcomes the table has no sentence for (see 1301-14-SUMMARY deviations). */
@@ -154,6 +155,7 @@ export interface DegramCopy {
     searchProjects: string
     isolationTitle: string
   }
+  notice: { dismiss: string }
   /** The "Connection to DG" panel: the DeGram pairing token from the DG Connectors tab (Phase 1301-17). */
   pairing: {
     title: string
@@ -169,6 +171,8 @@ export interface DegramCopy {
     unavailable: string
     failed: string
     disconnectHint: string
+    revokedNotice: string
+    requiredNotice: string
   }
 }
 
@@ -253,6 +257,7 @@ export const degramEn: DegramCopy = {
       `DeGram has no DG access for ${project} in this window yet. Reopen the project; if it repeats, sign in again.`,
     accessRevoked: project =>
       `You no longer have access to ${project}. Its data and local chat history were removed from this computer.`,
+    backendStartFailed: project => `The agent for project ${project} could not start.`,
     policyDeny: reason =>
       `DG policy doesn't allow sending this data to the model: ${reason}. Confirming won't override it — narrow the context or ask the project owner.`,
     isolation: path =>
@@ -319,6 +324,7 @@ export const degramEn: DegramCopy = {
     searchProjects: 'Search projects',
     isolationTitle: 'Runtime isolation'
   },
+  notice: { dismiss: 'Dismiss notice' },
   pairing: {
     title: 'Connection to DG',
     body: 'Paste the pairing token you created on the DG Connectors tab (DeGram card). DeGram keeps it encrypted on this computer and uses it to act as you on the project you choose.',
@@ -334,7 +340,9 @@ export const degramEn: DegramCopy = {
       "This computer can't encrypt the pairing token, so DeGram can't keep it. Signing in with DG keeps working.",
     failed: "The pairing couldn't be saved. Retry; if it keeps failing, restart DeGram.",
     disconnectHint:
-      'Disconnecting forgets the token on this computer. To end it everywhere, revoke it on the DG Connectors tab.'
+      'Disconnecting forgets the token on this computer. To end it everywhere, revoke it on the DG Connectors tab.',
+    revokedNotice: 'The pairing token was revoked. Create a new one on the Connectors tab in DG (in a browser) and paste it below.',
+    requiredNotice: 'Paste a pairing token before choosing a project.'
   }
 }
 
@@ -420,6 +428,7 @@ export const degramRu: DegramCopy = {
       `У DeGram пока нет доступа к DG для ${project} в этом окне. Откройте проект заново; если ошибка повторится, войдите снова.`,
     accessRevoked: project =>
       `У вас больше нет доступа к ${project}. Его данные и локальная история чата удалены с этого компьютера.`,
+    backendStartFailed: project => `Не удалось запустить агента для проекта ${project}.`,
     policyDeny: reason =>
       `Политика DG не разрешает отправку этих данных модели: ${reason}. Подтверждение это не отменит — сузьте контекст или обратитесь к владельцу проекта.`,
     isolation: path =>
@@ -485,6 +494,7 @@ export const degramRu: DegramCopy = {
     searchProjects: 'Поиск проектов',
     isolationTitle: 'Изоляция среды выполнения'
   },
+  notice: { dismiss: 'Закрыть уведомление' },
   pairing: {
     title: 'Подключение к DG',
     body: 'Вставьте токен сопряжения, созданный во вкладке Connectors в DG (карточка DeGram). DeGram хранит его зашифрованным на этом компьютере и действует от вашего имени в выбранном проекте.',
@@ -501,6 +511,8 @@ export const degramRu: DegramCopy = {
       'Этот компьютер не может зашифровать токен сопряжения, поэтому DeGram не может его хранить. Вход через DG продолжает работать.',
     failed: 'Не удалось сохранить сопряжение. Повторите; если ошибка повторяется, перезапустите DeGram.',
     disconnectHint:
-      'Отключение удаляет токен с этого компьютера. Чтобы погасить его везде, отзовите его во вкладке Connectors в DG.'
+      'Отключение удаляет токен с этого компьютера. Чтобы погасить его везде, отзовите его во вкладке Connectors в DG.',
+    revokedNotice: 'Токен сопряжения отозван. Создайте новый на вкладке Connectors в DG (в браузере) и вставьте его ниже.',
+    requiredNotice: 'Сначала вставьте токен сопряжения'
   }
 }

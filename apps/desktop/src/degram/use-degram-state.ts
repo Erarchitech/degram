@@ -33,6 +33,9 @@ export interface DegramStore {
   painted: boolean
   /** A 401 ended the session: the sign-in view carries the session-ended copy above it. */
   sessionEnded: boolean
+  accessRevoked: { project: string } | null
+  pairingNotice: 'revoked' | 'required' | null
+  backendFailed: { project: string } | null
   bootError: DegramBootError | null
   /** State of an explicit refresh (the project picker's list). */
   refresh: 'idle' | 'loading' | 'error'
@@ -43,6 +46,9 @@ const INITIAL: DegramStore = {
   state: null,
   painted: false,
   sessionEnded: false,
+  accessRevoked: null,
+  pairingNotice: null,
+  backendFailed: null,
   bootError: null,
   refresh: 'idle'
 }
@@ -77,6 +83,8 @@ function applyState(state: DegramState): void {
   const pageChanged = prev.state !== null && prev.state.dg.page !== state.dg.page
   const first = prev.state === null
 
+  const signedOut = state.auth.kind !== 'signed-in'
+
   $degram.set({
     ...prev,
     loaded: true,
@@ -88,8 +96,10 @@ function applyState(state: DegramState): void {
         : state.dg.reachable
           ? prev.painted
           : false,
-    // Signing in again retires the session-ended notice; an unreachable DG must not.
-    sessionEnded: state.auth.kind === 'signed-in' ? false : prev.sessionEnded
+    sessionEnded: state.auth.kind === 'signed-in' ? false : prev.sessionEnded,
+    pairingNotice: signedOut ? null : state.pairing.status === 'revoked' ? 'revoked' : (state.pairing.status === 'stored' || state.pairing.status === 'connected' ? null : prev.pairingNotice),
+    backendFailed: signedOut || state.scope.status === 'ready' ? null : state.scope.error === 'BACKEND_START_FAILED' && state.scope.project ? { project: state.scope.project } : prev.backendFailed,
+    accessRevoked: signedOut || state.scope.status === 'ready' ? null : prev.accessRevoked
   })
   reachableSinceState = false
 }
@@ -127,6 +137,7 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
       return
 
     case 'access-revoked':
+      $degram.set({ ...$degram.get(), accessRevoked: { project: event.project } })
       notify({
         kind: 'warning',
         message: translateNow('degram.errors.accessRevoked', event.project)
@@ -162,9 +173,15 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
       return
 
     case 'pairing-revoked':
-      // Phase 1301-17: the scope closed; the pairing panel in the project choice asks for a new token.
-      notify({ kind: 'warning', message: translateNow('degram.pairing.revoked') })
+      $degram.set({ ...$degram.get(), pairingNotice: 'revoked' })
+      return
 
+    case 'pairing-required':
+      $degram.set({ ...$degram.get(), pairingNotice: 'required' })
+      return
+
+    case 'backend-start-failed':
+      $degram.set({ ...$degram.get(), backendFailed: { project: event.project } })
       return
   }
 }
@@ -282,4 +299,9 @@ export const DegramActionsContext = createContext<DegramActions>({
 
 export function useDegramActions(): DegramActions {
   return useContext(DegramActionsContext)
+}
+
+export function dismissDegramNotice(kind: 'access' | 'pairing' | 'backend'): void {
+  const current = $degram.get()
+  $degram.set({ ...current, accessRevoked: kind === 'access' ? null : current.accessRevoked, pairingNotice: kind === 'pairing' ? null : current.pairingNotice, backendFailed: kind === 'backend' ? null : current.backendFailed })
 }

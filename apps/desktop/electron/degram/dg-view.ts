@@ -72,6 +72,8 @@ export interface DgViewDeps {
   /** `shell.openExternal`. */
   openExternal: (url: string) => unknown
   logger: Logger
+  /** A validated project name announced by the untrusted DG page through its URL hash only. */
+  onProjectAnnounced?: (name: string) => void
 }
 
 export interface DgBounds {
@@ -127,7 +129,7 @@ export function isAllowedDgUrl(url: unknown, origin: string): boolean {
 
 /** The page URL of a mode: the `#degram` slice, or the whole V2 app. */
 export function dgUrlFor(origin: string, mode: DgMode): string {
-  return mode === 'graph' ? `${origin}/#degram` : `${origin}/`
+  return mode === 'graph' ? `${origin}/#degram` : `${origin}/?host=degram`
 }
 
 const ABORTED = -3
@@ -184,6 +186,20 @@ export function createDgView(deps: DgViewDeps): DgView {
   contents.on('will-redirect', guard)
   contents.on('will-attach-webview', (event: { preventDefault: () => void }) => event.preventDefault())
 
+  contents.on('did-navigate-in-page', (_event: unknown, url: string, isMainFrame: boolean) => {
+    if (!isMainFrame || !isAllowedDgUrl(url, origin)) return
+    let hash: string
+    try { hash = new URL(url).hash } catch { return }
+    const match = /^#degram-select=([^&]{1,200})$/.exec(hash)
+    if (!match) return
+    try {
+      const name = decodeURIComponent(match[1])
+      if (/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name)) deps.onProjectAnnounced?.(name)
+    } catch {
+      // Ignore malformed untrusted hashes without logging their content.
+    }
+  })
+
   contents.setWindowOpenHandler((details: { url: string }): { action: 'deny' } => {
     if (isAllowedDgUrl(details.url, origin)) {
       // A DG link that wants a new window opens in this view instead: no second window, no popup.
@@ -229,7 +245,7 @@ export function createDgView(deps: DgViewDeps): DgView {
 
   const showSignIn = async (): Promise<void> => {
     state = { ...state, page: 'sign-in' }
-    await load(`${origin}/`)
+    await load(`${origin}/?host=degram`)
   }
 
   const showDg = async (): Promise<void> => {

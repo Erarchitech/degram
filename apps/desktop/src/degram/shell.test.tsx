@@ -119,41 +119,23 @@ describe('isolation boot failure (D-02, UI overflow/long-text E8)', () => {
   })
 })
 
-describe('signed in without a project (DGCL-01, explicit selection)', () => {
-  it('shows the project EmptyState, the strip says Choose project, and nothing is selected implicitly', async () => {
+describe('single start screen (D-33)', () => {
+  it('keeps the DG view and pairing field on the signed-in start screen with no project-choice button', async () => {
     const h = install(makeState())
-
-    await act(async () => undefined)
-    render(
-      withActions(
-        <>
-          <DegramGate />
-          <ScopeStrip />
-        </>
-      )
-    )
-
-    expect(screen.getByText('Choose a project')).toBeTruthy()
-    expect(screen.getAllByText('Choose project').length).toBeGreaterThan(0)
-    expect(h.bridge.selectProject).not.toHaveBeenCalled()
-  })
-
-  it('shows the no-accessible-projects copy for zero memberships', async () => {
-    install(makeState({ memberships: [] }))
     await act(async () => undefined)
     render(withActions(<DegramGate />))
 
-    expect(screen.getByText('No projects available')).toBeTruthy()
+    expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
+    expect(screen.getByTestId('degram-pairing')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
+    expect(h.bridge.selectProject).not.toHaveBeenCalled()
   })
 
-  it('renders nothing over the app once a project is open (the composer stays reachable)', async () => {
-    install(
-      makeState({ scope: { status: 'ready', project: 'Alpha', company: 'Acme', profile: 'p', epoch: 1, error: null } })
-    )
+  it('hides the pairing panel once a token is stored', async () => {
+    install(makeState({ pairing: { status: 'stored', company: 'Acme', available: true } }))
     await act(async () => undefined)
-    const { container } = render(withActions(<DegramGate />))
-
-    expect(container.querySelector('[data-testid="degram-gate"]')).toBeNull()
+    render(withActions(<DegramGate />))
+    expect(screen.queryByTestId('degram-pairing')).toBeNull()
   })
 })
 
@@ -416,7 +398,7 @@ describe('access revoked (D-08, D-19)', () => {
     expect(toast.message).toBe(
       'You no longer have access to Alpha. Its data and local chat history were removed from this computer.'
     )
-    expect(screen.getByText('Choose a project')).toBeTruthy()
+    expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
   })
 
   it('a blocked external link toasts the notice whose action opens the system browser on a click only', async () => {
@@ -431,6 +413,43 @@ describe('access revoked (D-08, D-19)', () => {
     expect(h.bridge.openExternalConfirmed).not.toHaveBeenCalled()
     toast.action!.onClick()
     expect(h.bridge.openExternalConfirmed).toHaveBeenCalledWith('https://example.com/x')
+  })
+})
+
+describe('persistent start-screen notices (G-18, G-20, D-35)', () => {
+  it('keeps an access-revoked notice until it is dismissed', async () => {
+    const h = install(makeState())
+    render(withActions(<DegramGate />))
+    h.emitEvent({ type: 'access-revoked', project: 'Alpha', purged: true })
+    expect(screen.getByText('You no longer have access to Alpha. Its data and local chat history were removed from this computer.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss notice' }))
+    expect(screen.queryByText(/You no longer have access/)).toBeNull()
+  })
+
+  it('shows pairing revocation from the snapshot and focuses the field', async () => {
+    install(makeState({ pairing: { status: 'revoked', company: null, available: true } }))
+    await act(async () => undefined)
+    render(withActions(<DegramGate />))
+    expect(screen.getByText('The pairing token was revoked. Create a new one on the Connectors tab in DG (in a browser) and paste it below.')).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByLabelText('Pairing token'))
+  })
+
+  it('shows the pairing-required notice and focuses the field', async () => {
+    const h = install(makeState())
+    await act(async () => undefined)
+    render(withActions(<DegramGate />))
+    h.emitEvent({ type: 'pairing-required' })
+    expect(screen.getByText('Paste a pairing token before choosing a project.')).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByLabelText('Pairing token'))
+  })
+
+  it('shows backend-start failure from the snapshot and retries that project', async () => {
+    const h = install(makeState({ scope: { status: 'error', project: 'Alpha', company: 'Acme', profile: null, epoch: 1, error: 'BACKEND_START_FAILED' } }))
+    await act(async () => undefined)
+    render(withActions(<DegramGate />))
+    expect(screen.getByText('The agent for project Alpha could not start.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry request' }))
+    expect(h.bridge.selectProject).toHaveBeenCalledWith('Alpha')
   })
 })
 
@@ -491,18 +510,17 @@ describe('DG page (D-07, UI E6)', () => {
       dg: { mode: 'graph', page: 'dg', reachable: true, ...over }
     })
 
-  it('shows the project EmptyState, never a blank view, before sign-in or a project', async () => {
+  it('shows the shared first screen, never a blank view, before sign-in or a project', async () => {
     const h = install({ ...makeState(), auth: { kind: 'signed-out', username: null, isAdmin: false, memberships: [] } })
 
     await act(async () => undefined)
     render(<DgPage />)
-    expect(screen.getByText('Choose a project')).toBeTruthy()
+    expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
     cleanup()
 
     h.emitState(makeState())
     render(withActions(<DgPage />))
-    expect(screen.getByText('Choose a project')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Choose project' })).toBeTruthy()
+    expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
   })
 
   it('renders the Project graph / Full DG control and the reload icon button with an accessible name', async () => {
@@ -628,7 +646,8 @@ describe('DG unreachable at start and the revoke toast (G-15, G-16)', () => {
 
     h.emitEvent({ type: 'access-revoked', project: 'alpha', purged: true })
 
-    const toast = await screen.findByText(/alpha/)
+    await waitFor(() => expect(screen.getAllByText(/alpha/).some(node => node.closest('[role="region"]'))).toBe(true))
+    const toast = screen.getAllByText(/alpha/).find(node => node.closest('[role="region"]'))!
     const region = toast.closest('[role="region"]')
 
     expect(screen.getByTestId('degram-gate').className).toContain('z-(--z-setup)')

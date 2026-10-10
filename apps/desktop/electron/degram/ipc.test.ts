@@ -111,7 +111,7 @@ describe('degram runtime: sign-in page and initial state', () => {
 
     await r.runtime.start()
 
-    expect(r.fake.loaded).toEqual([`${r.dg.origin}/`])
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`])
     expect(r.runtime.getState()).toMatchObject({
       auth: { kind: 'signed-out', username: null, memberships: [] },
       scope: { status: 'no-project', project: null },
@@ -188,7 +188,7 @@ describe('degram runtime: retryDg after DG was unreachable (G-16)', () => {
     r.dg.setMe({ status: 401, body: { detail: 'not signed in' } })
     await r.runtime.retryDg()
 
-    expect(r.fake.loaded).toEqual([`${r.dg.origin}/`])
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`])
 
     r.fake.emit('did-start-loading')
     r.fake.emit('did-finish-load')
@@ -321,7 +321,7 @@ describe('degram runtime: sign-out ordering (D-05, T-1301-12-04)', () => {
       'view.load about:blank',
       'view.clearStorageData',
       'view.clearCache',
-      `view.load ${r.dg.origin}/`
+      `view.load ${r.dg.origin}/?host=degram`
     ].map(entry => r.log.indexOf(entry))
 
     expect(order.every(index => index >= 0)).toBe(true)
@@ -386,7 +386,7 @@ describe('degram runtime: DG page controls', () => {
     await r.runtime.setDgMode('full')
 
     expect(r.runtime.getState().dg.mode).toBe('full')
-    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/`)
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`)
 
     await r.runtime.reloadDg()
     expect(r.fake.reloads()).toBe(1)
@@ -553,7 +553,7 @@ describe('degram runtime: revocation reaches the renderer only after clearing (T
       dg: { page: 'sign-in' }
     })
     expect(eventsOf(r.sent)).toContainEqual({ type: 'session-ended' })
-    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/`)
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`)
     expect(JSON.stringify(r.sent)).not.toContain('alpha')
   })
 

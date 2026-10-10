@@ -209,7 +209,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     createView: deps.createView,
     emit: onEvent,
     openExternal: deps.openExternal,
-    logger
+    logger,
+    onProjectAnnounced: name => void scope.announceProject(name)
   })
 
   scope = createScopeController({

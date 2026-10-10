@@ -9,12 +9,11 @@
 import { useEffect, useRef } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { EmptyState } from '@/components/ui/empty-state'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { useI18n } from '@/i18n'
 import { RefreshCw } from '@/lib/icons'
 
-import { ProjectChoice } from './degram-gate'
+import { FirstScreen } from './degram-gate'
 import { DgConnecting, DgUnreachable } from './sign-in-state'
 import { degramBridge, useDegram } from './use-degram-state'
 import { useDgBounds } from './use-dg-bounds'
@@ -48,17 +47,7 @@ export function DgPage() {
   if (!ready) {
     return (
       <section className="h-full min-h-0 overflow-hidden" data-testid="dg-page">
-        {signedIn ? (
-          <ProjectChoice />
-        ) : (
-          <div className="grid h-full place-items-center px-6">
-            <EmptyState
-              className="min-h-0"
-              description={copy.empty.noProject.body}
-              title={copy.empty.noProject.title}
-            />
-          </div>
-        )}
+<FirstScreen />
       </section>
     )
   }
