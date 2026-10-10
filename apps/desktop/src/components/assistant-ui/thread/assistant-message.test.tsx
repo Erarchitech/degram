@@ -555,7 +555,7 @@ describe('variant degram: the failed-turn card (1301-19, G-4, DGCL-02)', () => {
 
     const headline = await screen.findByTestId('degram-error-headline')
 
-    expect(headline.textContent).toBe(degramEn.errors.credentialsRefresh)
+    expect(headline.textContent).toBe(degramEn.errors.credentialsMissing(''))
 
     for (const name of stockActions) {
       expect(screen.queryByRole('button', { name }), name).toBeNull()

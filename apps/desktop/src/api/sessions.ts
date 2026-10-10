@@ -1,6 +1,7 @@
 import { isMissingRestEndpoint } from '@/lib/gateway-rpc'
 import { maybeBackfillLegacySessionOwners } from '@/lib/legacy-session-owner-backfill'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
+import { $degramEnabled } from '@/store/degram-flag'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
 import type {
   PaginatedSessions,
@@ -22,7 +23,26 @@ import {
   sessionReadOwnerPin
 } from './client'
 
+import type { ScopeRoute, ScopeSessionRequester, ScopeSessionsResult } from '@/degram/session-list'
+
 const SESSION_LIST_REQUEST_TIMEOUT_MS = 60_000
+
+/** Loaded only in the DeGram branch to avoid coupling ordinary renderer tests to DeGram stores. */
+async function listDegramScopeSessions(limit: number): Promise<ScopeSessionsResult> {
+  const [{ listScopeSessions }, { $degram }, { $activeGatewayProfile }, { request }] = await Promise.all([
+    import('@/degram/session-list'),
+    import('@/degram/use-degram-state'),
+    import('@/store/profile'),
+    import('@/degram/use-degram-gateway')
+  ])
+
+  return listScopeSessions(
+    limit,
+    $degram.get().state,
+    $activeGatewayProfile as ScopeRoute,
+    { request } as ScopeSessionRequester
+  )
+}
 
 function sessionScoped(scope?: ProfileScope): { connectionId?: string; profile?: string } {
   if (scope === undefined || scope === null) {
@@ -105,6 +125,18 @@ export async function listSessions(
   archived: 'exclude' | 'include' | 'only' = 'exclude',
   order: 'created' | 'recent' = 'recent'
 ): Promise<PaginatedSessions> {
+  if ($degramEnabled.get()) {
+    const result = await listDegramScopeSessions(limit)
+
+    return {
+      sessions: result.sessions,
+      offset: 0,
+      limit,
+      total: result.sessions.length,
+      ...(result.failed ? { failed: true, retry: true } : {})
+    }
+  }
+
   const result = await hermesApi<PaginatedSessions>({
     ...profileScoped(),
     path:
@@ -307,6 +339,16 @@ export function scanSessionPullRequests(
 }
 
 export async function listSidebarSessions(req: SidebarSessionsRequest): Promise<SidebarSessionsResponse> {
+  if ($degramEnabled.get()) {
+    const result = await listDegramScopeSessions(req.recentsLimit)
+
+    return {
+      recents: { sessions: result.sessions, ...(result.failed ? { failed: true, retry: true } : {}) },
+      cron: { sessions: [] },
+      messaging: { sessions: [] }
+    }
+  }
+
   if (sidebarBatchEndpointMissing) {
     return listSidebarSessionsLegacy(req)
   }

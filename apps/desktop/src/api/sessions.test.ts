@@ -12,7 +12,9 @@ vi.mock('./client', () => ({
   getApiRequestProfile: vi.fn(() => null),
   hermesApi: vi.fn(),
   profileScoped: vi.fn(() => ({})),
-  sessionReadOwnerPin: vi.fn(() => ({}))
+  sessionReadOwnerPin: vi.fn(() => ({})),
+  setApiRequestProfile: vi.fn(),
+  setSessionOwnerResolver: vi.fn()
 }))
 
 const client = await import('./client')

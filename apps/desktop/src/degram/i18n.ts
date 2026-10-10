@@ -80,6 +80,7 @@ export interface DegramCopy {
   }
   /** The scope strip's own copy (D-29): how many documents are pinned. */
   strip: { documentsCount: (count: number) => string }
+  sessions: { empty: string }
   errors: {
     dgUnreachable: string
     modelUnavailable: string
@@ -236,6 +237,7 @@ export const degramEn: DegramCopy = {
     excluded: (document, reason) => `${document}: not included — ${reason}`
   },
   strip: { documentsCount: n => `Documents: ${n}` },
+  sessions: { empty: "There are no sessions in this project yet." },
   errors: {
     dgUnreachable: "The DG server can't be reached. Check your network or VPN, then retry the request.",
     modelUnavailable:
@@ -406,6 +408,7 @@ export const degramRu: DegramCopy = {
     excluded: (document, reason) => `${document}: не включён — ${reason}`
   },
   strip: { documentsCount: n => `Документы: ${n}` },
+  sessions: { empty: "В этом проекте пока нет сеансов." },
   errors: {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',
     modelUnavailable: 'Сервис модели недоступен. Сообщение не обработано; повторите запрос через несколько минут.',

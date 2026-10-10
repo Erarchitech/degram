@@ -127,7 +127,7 @@ describe('variant degram: the error toast reads as DeGram copy (1301-19, G-4)', 
 
     const toast = $notifications.get()[0]
 
-    expect(toast.message).toBe(degramEn.errors.credentialsRefresh)
+    expect(toast.message).toBe(degramEn.errors.credentialsMissing(''))
     expect(toast.message).not.toMatch(/custom|API key|provider|diagnostics/i)
     expect(toast.detail).toBeUndefined()
   })
