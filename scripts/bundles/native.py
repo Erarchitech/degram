@@ -210,6 +210,19 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     out = Path(out).absolute()
     if out != out.resolve():
         raise ValueError("symlinked native output")
+
+    def _remove_readonly(func, path, _exc_info):
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+        func(path)
+
+    # A previous Windows payload contains read-only staged binaries and .pyc
+    # files. Rebuild from an empty payload root, not by replacing individual
+    # subtrees later in the pipeline.
+    if out.exists():
+        shutil.rmtree(out, onexc=_remove_readonly)
     out.mkdir(parents=True, exist_ok=True)
     with preparation_lock(out):
         prepared_path(out).unlink(missing_ok=True)
