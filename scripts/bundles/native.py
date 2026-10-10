@@ -282,7 +282,14 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     # must point at the payload's own tree, not this checkout.
     venv_dir = out / "venv"
     if venv_dir.exists():
-        shutil.rmtree(venv_dir)
+        def _remove_readonly(func, path, _exc_info):
+            try:
+                os.chmod(path, 0o700)
+            except OSError:
+                pass
+            func(path)
+
+        shutil.rmtree(venv_dir, onexc=_remove_readonly)
     env = dict(build_env)
     from pm import build_environment
 
