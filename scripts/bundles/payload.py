@@ -42,7 +42,14 @@ def snapshot(repo: Path, ref: str, destination: Path, exclude: tuple[str, ...] =
             ["git", "archive", "--format=tar", "--output", str(archive), ref, "--", *pathspecs],
             cwd=repo, check=True)
         if destination.exists():
-            shutil.rmtree(destination)
+            def _remove_readonly(func, path, _exc_info):
+                try:
+                    os.chmod(path, 0o700)
+                except OSError:
+                    pass
+                func(path)
+
+            shutil.rmtree(destination, onexc=_remove_readonly)
         destination.mkdir(parents=True)
         with tarfile.open(archive) as source:
             source.extractall(destination, filter="data")
