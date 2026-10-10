@@ -55,7 +55,7 @@ export function FirstScreen() {
     <div className="grid w-full max-w-prose gap-2" data-testid="degram-first-screen">
       {accessRevoked && <Notice onDismiss={() => dismissDegramNotice('access')}>{t.degram.errors.accessRevoked(accessRevoked.project)}</Notice>}
       {pairingNotice && <Notice onDismiss={() => dismissDegramNotice('pairing')}>{pairingNotice === 'revoked' ? t.degram.pairing.revokedNotice : t.degram.pairing.requiredNotice}</Notice>}
-      {backendFailed && <Notice onDismiss={() => dismissDegramNotice('backend')} action={() => void degramBridge()?.selectProject(backendFailed.project)}>{t.degram.errors.backendStartFailed(backendFailed.project)}</Notice>}
+      {backendFailed && <Notice action={() => void degramBridge()?.selectProject(backendFailed.project)} onDismiss={() => dismissDegramNotice('backend')}>{t.degram.errors.backendStartFailed(backendFailed.project)}</Notice>}
     </div>
     {signedIn && !hasPairing && <PairingPanel focusRequest={pairingNotice !== null} />}
     {opening && !unreachable && <DgConnecting label={t.degram.signIn.connecting} />}
@@ -65,7 +65,7 @@ export function FirstScreen() {
 
 function Notice({ children, onDismiss, action }: { children: React.ReactNode; onDismiss: () => void; action?: () => void }) {
   const { t } = useI18n()
-  return <div role="status" className="flex gap-2 text-sm"><span>{children}</span>{action && <Button onClick={action} variant="secondary">{t.degram.cta.retry}</Button>}<Button aria-label={t.degram.notice.dismiss} onClick={onDismiss} variant="text">×</Button></div>
+  return <div className="flex gap-2 text-sm" role="status"><span>{children}</span>{action && <Button onClick={action} variant="secondary">{t.degram.cta.retry}</Button>}<Button aria-label={t.degram.notice.dismiss} onClick={onDismiss} variant="text">×</Button></div>
 }
 
 export function DegramGate() {

@@ -28,7 +28,11 @@ export function PairingPanel({ focusRequest = false }: { focusRequest?: boolean 
   const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { if (focusRequest) inputRef.current?.focus() }, [focusRequest])
+  useEffect(() => {
+    if (focusRequest) {
+      inputRef.current?.focus()
+    }
+  }, [focusRequest])
 
   const pairing = state?.pairing
 
@@ -136,9 +140,9 @@ export function PairingPanel({ focusRequest = false }: { focusRequest?: boolean 
               <Field htmlFor="degram-pairing-token" label={copy.fieldLabel}>
                 <Input
                   id="degram-pairing-token"
-                  ref={inputRef}
                   onChange={event => setValue(event.target.value)}
                   placeholder="dgp_…"
+                  ref={inputRef}
                   spellCheck={false}
                   type="password"
                   value={value}

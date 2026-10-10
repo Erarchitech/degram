@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { DEGRAM_DG_PARTITION } from './dg-config'
-import { createDgView, dgUrlFor, DG_VIEW_WEB_PREFERENCES, isAllowedDgUrl } from './dg-view'
+import { createDgView, DG_VIEW_WEB_PREFERENCES, dgUrlFor, isAllowedDgUrl } from './dg-view'
 import type { DegramEvent } from './scope'
 import { createFakeNavigationEvent, createFakeViewFactory, createLog } from './test-support'
 

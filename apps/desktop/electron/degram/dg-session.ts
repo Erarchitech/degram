@@ -354,7 +354,9 @@ export function createDgSession(deps: DgSessionDeps): DgSession {
   const probePairing = async (): Promise<'ok' | 'revoked' | 'unchanged'> => {
     const pairing = deps.pairing?.get() ?? null
     const membership = state.memberships[0]
-    if (!pairing || !membership || pairingProbed) return 'unchanged'
+    if (!pairing || !membership || pairingProbed) {
+      return 'unchanged'
+    }
     pairingProbed = true
     const minted = await exchange(membership.project, pairing)
     if (minted.kind === 'ok') {

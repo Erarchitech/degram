@@ -187,14 +187,20 @@ export function createDgView(deps: DgViewDeps): DgView {
   contents.on('will-attach-webview', (event: { preventDefault: () => void }) => event.preventDefault())
 
   contents.on('did-navigate-in-page', (_event: unknown, url: string, isMainFrame: boolean) => {
-    if (!isMainFrame || !isAllowedDgUrl(url, origin)) return
+    if (!isMainFrame || !isAllowedDgUrl(url, origin)) {
+      return
+    }
     let hash: string
     try { hash = new URL(url).hash } catch { return }
     const match = /^#degram-select=([^&]{1,200})$/.exec(hash)
-    if (!match) return
+    if (!match) {
+      return
+    }
     try {
       const name = decodeURIComponent(match[1])
-      if (/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name)) deps.onProjectAnnounced?.(name)
+      if (/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name)) {
+        deps.onProjectAnnounced?.(name)
+      }
     } catch {
       // Ignore malformed untrusted hashes without logging their content.
     }

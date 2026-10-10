@@ -239,7 +239,11 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     // Signing in inside the DG page: show the DG page once the session is confirmed.
     if (auth.kind === 'signed-in' && !wasSignedIn) {
       void viewTask(() => dgView.showDg())
-      void session.probePairing().then(result => { if (result === 'revoked') onEvent({ type: 'pairing-revoked' }) })
+      void session.probePairing().then(result => {
+        if (result === 'revoked') {
+          onEvent({ type: 'pairing-revoked' })
+        }
+      })
     }
 
     publish()
@@ -252,7 +256,9 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     const me = await session.refresh()
     if (me.kind === 'signed-in') {
       const pairingProbe = await session.probePairing()
-      if (pairingProbe === 'revoked') onEvent({ type: 'pairing-revoked' })
+      if (pairingProbe === 'revoked') {
+        onEvent({ type: 'pairing-revoked' })
+      }
     }
 
     if (me.kind === 'unreachable') {

@@ -480,7 +480,9 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     } catch {
       logger.error('[degram] could not start the agent backend for the scope')
       try { await deps.backend.release(profile) } catch { logger.warn('[degram] could not release a backend after failed start') }
-      if (superseded()) return fail('SUPERSEDED', false)
+      if (superseded()) {
+        return fail('SUPERSEDED', false)
+      }
       active = null
       setState({ status: 'error', project, company: membership.company, profile: null, epoch: mine, error: 'BACKEND_START_FAILED' })
       deps.emit({ type: 'backend-start-failed', project })

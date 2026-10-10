@@ -1,3 +1,4 @@
+import type { ScopeRoute, ScopeSessionRequester, ScopeSessionsResult } from '@/degram/session-list'
 import { isMissingRestEndpoint } from '@/lib/gateway-rpc'
 import { maybeBackfillLegacySessionOwners } from '@/lib/legacy-session-owner-backfill'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
@@ -22,8 +23,6 @@ import {
   profileScoped,
   sessionReadOwnerPin
 } from './client'
-
-import type { ScopeRoute, ScopeSessionRequester, ScopeSessionsResult } from '@/degram/session-list'
 
 const SESSION_LIST_REQUEST_TIMEOUT_MS = 60_000
 
