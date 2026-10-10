@@ -74,6 +74,20 @@ export function productOutput(source, out, inputs) {
   return { source: src, out: dest }
 }
 
+function renameWithRetry(from, to) {
+  const maxAttempts = 20
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(from, to)
+      return
+    } catch (error) {
+      if (!['EACCES', 'EPERM', 'ENOTEMPTY'].includes(error?.code) || attempt >= maxAttempts) throw error
+      // Windows antivirus/indexers can briefly hold a just-built directory.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+    }
+  }
+}
+
 // Never delete the last successful product before a compiler succeeds. The
 // staging and backup directories are siblings so publication stays on one FS.
 export function publishDirectory(staged, out, { source } = {}) {
@@ -82,9 +96,9 @@ export function publishDirectory(staged, out, { source } = {}) {
   writeFileSync(path.join(staged, productMarker), productOwner)
   const backup = `${staged}.previous`
   const previous = existsSync(out)
-  if (previous) renameSync(out, backup)
+  if (previous) renameWithRetry(out, backup)
   try {
-    renameSync(staged, out)
+    renameWithRetry(staged, out)
   } catch (error) {
     if (previous) renameSync(backup, out)
     throw error
