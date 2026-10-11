@@ -191,6 +191,24 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     deps.send(DEGRAM_CHANNELS.stateChanged, state)
   }
 
+  /**
+   * The DG page of a signed-in session: the chosen mode once a project is open, otherwise the start page, the only
+   * page whose project choice reaches DeGram (D-33; the #degram slice cannot announce one).
+   */
+  const showDgForScope = (): Promise<void> =>
+    scope.getState().status === 'ready' ? dgView.showDg() : dgView.showStart()
+
+  /** Back on the start screen with the DG session intact: show the start page unless it is already there. */
+  const restoreStartPage = async (): Promise<void> => {
+    const { page, mode } = dgView.getState()
+
+    if (session.state().kind !== 'signed-in' || scope.getState().status === 'ready' || (page === 'dg' && mode === 'full')) {
+      return
+    }
+
+    await dgView.showStart()
+  }
+
   const onEvent = (event: DegramEvent): void => {
     if (event.type === 'dg-unreachable') {
       reachable = false
@@ -198,6 +216,9 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       reachable = true
     } else if (event.type === 'session-ended') {
       void viewTask(() => dgView.showSignIn())
+    } else if (event.type === 'access-revoked' || event.type === 'pairing-revoked') {
+      // An access loss left the view blank, a pairing loss may have left the graph slice: neither offers a project.
+      void viewTask(restoreStartPage)
     }
 
     deps.send(DEGRAM_CHANNELS.event, event)
@@ -238,7 +259,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
     // Signing in inside the DG page: show the DG page once the session is confirmed.
     if (auth.kind === 'signed-in' && !wasSignedIn) {
-      void viewTask(() => dgView.showDg())
+      void viewTask(showDgForScope)
       void session.probePairing().then(result => {
         if (result === 'revoked') {
           onEvent({ type: 'pairing-revoked' })
@@ -297,7 +318,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
         // A first sign-in already queued the DG page through the auth listener; a session that was signed in all
         // along (unreachable in between) has to be loaded here.
         if (wasSignedIn) {
-          await viewTask(() => dgView.showDg())
+          await viewTask(showDgForScope)
         }
       } else {
         await viewTask(() => dgView.showSignIn())

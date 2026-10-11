@@ -90,6 +90,8 @@ export interface DgView {
   setMode: (mode: DgMode) => Promise<void>
   showSignIn: () => Promise<void>
   showDg: () => Promise<void>
+  /** The start screen's DG page: the whole V2 app in host mode, whose Projects region announces the choice (D-33). */
+  showStart: () => Promise<void>
   reload: () => Promise<void>
   /** Blank the view so no tenant page stays painted. */
   reset: () => Promise<void>
@@ -259,6 +261,12 @@ export function createDgView(deps: DgViewDeps): DgView {
     await load(dgUrlFor(origin, state.mode))
   }
 
+  // The #degram graph slice has no project announcement, so a start screen showing it is a dead end.
+  const showStart = async (): Promise<void> => {
+    state = { page: 'dg', mode: 'full' }
+    await load(dgUrlFor(origin, 'full'))
+  }
+
   return {
     view,
     getState: (): DgViewState => state,
@@ -275,6 +283,7 @@ export function createDgView(deps: DgViewDeps): DgView {
     },
     showSignIn,
     showDg,
+    showStart,
     reload: async (): Promise<void> => {
       if (state.page === 'blank') {
         await load('about:blank')

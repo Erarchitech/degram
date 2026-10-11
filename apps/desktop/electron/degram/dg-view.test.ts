@@ -185,6 +185,16 @@ describe('modes, sign-in page and reset', () => {
     expect(fake.loaded).toEqual([`${ORIGIN}/#degram`, `${ORIGIN}/?host=degram`])
   })
 
+  it('the start page is the whole V2 app in host mode, whatever mode was chosen before (D-33)', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showDg()
+    await dgView.showStart()
+
+    expect(dgView.getState()).toEqual({ page: 'dg', mode: 'full' })
+    expect(fake.loaded).toEqual([`${ORIGIN}/#degram`, `${ORIGIN}/?host=degram`])
+  })
+
   it('remembers a mode chosen before the DG page is shown and does not load while on sign-in', async () => {
     const { dgView, fake } = setup()
 

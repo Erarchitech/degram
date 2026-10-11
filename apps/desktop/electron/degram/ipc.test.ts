@@ -119,12 +119,15 @@ describe('degram runtime: sign-in page and initial state', () => {
     })
   })
 
-  it('starts on the graph slice when signed in and still selects no project implicitly', async () => {
+  it('starts on the host-mode V2 app when signed in and still selects no project implicitly', async () => {
     const r = rig()
 
     await r.runtime.start()
 
-    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`])
+    // The start screen's project choice lives in the Projects region of the host-mode app; the #degram slice
+    // cannot announce one (0.1.7 live UAT: the project click opened only the compact graph).
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`])
+    expect(r.runtime.getState().dg).toMatchObject({ page: 'dg', mode: 'full' })
     expect(r.runtime.getState().auth).toMatchObject({
       kind: 'signed-in',
       username: 'alice',
@@ -157,8 +160,30 @@ describe('degram runtime: sign-in page and initial state', () => {
     await r.runtime.onAuthCookieChanged()
 
     expect(r.runtime.getState().auth.kind).toBe('signed-in')
-    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/#degram`)
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`)
     expect(states(r.sent).pop().auth.kind).toBe('signed-in')
+  })
+
+  it('a sign-in after the user had chosen the graph slice still lands on the host-mode start page', async () => {
+    const r = rig({ signedIn: false })
+
+    await r.runtime.start()
+    await r.runtime.setDgMode('graph')
+
+    r.dg.setMe(r.dg.signedInMe('alpha'))
+    await r.runtime.onAuthCookieChanged()
+
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`)
+    expect(r.runtime.getState().dg.mode).toBe('full')
+  })
+
+  it('a project chosen on the start page is announced by the page and opens the scope', async () => {
+    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=alpha`, true)
+
+    await vi.waitFor(() => expect(r.runtime.getState().scope).toMatchObject({ status: 'ready', project: 'alpha' }))
   })
 
   it('an unreachable DG server on start reports it at once, loads nothing and publishes reachable false (G-16)', async () => {
@@ -205,24 +230,40 @@ describe('degram runtime: retryDg after DG was unreachable (G-16)', () => {
     r.dg.setMe(r.dg.signedInMe('alpha'))
     await r.runtime.retryDg()
 
-    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`])
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`])
     expect(r.runtime.getState().auth.kind).toBe('signed-in')
   })
 
-  it('reloads the DG page of a session that stayed signed in while DG was unreachable', async () => {
+  it('reloads the start page of a session that stayed signed in without a project while DG was unreachable', async () => {
     const r = rig()
 
     await r.runtime.start()
-    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`])
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`])
 
     r.fake.emit('did-start-loading')
-    r.fake.emit('did-fail-load', {}, -101, 'ERR_CONNECTION_RESET', `${r.dg.origin}/#degram`, true)
+    r.fake.emit('did-fail-load', {}, -101, 'ERR_CONNECTION_RESET', `${r.dg.origin}/?host=degram`, true)
     r.fake.emit('did-finish-load')
     expect(r.runtime.getState().dg.reachable).toBe(false)
 
     await r.runtime.retryDg()
 
-    expect(r.fake.loaded).toEqual([`${r.dg.origin}/#degram`, `${r.dg.origin}/#degram`])
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`, `${r.dg.origin}/?host=degram`])
+  })
+
+  it('reloads the chosen mode of a session with an open project after DG was unreachable', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+    await r.runtime.setDgMode('graph')
+
+    r.fake.emit('did-start-loading')
+    r.fake.emit('did-fail-load', {}, -101, 'ERR_CONNECTION_RESET', `${r.dg.origin}/#degram`, true)
+    r.fake.emit('did-finish-load')
+
+    await r.runtime.retryDg()
+
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/#degram`)
   })
 
   it('stays unreachable and loads nothing while /auth/me still fails', async () => {
@@ -585,6 +626,26 @@ describe('degram runtime: revocation reaches the renderer only after clearing (T
     expect(JSON.stringify(last.scope)).not.toContain('alpha')
   })
 
+  it('after an access loss the start screen gets the host-mode page back, not a blank view', async () => {
+    const r = rig({
+      memberships: [
+        { project: 'alpha', company: 'ACME' },
+        { project: 'beta', company: 'ACME' }
+      ]
+    })
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+    await r.runtime.setDgMode('graph')
+    r.dg.setMe(r.dg.signedInMe('beta'))
+
+    await r.runtime.onWindowFocus()
+    await vi.waitFor(() => expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`))
+
+    expect(r.log.indexOf('view.load about:blank')).toBeLessThan(r.log.entries.lastIndexOf(`view.load ${r.dg.origin}/?host=degram`))
+    expect(r.runtime.getState().dg).toMatchObject({ page: 'dg', mode: 'full' })
+  })
+
   it('forwards agent outcomes to the scope controller and reports whether the code was an access signal', async () => {
     const r = rig()
 
@@ -705,6 +766,32 @@ describe('DeGram pairing over IPC (Phase 1301-17, D-25)', () => {
     expect(r.runtime.getState().pairing.status).toBe('revoked')
     expect(eventsOf(r.sent).filter(e => e.type === 'pairing-revoked')).toHaveLength(1)
     expect(states(r.sent).at(-1).pairing.status).toBe('revoked')
+  })
+
+  it('a pairing revoked while the graph slice is shown brings the host-mode start page back', async () => {
+    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
+
+    await r.runtime.start()
+    await r.runtime.setDgMode('graph')
+    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/#degram`)
+
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    await r.runtime.selectProject('alpha')
+
+    await vi.waitFor(() => expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`))
+  })
+
+  it('a pairing revoked while the start page is already shown does not reload it', async () => {
+    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
+
+    await r.runtime.start()
+    const loads = r.fake.loaded.length
+
+    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    await r.runtime.selectProject('alpha')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(r.fake.loaded.length).toBe(loads)
   })
 })
 

@@ -151,7 +151,7 @@ describe('degram main wiring', () => {
 
     expect(w.children).toEqual([fake.view])
     expect(fake.visible()).toBe(false)
-    expect(fake.loaded).toEqual([`${dg.origin}/#degram`])
+    expect(fake.loaded).toEqual([`${dg.origin}/?host=degram`])
     expect(w.sent.some(s => s.channel === DEGRAM_CHANNELS.stateChanged)).toBe(true)
   })
 
@@ -227,7 +227,7 @@ describe('degram main wiring', () => {
     wiring.attachWindow(second.window as never)
 
     expect(second.children).toEqual([fake.view])
-    expect(fake.loaded).toEqual([`${dg.origin}/#degram`])
+    expect(fake.loaded).toEqual([`${dg.origin}/?host=degram`])
   })
 
   it('does not send to a window that is gone', async () => {
