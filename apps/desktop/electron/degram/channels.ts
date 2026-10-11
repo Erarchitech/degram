@@ -19,6 +19,9 @@ export const DEGRAM_CHANNELS = {
   // Phase 1301-20 (G-17): the tray's sign-out entry. The renderer owns the label (locale) and the confirmation.
   setTrayLabels: 'degram:set-tray-labels',
   requestSignOut: 'degram:request-sign-out',
+  // Phase 1301-34 (D-41, D-42): steer the DG page to a region from the sidebar; the DeGram locale for the page.
+  dgGo: 'degram:dg-go',
+  setLocale: 'degram:set-locale',
   stateChanged: 'degram:state-changed',
   event: 'degram:event'
 } as const

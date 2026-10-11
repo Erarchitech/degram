@@ -20,6 +20,17 @@ import type { DegramEvent } from './scope'
 
 export type DgMode = 'graph' | 'full'
 export type DgViewPage = 'blank' | 'sign-in' | 'dg'
+/** What the host tells the page about the scope (D-44), exactly the vocabulary of ui-v2/src/lib/hostMode.js. */
+export type DgHostState = 'connecting' | 'ready' | 'idle'
+/** The regions the host may steer the page to (D-42). */
+export type DgRegion = 'landing' | 'graph' | 'model' | 'connectors'
+export type DgLocale = 'ru' | 'en'
+
+export const DG_HOST_STATES: readonly DgHostState[] = ['connecting', 'ready', 'idle']
+export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'connectors']
+
+const HOST_STATE_FRAGMENT = /^#degram-state=(connecting|ready|idle)$/
+const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors)$/
 
 export interface DgViewState {
   page: DgViewPage
@@ -74,6 +85,8 @@ export interface DgViewDeps {
   logger: Logger
   /** A validated project name announced by the untrusted DG page through its URL hash only. */
   onProjectAnnounced?: (name: string) => void
+  /** The untrusted DG page asked for a fresh chat through the exact `#degram-new-session` hash (D-41). */
+  onNewSessionRequested?: () => void
 }
 
 export interface DgBounds {
@@ -92,6 +105,19 @@ export interface DgView {
   showDg: () => Promise<void>
   /** The start screen's DG page: the whole V2 app in host mode, whose Projects region announces the choice (D-33). */
   showStart: () => Promise<void>
+  /**
+   * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
+   * `#degram-state=connecting|ready|idle` or `#degram-go=landing|graph|model|connectors`. Throws on anything else.
+   * Nothing is loaded while the host page is not shown.
+   */
+  signal: (fragment: string) => Promise<void>
+  /**
+   * Remember the scope state synchronously (the caller serializes `signal`): every later full page load carries it
+   * in its initial hash, so a reload or a sign-in round trip never shows a stale ring.
+   */
+  setHostState: (next: DgHostState) => void
+  /** The DeGram locale, appended as `&lang=ru|en` to the host page URL of the next load. */
+  setLocale: (locale: DgLocale) => void
   reload: () => Promise<void>
   /** Blank the view so no tenant page stays painted. */
   reset: () => Promise<void>
@@ -134,6 +160,11 @@ export function dgUrlFor(origin: string, mode: DgMode): string {
   return mode === 'graph' ? `${origin}/#degram` : `${origin}/?host=degram`
 }
 
+/** The host-mode page URL (the whole V2 app); the locale rides in the query so the page renders in it. */
+function hostPageUrl(origin: string, lang: DgLocale | null): string {
+  return lang ? `${dgUrlFor(origin, 'full')}&lang=${lang}` : dgUrlFor(origin, 'full')
+}
+
 const ABORTED = -3
 /** Storage kinds wiped when the DG sign-in cookie is to survive (an access loss on one project). */
 const TENANT_STORAGES = ['localstorage', 'indexdb', 'cachestorage', 'serviceworkers', 'filesystem', 'websql']
@@ -163,6 +194,10 @@ export function createDgView(deps: DgViewDeps): DgView {
   const view: DgWebViewLike = deps.createView(DG_VIEW_WEB_PREFERENCES)
   const contents = view.webContents
   let state: DgViewState = { page: 'blank', mode: 'graph' }
+  let lang: DgLocale | null = null
+  let hostState: DgHostState = 'idle'
+  /** The host-mode page URL that is currently loaded; a fragment signal is a change of its hash only. */
+  let loadedBase: string | null = null
 
   const load = async (url: string): Promise<void> => {
     try {
@@ -194,6 +229,11 @@ export function createDgView(deps: DgViewDeps): DgView {
     }
     let hash: string
     try { hash = new URL(url).hash } catch { return }
+    if (hash === '#degram-new-session') {
+      deps.onNewSessionRequested?.()
+
+      return
+    }
     const match = /^#degram-select=([^&]{1,200})$/.exec(hash)
     if (!match) {
       return
@@ -251,20 +291,44 @@ export function createDgView(deps: DgViewDeps): DgView {
 
   contents.session.setPermissionRequestHandler?.((_webContents, _permission, callback) => callback(false))
 
+  /** Load a page of this view and remember which host base URL it is (`null` for a page that takes no fragment). */
+  const loadPage = async (base: string | null, url: string): Promise<void> => {
+    loadedBase = base
+    await load(url)
+  }
+
+  /** The URL of a full-mode load: the base, carrying the remembered host state so a reload keeps the ring state. */
+  const hostLoadUrl = (base: string): string => (hostState === 'idle' ? base : `${base}#degram-state=${hostState}`)
+
   const showSignIn = async (): Promise<void> => {
     state = { ...state, page: 'sign-in' }
-    await load(`${origin}/?host=degram`)
+
+    const base = hostPageUrl(origin, lang)
+
+    await loadPage(base, base)
+  }
+
+  const showMode = async (mode: DgMode): Promise<void> => {
+    if (mode === 'graph') {
+      await loadPage(null, dgUrlFor(origin, 'graph'))
+
+      return
+    }
+
+    const base = hostPageUrl(origin, lang)
+
+    await loadPage(base, hostLoadUrl(base))
   }
 
   const showDg = async (): Promise<void> => {
     state = { ...state, page: 'dg' }
-    await load(dgUrlFor(origin, state.mode))
+    await showMode(state.mode)
   }
 
   // The #degram graph slice has no project announcement, so a start screen showing it is a dead end.
   const showStart = async (): Promise<void> => {
     state = { page: 'dg', mode: 'full' }
-    await load(dgUrlFor(origin, 'full'))
+    await showMode('full')
   }
 
   return {
@@ -278,15 +342,40 @@ export function createDgView(deps: DgViewDeps): DgView {
       state = { ...state, mode }
 
       if (state.page === 'dg') {
-        await load(dgUrlFor(origin, mode))
+        await showMode(mode)
       }
+    },
+    signal: async (fragment: string): Promise<void> => {
+      if (typeof fragment !== 'string' || !(HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment))) {
+        throw new Error('unknown DG signal')
+      }
+
+      // Only a loaded host page can take a fragment: not the #degram slice, a blank view or a foreign page.
+      if (state.page === 'dg' && state.mode === 'full' && loadedBase) {
+        // Same document, new hash: Chromium treats it as an in-page navigation and does not reload.
+        await load(`${loadedBase}${fragment}`)
+      }
+    },
+    setHostState: (next: DgHostState): void => {
+      if (!DG_HOST_STATES.includes(next)) {
+        throw new Error('unknown DG host state')
+      }
+
+      hostState = next
+    },
+    setLocale: (locale: DgLocale): void => {
+      if (locale !== 'ru' && locale !== 'en') {
+        throw new Error('unknown DG locale')
+      }
+
+      lang = locale
     },
     showSignIn,
     showDg,
     showStart,
     reload: async (): Promise<void> => {
       if (state.page === 'blank') {
-        await load('about:blank')
+        await loadPage(null, 'about:blank')
 
         return
       }
@@ -295,7 +384,7 @@ export function createDgView(deps: DgViewDeps): DgView {
     },
     reset: async (): Promise<void> => {
       state = { ...state, page: 'blank' }
-      await load('about:blank')
+      await loadPage(null, 'about:blank')
     },
     clearStorage: async (options?: { keepCookies?: boolean }): Promise<void> => {
       if (options?.keepCookies) {

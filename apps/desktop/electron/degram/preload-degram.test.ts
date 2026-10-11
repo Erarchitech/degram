@@ -67,6 +67,8 @@ it('exposes a typed degram namespace with exactly the capability bridge and no t
       'retryDg',
       'setDgBounds',
       'setTrayLabels',
+      'dgGo',
+      'setLocale',
       'onRequestSignOut',
       'reportOutcome',
       'openExternalConfirmed'
@@ -92,6 +94,8 @@ it('maps every method to its degram: channel and passes the argument through', a
   await degram.setDgBounds({ x: 1, y: 2, width: 3, height: 4 })
   await degram.setDgBounds(null)
   await degram.setTrayLabels({ signOut: 'Sign out of DG' })
+  await degram.dgGo('graph')
+  await degram.setLocale('ru')
   await degram.reportOutcome('CREDENTIALS_EXPIRED')
   await degram.openExternalConfirmed('https://example.test/')
 
@@ -105,6 +109,8 @@ it('maps every method to its degram: channel and passes the argument through', a
     [DEGRAM_CHANNELS.setDgBounds, { x: 1, y: 2, width: 3, height: 4 }],
     [DEGRAM_CHANNELS.setDgBounds, null],
     [DEGRAM_CHANNELS.setTrayLabels, { signOut: 'Sign out of DG' }],
+    [DEGRAM_CHANNELS.dgGo, 'graph'],
+    [DEGRAM_CHANNELS.setLocale, 'ru'],
     [DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED'],
     [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/']
   ])

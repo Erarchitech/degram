@@ -1,7 +1,7 @@
 // sign-in-state.tsx — the not-signed-in surface (D-05, 1301-UI-SPEC focal point 1, E7).
 //
 // The login page is the existing ui-v2 page, opened top-level in the isolated DG partition by Electron main and
-// shown in a native view. This component owns what surrounds it: the wordmark fixed above, the session-ended
+// shown in a native view. This component owns what surrounds it: the session-ended
 // notice (after a 401) above the view, the Connecting-to-DG loader until the page paints, and the unreachable
 // ErrorState. DeGram adds no form of its own.
 
@@ -69,8 +69,7 @@ export function SignInState({ children }: { children?: React.ReactNode } = {}) {
 
   return (
     <section className="flex h-full min-h-0 flex-col items-center gap-8 px-6 pt-12 pb-6" data-testid="degram-sign-in">
-      <DegramWordmark />
-
+      {/* D-42: no «DEGRAM» heading above the start screen; the brand stays in the window title. */}
       {children}
 
       {sessionEnded && (

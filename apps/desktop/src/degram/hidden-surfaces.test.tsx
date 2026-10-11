@@ -171,11 +171,12 @@ describe('rendered DeGram surfaces never name the served model (T-1301-13-01)', 
     const h = install(state)
 
     h.emitState(state)
-    const { baseElement } = render(withActions(ui()))
+    const { baseElement, container } = render(withActions(ui()))
 
     const text = (baseElement.textContent ?? '').toLowerCase()
 
-    expect(text.length).toBeGreaterThan(0)
+    // The surface mounted (the start screen no longer carries a wordmark, so text alone cannot prove it).
+    expect(container.childElementCount).toBeGreaterThan(0)
     expect(text).not.toContain('genpro')
     expect(text).not.toContain('mimo')
     expect(screen.queryByText(/genpro|mimo/i)).toBeNull()

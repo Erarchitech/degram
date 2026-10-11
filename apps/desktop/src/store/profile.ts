@@ -460,7 +460,12 @@ export function resolveActiveSourceOwnerRoute(profile: string): AgentProfileRout
 // resets to the intro draft, so we never strand the user in an orphaned view.
 export const $freshSessionRequest = atom(0)
 
-export function requestFreshSession(): void {
+// Whether the pending fresh-session reset leaves the route where it is. DeGram resets the draft of a newly ready
+// scope while the shell stays on the DG page (D-41); every other caller wants the stock jump to the new-chat route.
+export const $freshSessionPreserveRoute = atom(false)
+
+export function requestFreshSession(options?: { preserveRoute?: boolean }): void {
+  $freshSessionPreserveRoute.set(options?.preserveRoute === true)
   $freshSessionRequest.set($freshSessionRequest.get() + 1)
 }
 

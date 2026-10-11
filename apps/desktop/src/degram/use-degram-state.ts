@@ -11,12 +11,13 @@ import { atom } from 'nanostores'
 import { createContext, useContext } from 'react'
 
 import { translateNow } from '@/i18n/runtime'
+import { setConnectionScopeTag } from '@/lib/connection-scoped'
 import { notify } from '@/store/notifications'
 
 import type { DegramBridge, DegramState } from '../../electron/degram/ipc'
 import type { DegramEvent } from '../../electron/degram/scope'
 
-import { type NewScopeHandler, routeDisagreesWithScope } from './scope-route'
+import { degramScopeTag, type NewScopeHandler, routeDisagreesWithScope } from './scope-route'
 
 /** A boot refusal main reported (plan 04: HOME_OVERLAP). */
 export interface DegramBootError {
@@ -61,12 +62,16 @@ let reachableSinceState = false
 let activeBridge: DegramBridge | null = null
 // undefined: no scope observed yet. null: observed without a ready scope. number: the epoch already handled.
 let handledEpoch: null | number | undefined
+// The shell host's reaction to the DG page's «Новая сессия» pill (D-41).
+let newSessionHandler: (() => void) | undefined
 
 export function resetDegramStore(): void {
   $degram.set(INITIAL)
   reachableSinceState = false
   activeBridge = null
   handledEpoch = undefined
+  newSessionHandler = undefined
+  setConnectionScopeTag(null)
 }
 
 export function useDegram(): DegramStore {
@@ -179,6 +184,14 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
     case 'backend-start-failed':
       $degram.set({ ...$degram.get(), backendFailed: { project: event.project } })
       return
+
+    case 'new-session-requested':
+      // Main forwards the pill only while a scope is ready; the renderer checks its own mirror too.
+      if ($degram.get().state?.scope.status === 'ready') {
+        newSessionHandler?.()
+      }
+
+      return
   }
 }
 
@@ -188,16 +201,20 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
  */
 export function startDegramSync(
   bridge: DegramBridge | undefined = degramBridge(),
-  onNewScope?: NewScopeHandler
+  onNewScope?: NewScopeHandler,
+  onNewSession?: () => void
 ): () => void {
   if (!bridge) {
     return () => undefined
   }
 
   activeBridge = bridge
+  newSessionHandler = onNewSession
   let disposed = false
 
   const take = (state: DegramState): void => {
+    // Scope-keyed stores (pins) move first, so nothing paints the previous scope's list under the new state.
+    setConnectionScopeTag(degramScopeTag(state))
     applyState(state)
 
     const scope = noteScope(state)
@@ -239,6 +256,7 @@ export function startDegramSync(
 
     if (activeBridge === bridge) {
       activeBridge = null
+      newSessionHandler = undefined
     }
   }
 }
@@ -286,11 +304,14 @@ export interface DegramActions {
   stopResponse: () => Promise<void>
   /** Open a fresh chat for the scope that was just selected (D-19); the shell host moves the route first (G-7). */
   startNewChat: () => void
+  /** Show the DG page's ring for a newly ready scope: reset the draft without leaving the route (D-41). */
+  showRing: () => void
 }
 
 export const DegramActionsContext = createContext<DegramActions>({
   stopResponse: async () => (await import('./host-actions')).stopActiveResponse(),
-  startNewChat: () => void import('./host-actions').then(m => m.startFreshChat())
+  startNewChat: () => void import('./host-actions').then(m => m.startFreshChat()),
+  showRing: () => void import('./host-actions').then(m => m.startFreshChat({ preserveRoute: true }))
 })
 
 export function useDegramActions(): DegramActions {

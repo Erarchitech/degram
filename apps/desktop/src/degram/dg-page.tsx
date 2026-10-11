@@ -9,7 +9,6 @@
 import { useEffect, useRef } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { SegmentedControl } from '@/components/ui/segmented-control'
 import { useI18n } from '@/i18n'
 import { RefreshCw } from '@/lib/icons'
 
@@ -17,8 +16,6 @@ import { FirstScreen } from './degram-gate'
 import { DgConnecting, DgUnreachable } from './sign-in-state'
 import { degramBridge, useDegram } from './use-degram-state'
 import { useDgBounds } from './use-dg-bounds'
-
-type DgMode = 'full' | 'graph'
 
 export function DgPage() {
   const { t } = useI18n()
@@ -30,15 +27,17 @@ export function DgPage() {
   const signedIn = state?.auth.kind === 'signed-in'
   const ready = signedIn && state.scope.status === 'ready'
   const unreachable = ready && state.dg.reachable === false
-  const mode: DgMode = state?.dg.mode ?? 'graph'
+  const mode = state?.dg.mode
   const page = state?.dg.page
 
   // Bring the DG view to the DG page once a project is open. Main only loads the DG web on a sign-in transition,
-  // so a returning session (or a scope reopened after a revocation) starts from a blank view: setting the current
-  // mode is the idempotent "show it". It fires only while the view is blank, never on the mode change itself.
+  // so a returning session (or a scope reopened after a revocation) starts from a blank view: setting the mode is
+  // the idempotent "show it". The mode is always the whole DG app (D-42: the graph/full switch is gone, the sidebar
+  // steers the region), so it also corrects a view that still shows the #degram slice. It fires only for a blank or
+  // slice view, never on its own echo.
   useEffect(() => {
-    if (ready && page === 'blank') {
-      void bridge?.setDgMode(mode)
+    if (ready && (page === 'blank' || mode === 'graph')) {
+      void bridge?.setDgMode('full')
     }
   }, [bridge, mode, page, ready])
 
@@ -54,15 +53,7 @@ export function DgPage() {
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden" data-testid="dg-page">
-      <div className="flex shrink-0 items-center justify-between px-6 py-1">
-        <SegmentedControl<DgMode>
-          onChange={next => void bridge?.setDgMode(next)}
-          options={[
-            { id: 'graph', label: copy.cta.dgGraph },
-            { id: 'full', label: copy.cta.dgFull }
-          ]}
-          value={mode}
-        />
+      <div className="flex shrink-0 items-center justify-end px-6 py-1">
         <Button
           aria-label={copy.dgPage.reloadAria}
           onClick={() => void bridge?.reloadDg()}

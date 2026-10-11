@@ -57,6 +57,7 @@ import { $poolLimitsSettingsRequest } from '@/store/pool-limits'
 import { $previewTarget } from '@/store/preview'
 import {
   $activeGatewayProfile,
+  $freshSessionPreserveRoute,
   $freshSessionRequest,
   $profileScope,
   ALL_PROFILES,
@@ -607,7 +608,8 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     }
 
     lastFreshRef.current = freshSessionRequest
-    startFreshSessionDraft()
+    // DeGram (D-41): a newly ready scope resets the draft but stays on the DG page.
+    startFreshSessionDraft($freshSessionPreserveRoute.get() ? { preserveRoute: true } : undefined)
   }, [freshSessionRequest, startFreshSessionDraft])
 
   // Swapping the live gateway to another source or profile must re-pull that

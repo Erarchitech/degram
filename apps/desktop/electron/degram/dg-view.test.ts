@@ -8,7 +8,13 @@ import { createFakeNavigationEvent, createFakeViewFactory, createLog } from './t
 
 const ORIGIN = 'http://dg.test:8080'
 
-function setup(options: { log?: ReturnType<typeof createLog>; onProjectAnnounced?: (name: string) => void } = {}) {
+function setup(
+  options: {
+    log?: ReturnType<typeof createLog>
+    onProjectAnnounced?: (name: string) => void
+    onNewSessionRequested?: () => void
+  } = {}
+) {
   const log = options.log ?? createLog()
   const viewFactory = createFakeViewFactory(log)
   const events: DegramEvent[] = []
@@ -21,7 +27,8 @@ function setup(options: { log?: ReturnType<typeof createLog>; onProjectAnnounced
     emit: event => events.push(event),
     openExternal,
     logger,
-    onProjectAnnounced: options.onProjectAnnounced
+    onProjectAnnounced: options.onProjectAnnounced,
+    onNewSessionRequested: options.onNewSessionRequested
   })
 
   return { ...viewFactory, dgView, events, openExternal, logger, log }
@@ -354,5 +361,137 @@ describe('project announcements from the DG landing (D-33)', () => {
 
     expect(announced).toHaveBeenCalledTimes(1)
     expect(announced).toHaveBeenCalledWith('Alpha One')
+  })
+})
+
+describe('host to page fragments (D-41, D-44)', () => {
+  const HOST = `${ORIGIN}/?host=degram`
+
+  it('signals the fixed vocabulary as a fragment of the loaded page URL, never reloading', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showStart()
+    await dgView.signal('#degram-state=connecting')
+    await dgView.signal('#degram-state=ready')
+    await dgView.signal('#degram-go=graph')
+    await dgView.signal('#degram-go=landing')
+    await dgView.signal('#degram-state=idle')
+
+    expect(fake.loaded).toEqual([
+      HOST,
+      `${HOST}#degram-state=connecting`,
+      `${HOST}#degram-state=ready`,
+      `${HOST}#degram-go=graph`,
+      `${HOST}#degram-go=landing`,
+      `${HOST}#degram-state=idle`
+    ])
+    expect(fake.reloads()).toBe(0)
+  })
+
+  it('rejects anything outside the fixed vocabulary without loading', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showStart()
+
+    for (const bad of [
+      '#degram-state=bogus',
+      '#degram-go=projects',
+      '#degram-go=graph&x=1',
+      '#degram-select=Alpha',
+      'degram-state=ready',
+      '#degram-state=ready#x',
+      '',
+      42 as unknown as string
+    ]) {
+      await expect(dgView.signal(bad)).rejects.toThrow()
+    }
+
+    expect(fake.loaded).toEqual([HOST])
+  })
+
+  it('does nothing visible while the DG page is not shown, but remembers the state for the next load', async () => {
+    const { dgView, fake } = setup()
+
+    dgView.setHostState('ready')
+    await dgView.signal('#degram-state=ready')
+    expect(fake.loaded).toEqual([])
+
+    await dgView.showStart()
+    expect(fake.loaded).toEqual([`${HOST}#degram-state=ready`])
+
+    dgView.setHostState('idle')
+    await dgView.showStart()
+    expect(fake.loaded[fake.loaded.length - 1]).toBe(HOST)
+    expect(() => dgView.setHostState('bogus' as never)).toThrow()
+
+    await dgView.reset()
+    await dgView.signal('#degram-go=graph')
+    expect(fake.loaded[fake.loaded.length - 1]).toBe('about:blank')
+  })
+
+  it('a locale appends &lang= to the next host load and a fragment never changes the loaded page query', async () => {
+    const { dgView, fake } = setup()
+
+    dgView.setLocale('ru')
+    await dgView.showStart()
+    dgView.setLocale('en')
+    await dgView.signal('#degram-state=ready')
+    await dgView.showSignIn()
+
+    expect(fake.loaded).toEqual([
+      `${HOST}&lang=ru`,
+      `${HOST}&lang=ru#degram-state=ready`,
+      `${HOST}&lang=en`
+    ])
+    expect(() => dgView.setLocale('de' as never)).toThrow()
+  })
+
+  it('the graph slice (#degram) takes no host fragment or locale', async () => {
+    const { dgView, fake } = setup()
+
+    dgView.setLocale('ru')
+    await dgView.showDg()
+    await dgView.signal('#degram-state=ready')
+
+    expect(fake.loaded).toEqual([`${ORIGIN}/#degram`])
+  })
+})
+
+describe('new-session request from the DG page (D-41, T-1301-34-01)', () => {
+  it('accepts exactly #degram-new-session in the main frame of the DG origin', () => {
+    const requested = vi.fn()
+    const { fake } = setup({ onNewSessionRequested: requested })
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-new-session`, true)
+    expect(requested).toHaveBeenCalledTimes(1)
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-new-session`, true)
+    expect(requested).toHaveBeenCalledTimes(2)
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-new-session`, false)
+    fake.emit('did-navigate-in-page', {}, 'https://evil.test/#degram-new-session', true)
+    fake.emit('did-navigate-in-page', {}, 'http://dg.test:8080@evil.test/#degram-new-session', true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-new-session=1`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-new-session&x`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-new-sessions`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#Degram-New-Session`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#x#degram-new-session`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram`, true)
+    fake.emit('did-navigate-in-page', {}, 'not a url', true)
+
+    expect(requested).toHaveBeenCalledTimes(2)
+  })
+
+  it('a new-session hash never reaches the project announcement and a selection hash never opens a chat', () => {
+    const announced = vi.fn()
+    const requested = vi.fn()
+    const { fake } = setup({ onProjectAnnounced: announced, onNewSessionRequested: requested })
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-new-session`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/#degram-select=Alpha`, true)
+
+    expect(requested).toHaveBeenCalledTimes(1)
+    expect(announced).toHaveBeenCalledTimes(1)
+    expect(announced).toHaveBeenCalledWith('Alpha')
   })
 })

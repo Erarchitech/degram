@@ -741,6 +741,9 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
 
       return () => ipcRenderer.removeListener(DEGRAM_CHANNELS.requestSignOut, listener)
     },
+    // Phase 1301-34 (D-42): sidebar rows steer the embedded DG page; the locale reaches the page URL.
+    dgGo: region => ipcRenderer.invoke(DEGRAM_CHANNELS.dgGo, region),
+    setLocale: locale => ipcRenderer.invoke(DEGRAM_CHANNELS.setLocale, locale),
     reportOutcome: code => ipcRenderer.invoke(DEGRAM_CHANNELS.reportOutcome, code),
     openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url)
   }

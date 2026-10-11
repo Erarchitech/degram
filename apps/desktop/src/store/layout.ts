@@ -126,8 +126,12 @@ export const $sidebarWidth: ReadableAtom<number> = computed($paneStates, states 
 // Pins omit the profile from that key: `sessions.pinned` is gateway-wide,
 // and a per-profile localStorage copy is how an unpin in profile A comes
 // back when the window rescopes to B (stale ids flush as pinned=true).
+//
+// DeGram (D-42) also tags the key with the active scope (user + company + project, `setConnectionScopeTag`), so a
+// pin made in one project never shows in another project or for another user. Other variants never set a tag.
 export const $pinnedSessionIds = connectionScopedAtom(SIDEBAR_PINNED_STORAGE_KEY, [] as string[], Codecs.stringArray, {
-  includeProfile: false
+  includeProfile: false,
+  scopeTagged: true
 })
 export const $sidebarSessionOrderIds = connectionScopedAtom(
   SIDEBAR_SESSION_ORDER_STORAGE_KEY,

@@ -10,7 +10,7 @@ import { $degramEnabled } from '@/store/degram-flag'
 import type { DegramBridge, DegramState } from '../../electron/degram/ipc'
 import type { DegramEvent } from '../../electron/degram/scope'
 
-import { DegramActionsContext, startDegramSync } from './use-degram-state'
+import { type DegramActions, DegramActionsContext, startDegramSync } from './use-degram-state'
 
 export const noScope = {
   status: 'no-project',
@@ -76,6 +76,8 @@ export function install(initial: DegramState): Harness {
     retryDg: vi.fn(async () => undefined),
     setDgBounds: vi.fn(async () => undefined),
     setTrayLabels: vi.fn(async () => undefined),
+    dgGo: vi.fn(async () => undefined),
+    setLocale: vi.fn(async () => undefined),
     onRequestSignOut: vi.fn(cb => {
       signOutListener = cb
 
@@ -102,5 +104,6 @@ export function install(initial: DegramState): Harness {
 
 export const withActions = (
   ui: ReactNode,
-  actions = { stopResponse: vi.fn(async () => undefined), startNewChat: vi.fn() }
-) => <DegramActionsContext.Provider value={actions}>{ui}</DegramActionsContext.Provider>
+  actions: Omit<DegramActions, 'showRing'> &
+    Partial<Pick<DegramActions, 'showRing'>> = { stopResponse: vi.fn(async () => undefined), startNewChat: vi.fn() }
+) => <DegramActionsContext.Provider value={{ showRing: vi.fn(), ...actions }}>{ui}</DegramActionsContext.Provider>

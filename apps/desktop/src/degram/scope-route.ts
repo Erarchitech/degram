@@ -16,6 +16,22 @@ import { $activeGatewayProfile, ensureGatewayProfile, normalizeProfileKey, pinNe
 
 import type { DegramState } from '../../electron/degram/ipc'
 
+/**
+ * The storage scope of what the sidebar remembers per project (pins): the signed-in user, company and project of the
+ * ready scope. Any other state has its own empty scope, so a pin never shows in another project or for another user
+ * (D-42, T-1301-34-02).
+ */
+export function degramScopeTag(state: DegramState | null | undefined): string {
+  const project = state?.scope.project
+  const user = state?.auth.username
+
+  if (!state || state.auth.kind !== 'signed-in' || state.scope.status !== 'ready' || !project || !user) {
+    return 'no-scope'
+  }
+
+  return JSON.stringify([user, state.scope.company ?? '', project])
+}
+
 export type FollowOutcome = 'agreed' | 'failed' | 'superseded' | 'switched'
 
 export interface FollowOptions {

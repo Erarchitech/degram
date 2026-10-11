@@ -12,8 +12,8 @@
 import { DEGRAM_CHANNELS } from './channels'
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
-import type { DgBounds, DgMode, DgView, DgViewDeps, DgViewPage } from './dg-view'
-import { createDgView } from './dg-view'
+import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgView, DgViewDeps, DgViewPage } from './dg-view'
+import { createDgView, DG_REGIONS } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
@@ -56,6 +56,10 @@ export interface DegramBridge {
   setDgBounds: (bounds: DgBounds | null) => Promise<void>
   /** Send the localized text of the tray's sign-out entry (the renderer owns the locale). */
   setTrayLabels: (labels: DegramTrayLabels) => Promise<void>
+  /** Steer the embedded DG page to a region (the sidebar rows, D-42). */
+  dgGo: (region: DgRegion) => Promise<void>
+  /** The DeGram locale; the DG page URL carries it as `&lang=` from its next load. */
+  setLocale: (locale: DgLocale) => Promise<void>
   /** The tray's sign-out entry was clicked: the renderer shows its confirmation or signs out (G-17). */
   onRequestSignOut: (callback: () => void) => () => void
   /** Forward an operational outcome code the agent reported (for example CREDENTIALS_EXPIRED). */
@@ -93,6 +97,8 @@ export interface DegramRuntime {
   retryDg: () => Promise<void>
   setDgBounds: (bounds: DgBounds | null) => void
   setTrayLabels: (labels: DegramTrayLabels) => void
+  dgGo: (region: DgRegion) => Promise<void>
+  setLocale: (locale: DgLocale) => void
   getTrayLabels: () => DegramTrayLabels
   /** Ask the renderer to run its sign-out flow (the tray entry). */
   requestSignOut: () => void
@@ -202,13 +208,41 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     publish()
   }
 
+  /** The ring state the DG page was last told (D-44); the page starts idle. */
+  let hostState: DgHostState = 'idle'
+
+  /** Tell the DG page the scope state: remembered at once (loads carry it), signalled in view order. */
+  const noteHostState = (next: DgHostState): void => {
+    if (next === hostState) {
+      return
+    }
+
+    hostState = next
+    dgView.setHostState(next)
+    void viewTask(() => dgView.signal(`#degram-state=${next}`))
+  }
+
+  const hostStateOf = (status: ScopeState['status']): DgHostState =>
+    status === 'ready' ? 'ready' : status === 'opening' ? 'connecting' : 'idle'
+
   const dgView: DgView = createDgView({
     origin: deps.origin,
     createView: deps.createView,
     emit: onEvent,
     openExternal: deps.openExternal,
     logger,
-    onProjectAnnounced: name => void scope.announceProject(name)
+    onProjectAnnounced: name => {
+      // The page already shows its own connecting sphere; the host confirms it, then settles on the outcome
+      // (a refused project never changes the scope state, so the final state is read once the call returns).
+      noteHostState('connecting')
+      void scope.announceProject(name).finally(() => noteHostState(hostStateOf(scope.getState().status)))
+    },
+    // D-41: a fresh chat only while a scope is ready; the page's hash is a request, never an authority.
+    onNewSessionRequested: () => {
+      if (scope.getState().status === 'ready') {
+        onEvent({ type: 'new-session-requested' })
+      }
+    }
   })
 
   scope = createScopeController({
@@ -242,7 +276,10 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     publish()
   })
 
-  scope.onState(() => publish())
+  scope.onState(next => {
+    noteHostState(hostStateOf(next.status))
+    publish()
+  })
 
   const start = async (): Promise<void> => {
     const me = await session.refresh()
@@ -337,6 +374,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       deps.onTrayLabelsChanged?.()
     },
     getTrayLabels: (): DegramTrayLabels => trayLabels,
+    dgGo: (region: DgRegion): Promise<void> => viewTask(() => dgView.signal(`#degram-go=${region}`)),
+    setLocale: (locale: DgLocale): void => dgView.setLocale(locale),
     requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
     reportOutcome: async (code: string): Promise<boolean> => {
@@ -434,6 +473,22 @@ function asOutcome(value: unknown): string {
   return value
 }
 
+function asRegion(value: unknown): DgRegion {
+  if (typeof value !== 'string' || !(DG_REGIONS as readonly string[]).includes(value)) {
+    throw invalid('region')
+  }
+
+  return value as DgRegion
+}
+
+function asLocale(value: unknown): DgLocale {
+  if (value !== 'ru' && value !== 'en') {
+    throw invalid('locale')
+  }
+
+  return value
+}
+
 const MAX_LABEL_LENGTH = 80
 
 function asTrayLabels(value: unknown): DegramTrayLabels {
@@ -505,6 +560,14 @@ export function registerDegramIpc(
   ipc.handle(
     DEGRAM_CHANNELS.setTrayLabels,
     guarded((labels: unknown) => runtime.setTrayLabels(asTrayLabels(labels)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.dgGo,
+    guarded((region: unknown) => runtime.dgGo(asRegion(region)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.setLocale,
+    guarded((locale: unknown) => runtime.setLocale(asLocale(locale)))
   )
   ipc.handle(
     DEGRAM_CHANNELS.setDgBounds,

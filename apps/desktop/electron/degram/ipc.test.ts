@@ -491,6 +491,8 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.retryDg,
         DEGRAM_CHANNELS.setTrayLabels,
         DEGRAM_CHANNELS.setDgBounds,
+        DEGRAM_CHANNELS.dgGo,
+        DEGRAM_CHANNELS.setLocale,
         DEGRAM_CHANNELS.reportOutcome,
         DEGRAM_CHANNELS.openExternalConfirmed
       ].sort()
@@ -523,6 +525,10 @@ describe('registerDegramIpc', () => {
     await expect(call(DEGRAM_CHANNELS.selectProject, 'x'.repeat(300))).rejects.toThrow(/project/i)
     await expect(call(DEGRAM_CHANNELS.setDgMode, 'bogus')).rejects.toThrow(/mode/i)
     await expect(call(DEGRAM_CHANNELS.setDgBounds, { x: 'a' })).rejects.toThrow(/bounds/i)
+    await expect(call(DEGRAM_CHANNELS.dgGo, 'projects')).rejects.toThrow(/region/i)
+    await expect(call(DEGRAM_CHANNELS.dgGo, '#degram-go=graph')).rejects.toThrow(/region/i)
+    await expect(call(DEGRAM_CHANNELS.dgGo, 7)).rejects.toThrow(/region/i)
+    await expect(call(DEGRAM_CHANNELS.setLocale, 'de')).rejects.toThrow(/locale/i)
     await expect(call(DEGRAM_CHANNELS.reportOutcome, 'NOT_A_REAL_CODE')).rejects.toThrow(/outcome/i)
     await expect(call(DEGRAM_CHANNELS.reportOutcome, 7)).rejects.toThrow(/outcome/i)
     await expect(call(DEGRAM_CHANNELS.openExternalConfirmed, 5)).rejects.toThrow(/url/i)
@@ -765,5 +771,117 @@ describe('degram runtime: tray sign-out entry (G-17)', () => {
     await expect(set({ sender: 'main' }, null)).rejects.toThrow(/tray labels/)
     await expect(set({ sender: 'other' }, { signOut: 'ok' })).rejects.toThrow(/untrusted/)
     expect(r.runtime.getTrayLabels().signOut).toBe('Sign out of DG')
+  })
+})
+
+describe('degram runtime: host to page signals and new-session (D-41, D-42, D-44)', () => {
+  const stateFragments = (r: ReturnType<typeof rig>) =>
+    r.fake.loaded.filter(url => url.includes('#degram-state=')).map(url => url.slice(url.indexOf('#')))
+
+  it('a project announcement signals connecting, then ready once the scope opened, with no page reload', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=alpha`, true)
+
+    await vi.waitFor(() => expect(r.runtime.getState().scope.status).toBe('ready'))
+    await vi.waitFor(() => expect(stateFragments(r)).toEqual(['#degram-state=connecting', '#degram-state=ready']))
+
+    expect(r.fake.loaded[0]).toBe(`${r.dg.origin}/?host=degram`)
+    expect(r.fake.reloads()).toBe(0)
+  })
+
+  it('closing the scope signals idle and a refused announcement settles back to idle', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=alpha`, true)
+    await vi.waitFor(() => expect(r.runtime.getState().scope.status).toBe('ready'))
+
+    // A grant revoked mid-scope closes it and returns to the start page, whose ring is idle again.
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+    await r.runtime.reportOutcome('DELEGATED_SESSION_ENDED')
+    await vi.waitFor(() => expect(stateFragments(r).at(-1)).toBe('#degram-state=idle'))
+    expect(r.fake.loaded.at(-1)).not.toContain('ready')
+
+    const refused = rig()
+
+    refused.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+    await refused.runtime.start()
+    refused.fake.emit('did-navigate-in-page', {}, `${refused.dg.origin}/?host=degram#degram-select=alpha`, true)
+
+    await vi.waitFor(() => expect(stateFragments(refused).at(-1)).toBe('#degram-state=idle'))
+    expect(stateFragments(refused)[0]).toBe('#degram-state=connecting')
+  })
+
+  it('a malformed or non-announcing hash signals nothing', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/#degram-select=%E0%A4%A`, true)
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/#degram-select=Alpha`, false)
+    r.fake.emit('did-navigate-in-page', {}, 'https://evil.test/#degram-select=alpha', true)
+    await Promise.resolve()
+
+    expect(r.fake.loaded).toEqual([`${r.dg.origin}/?host=degram`])
+  })
+
+  it('forwards new-session-requested only while a scope is ready', async () => {
+    const r = rig()
+    const newSession = () => eventsOf(r.sent).filter(e => e.type === 'new-session-requested')
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-new-session`, true)
+    expect(newSession()).toEqual([])
+
+    await r.runtime.selectProject('alpha')
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-new-session`, true)
+    expect(newSession()).toEqual([{ type: 'new-session-requested' }])
+
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/#degram-new-session`, false)
+    r.fake.emit('did-navigate-in-page', {}, 'https://evil.test/#degram-new-session', true)
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/#degram-new-session=1`, true)
+    expect(newSession()).toHaveLength(1)
+
+    await r.runtime.signOut()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/#degram-new-session`, true)
+    expect(newSession()).toHaveLength(1)
+  })
+
+  it('a reload of the page while the scope is ready carries the ready state in its initial hash', async () => {
+    const r = rig()
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+    await r.runtime.setDgMode('full')
+    await r.runtime.retryDg()
+    await r.runtime.setDgMode('full')
+    await r.runtime.setLocale('ru')
+    await r.runtime.dgView.showDg()
+
+    expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram&lang=ru#degram-state=ready`)
+  })
+
+  it('dg-go steers the page by fragment through the handler and refuses an unknown region', async () => {
+    const r = rig()
+    const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+
+    registerDegramIpc({ handle: (channel, handler) => void handlers.set(channel, handler as never) }, r.runtime, () => true)
+    await r.runtime.start()
+
+    const go = handlers.get(DEGRAM_CHANNELS.dgGo)!
+
+    await go({ sender: 'main' }, 'graph')
+    await go({ sender: 'main' }, 'connectors')
+    await expect(go({ sender: 'main' }, 'projects')).rejects.toThrow(/region/)
+
+    expect(r.fake.loaded.slice(1)).toEqual([
+      `${r.dg.origin}/?host=degram#degram-go=graph`,
+      `${r.dg.origin}/?host=degram#degram-go=connectors`
+    ])
+
+    await handlers.get(DEGRAM_CHANNELS.setLocale)!({ sender: 'main' }, 'ru')
+    await r.runtime.dgView.showStart()
+    expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram&lang=ru`)
   })
 })

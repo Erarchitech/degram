@@ -35,7 +35,7 @@ afterEach(() => {
 })
 
 describe('sign-in state (D-05, UI loading/error E7)', () => {
-  it('renders the wordmark and the Connecting to DG loader until the login page paints', async () => {
+  it('renders no DEGRAM heading, and the Connecting to DG loader until the login page paints (D-42)', async () => {
     const h = install(makeState({ dg: { mode: 'graph', page: 'blank', reachable: true } }))
 
     // The window attached before the first load: the view is still blank, so nothing has painted yet.
@@ -45,7 +45,8 @@ describe('sign-in state (D-05, UI loading/error E7)', () => {
     })
     render(<SignInState />)
 
-    expect(screen.getByText('DeGram')).toBeTruthy()
+    expect(screen.queryByTestId('degram-wordmark')).toBeNull()
+    expect(screen.queryByText('DeGram')).toBeNull()
     expect(screen.getByText('Connecting to DG')).toBeTruthy()
 
     h.emitEvent({ type: 'dg-reachable' })
@@ -514,19 +515,28 @@ describe('DG page (D-07, UI E6)', () => {
     expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
   })
 
-  it('renders the Project graph / Full DG control and the reload icon button with an accessible name', async () => {
-    const h = install(ready())
+  it('has no Project graph / Full DG switch (D-42) and keeps the reload icon button with an accessible name', async () => {
+    const h = install(ready({ mode: 'full' }))
 
     await act(async () => undefined)
     render(<DgPage />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Full DG' }))
-    expect(h.bridge.setDgMode).toHaveBeenCalledWith('full')
-    fireEvent.click(screen.getByRole('button', { name: 'Project graph' }))
-    expect(h.bridge.setDgMode).toHaveBeenCalledWith('graph')
+    expect(screen.queryByRole('button', { name: 'Full DG' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Project graph' })).toBeNull()
+    expect(h.bridge.setDgMode).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Reload the DG page' }))
     expect(h.bridge.reloadDg).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the whole DG app, never the #degram slice: a slice view is switched to full once (D-42)', async () => {
+    const h = install(ready({ mode: 'graph' }))
+
+    await act(async () => undefined)
+    render(<DgPage />)
+
+    await waitFor(() => expect(h.bridge.setDgMode).toHaveBeenCalledWith('full'))
+    expect(h.bridge.setDgMode).not.toHaveBeenCalledWith('graph')
   })
 
   it('reports the placeholder rectangle once painted and hides the view when it unmounts', async () => {
@@ -559,7 +569,7 @@ describe('DG page (D-07, UI E6)', () => {
     await act(async () => undefined)
     render(<DgPage />)
 
-    await waitFor(() => expect(h.bridge.setDgMode).toHaveBeenCalledWith('graph'))
+    await waitFor(() => expect(h.bridge.setDgMode).toHaveBeenCalledWith('full'))
     const calls = (h.bridge.setDgMode as ReturnType<typeof vi.fn>).mock.calls.length
 
     h.emitState(ready({ page: 'dg', mode: 'full' }))

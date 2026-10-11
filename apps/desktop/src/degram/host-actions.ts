@@ -26,6 +26,6 @@ export async function stopActiveResponse(): Promise<void> {
 }
 
 /** Drop the open session for a fresh draft: a new scope never reuses the previous project's transcript. */
-export function startFreshChat(): void {
-  requestFreshSession()
+export function startFreshChat(options?: { preserveRoute?: boolean }): void {
+  requestFreshSession(options)
 }

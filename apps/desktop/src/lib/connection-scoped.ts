@@ -44,6 +44,12 @@ export interface ConnectionScopeOptions {
    * profile-local lists stay isolated.
    */
   includeProfile?: boolean
+  /**
+   * When true, the key also carries the active scope tag (`setConnectionScopeTag`), so a list owned by one
+   * user + company + project of a multi-tenant shell never shows in another (DeGram pins, D-42). Without a tag set
+   * the key is unchanged, so every other variant behaves exactly as before.
+   */
+  scopeTagged?: boolean
 }
 
 /** The storage-key suffix for a connection. Local (and unknown) connections
@@ -72,6 +78,7 @@ interface ScopedEntry<T> {
   codec: Codec<T>
   fallback: T
   includeProfile: boolean
+  scopeTagged: boolean
   key: string
   /** Last suffix this entry loaded or persisted under. */
   suffix: string
@@ -83,12 +90,13 @@ interface ScopedEntry<T> {
 let activeConnection: ConnectionScopeDescriptor | null | undefined
 let activeSuffix = ''
 let activeGatewaySuffix = ''
+let activeScopeTag = ''
 
 const registry: ScopedEntry<any>[] = []
 const scopeListeners = new Set<() => void>()
 
-function suffixFor(entry: Pick<ScopedEntry<unknown>, 'includeProfile'>): string {
-  return connectionScopeSuffix(activeConnection, entry.includeProfile)
+function suffixFor(entry: Pick<ScopedEntry<unknown>, 'includeProfile' | 'scopeTagged'>): string {
+  return connectionScopeSuffix(activeConnection, entry.includeProfile) + (entry.scopeTagged ? activeScopeTag : '')
 }
 
 /** The suffix for the connection the window is currently on. */
@@ -131,6 +139,7 @@ export function connectionScopedAtom<T>(
   options?: ConnectionScopeOptions
 ): WritableAtom<T> {
   const includeProfile = options?.includeProfile !== false
+  const scopeTagged = options?.scopeTagged === true
 
   const entry: ScopedEntry<T> = {
     $value: atom<T>(fallback),
@@ -138,8 +147,9 @@ export function connectionScopedAtom<T>(
     codec,
     fallback,
     includeProfile,
+    scopeTagged,
     key,
-    suffix: connectionScopeSuffix(activeConnection, includeProfile)
+    suffix: connectionScopeSuffix(activeConnection, includeProfile) + (scopeTagged ? activeScopeTag : '')
   }
 
   entry.$value.set(loadEntry(entry))
@@ -201,6 +211,10 @@ export function rescopeConnectionScopedStores(connection: ConnectionScopeDescrip
     }
   }
 
+  reloadStaleEntries()
+}
+
+function reloadStaleEntries(): void {
   for (const entry of registry) {
     const entrySuffix = suffixFor(entry)
 
@@ -217,4 +231,25 @@ export function rescopeConnectionScopedStores(connection: ConnectionScopeDescrip
       entry.applying = false
     }
   }
+}
+
+/**
+ * Point every `scopeTagged` atom at one scope's storage (DeGram: user + company + project). `null` clears the tag.
+ * Fires the same scope-change listeners as a gateway switch, BEFORE the reload, so pin-sync bookkeeping of the
+ * previous scope resets and never unpins the previous scope's rows on the server.
+ */
+export function setConnectionScopeTag(tag: null | string): void {
+  const next = tag ? `.scope.${encodeURIComponent(tag)}` : ''
+
+  if (next === activeScopeTag) {
+    return
+  }
+
+  activeScopeTag = next
+
+  for (const listener of scopeListeners) {
+    listener()
+  }
+
+  reloadStaleEntries()
 }

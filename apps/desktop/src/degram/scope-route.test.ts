@@ -2,12 +2,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { $activeGatewayProfile } from '@/store/profile'
+import { $activeGatewayProfile, $freshSessionPreserveRoute, requestFreshSession } from '@/store/profile'
 import { $sessions, setSessions } from '@/store/session'
 
 import type { DegramState } from '../../electron/degram/ipc'
 
-import { followScopeRoute, handleNewScope, routeDisagreesWithScope } from './scope-route'
+import { degramScopeTag, followScopeRoute, handleNewScope, routeDisagreesWithScope } from './scope-route'
 import { makeState, noScope } from './test-harness'
 
 vi.mock('@/lib/query-client', () => ({
@@ -211,5 +211,45 @@ describe('handleNewScope (what the shell host runs on a new scope)', () => {
     await first
     expect(openB).not.toHaveBeenCalled()
     expect(openC).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('degramScopeTag (the key of what the sidebar remembers per scope, D-42)', () => {
+  it('differs by user, company and project, and has one fixed empty scope for every state without a ready scope', () => {
+    const tag = (state: DegramState) => degramScopeTag(state)
+    const alice = ready('p')
+    const bob = { ...ready('p'), auth: { ...ready('p').auth, username: 'bob' } }
+    const otherCompany = makeState({ scope: { status: 'ready', project: 'Alpha', company: 'Other', profile: 'p', epoch: 1, error: null } })
+    const otherProject = makeState({ scope: { status: 'ready', project: 'Beta', company: 'Acme', profile: 'p', epoch: 1, error: null } })
+
+    expect(new Set([tag(alice), tag(bob), tag(otherCompany), tag(otherProject)]).size).toBe(4)
+    expect(tag(alice)).toBe(tag(ready('other-profile', 7)))
+
+    const none = degramScopeTag(null)
+
+    expect(degramScopeTag(makeState({ scope: { ...noScope } }))).toBe(none)
+    expect(degramScopeTag({ ...alice, auth: { ...alice.auth, kind: 'signed-out' } })).toBe(none)
+    expect(degramScopeTag(makeState({ scope: { ...noScope, status: 'opening', epoch: 1 } }))).toBe(none)
+    expect(none).not.toBe(tag(alice))
+  })
+
+  it('does not collide when a field contains the separator', () => {
+    const a = makeState({ scope: { status: 'ready', project: 'b|c', company: 'a', profile: 'p', epoch: 1, error: null } })
+    const b = makeState({ scope: { status: 'ready', project: 'c', company: 'a|b', profile: 'p', epoch: 1, error: null } })
+
+    expect(degramScopeTag(a)).not.toBe(degramScopeTag(b))
+  })
+})
+
+describe('requestFreshSession route preservation (D-41)', () => {
+  it('is off by default and on only when asked, per call', () => {
+    requestFreshSession()
+    expect($freshSessionPreserveRoute.get()).toBe(false)
+
+    requestFreshSession({ preserveRoute: true })
+    expect($freshSessionPreserveRoute.get()).toBe(true)
+
+    requestFreshSession()
+    expect($freshSessionPreserveRoute.get()).toBe(false)
   })
 })

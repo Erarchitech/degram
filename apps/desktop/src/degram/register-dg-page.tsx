@@ -2,47 +2,24 @@
 // plugin uses (`routes`, `sidebar.nav`), so the page sits next to Chat without touching the sidebar or router code.
 // Only the DeGram shell host calls it, so no other variant gains a route.
 
-import { type RouteContribution, ROUTES_AREA, SIDEBAR_NAV_AREA, type SidebarNavContribution } from '@/app/routes'
+import { type RouteContribution, ROUTES_AREA } from '@/app/routes'
 import { registry } from '@/contrib'
-import { subscribeRuntimeI18nLocale, translateNow } from '@/i18n/runtime'
 
 import { DgPage } from './dg-page'
+import { DG_PAGE_PATH } from './sidebar-nav'
 
-export const DG_PAGE_PATH = '/dg'
+export { DG_PAGE_PATH }
 
-/** Register the page and a locale-following sidebar row. Returns one disposer for both. */
+/**
+ * Register the DG page route. The page is reached from the DeGram sidebar rows (sidebar-nav.ts, D-42); it has no
+ * row of its own any more (the old «DG» row is gone). Returns the disposer.
+ */
 export function registerDgPage(): () => void {
-  const disposeRoute = registry.register({
+  return registry.register({
     id: 'degram.page',
     area: ROUTES_AREA,
     source: 'core',
     data: { path: DG_PAGE_PATH } satisfies RouteContribution,
     render: () => <DgPage />
   })
-
-  let disposeNav = () => {}
-
-  const registerNav = () => {
-    disposeNav()
-    disposeNav = registry.register({
-      id: 'degram.nav',
-      area: SIDEBAR_NAV_AREA,
-      source: 'core',
-      order: 50,
-      data: {
-        codicon: 'globe',
-        label: translateNow('degram.nav.dg'),
-        path: DG_PAGE_PATH
-      } satisfies SidebarNavContribution
-    })
-  }
-
-  registerNav()
-  const offLocale = subscribeRuntimeI18nLocale(registerNav)
-
-  return () => {
-    offLocale()
-    disposeNav()
-    disposeRoute()
-  }
 }

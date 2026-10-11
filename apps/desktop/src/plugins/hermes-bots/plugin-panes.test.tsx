@@ -375,4 +375,37 @@ describe('the bot relay in variant DeGram (plan 1301-18, G-6)', () => {
 
     harness.dispose()
   })
+
+  it('contributes no BOTS pane, routines pane or screen portal (D-42, plan 1301-34)', async () => {
+    ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = { degramEnabled: true }
+
+    paneStores()
+
+    const harness = recordingContext()
+
+    // A bot chat owning the workspace cannot raise the routines pane either: the plugin never follows the Bots pane.
+    mocks.botChatOwnsWorkspace.mockReturnValue(true)
+    plugin.register(harness.ctx)
+    await settle()
+
+    expect(harness.find('pane')).toBeUndefined()
+    expect(harness.find('routines')).toBeUndefined()
+    expect(harness.find('screen-portal')).toBeUndefined()
+    expect(mocks.paneVisibility).not.toHaveBeenCalled()
+
+    harness.dispose()
+  })
+
+  it('still contributes them in every other variant (positive control)', () => {
+    paneStores()
+
+    const harness = recordingContext()
+
+    plugin.register(harness.ctx)
+
+    expect(harness.find('pane')).toBeTruthy()
+    expect(harness.find('screen-portal')).toBeTruthy()
+
+    harness.dispose()
+  })
 })

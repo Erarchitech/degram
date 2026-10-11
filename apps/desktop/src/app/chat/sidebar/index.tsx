@@ -23,6 +23,13 @@ import {
 } from '@/components/ui/sidebar'
 import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
 import { useContributions } from '@/contrib/react/use-contributions'
+import {
+  $degramNavRegion,
+  activateDegramNavItem,
+  degramSidebarNav,
+  isDegramNavActive,
+  isDgRegionRow
+} from '@/degram/sidebar-nav'
 import { searchSessions, type SessionInfo, type SessionSearchResult } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { comboTokens } from '@/lib/keybinds/combo'
@@ -32,6 +39,7 @@ import { cn } from '@/lib/utils'
 import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { $activeConnectionId } from '@/store/connections'
 import { $cronJobs } from '@/store/cron'
+import { $degramEnabled } from '@/store/degram-flag'
 import { recordAction } from '@/store/desktop-metrics'
 import { $interfaceMode, $showsAdvancedChrome, shownInMode } from '@/store/interface-mode'
 import { $bindings } from '@/store/keybinds'
@@ -447,9 +455,17 @@ export function ChatSidebar({
   // disposes its contribution and the rows come straight back.
   const navPrefs = useContributions(SIDEBAR_NAV_PREFS_AREA)
 
+  // Variant DeGram (D-42): exactly the six DeGram rows. The stock rows and every contributed row are not shown, and
+  // `sidebarNav.prefs` cannot bring them back (the branch skips both). Other variants are unchanged.
+  const degramEnabled = useStore($degramEnabled)
+  const degramRegion = useStore($degramNavRegion)
+
   const navItems = useMemo(
-    () => applySidebarNavPrefs([...SIDEBAR_NAV, ...contributedNav].filter(shownInMode(interfaceMode)), navPrefs),
-    [contributedNav, interfaceMode, navPrefs]
+    () =>
+      degramEnabled
+        ? degramSidebarNav(t.degram.nav)
+        : applySidebarNavPrefs([...SIDEBAR_NAV, ...contributedNav].filter(shownInMode(interfaceMode)), navPrefs),
+    [contributedNav, degramEnabled, interfaceMode, navPrefs, t.degram.nav]
   )
 
   const panesFlipped = useStore($panesFlipped)
@@ -470,7 +486,8 @@ export function ChatSidebar({
   // The active sort key as an id order. The flat list applies it within its
   // dividers; groups apply it to their own lanes.
   const sortOrderIds = useStore($sidebarSessionRankIds)
-  const agentsGrouped = grouping === 'project'
+  // DeGram has one scope per window and no project overview: the session list is always the flat one.
+  const agentsGrouped = !degramEnabled && grouping === 'project'
   const showAllSessions = useStore($sidebarShowAllSessions)
   const pinnedSessionIds = useStore($pinnedSessionIds)
   const unconfirmedPinWrites = useStore($unconfirmedPinWrites)
@@ -1536,6 +1553,7 @@ export function ChatSidebar({
   // only sessions are messaging threads (or that only has scheduled jobs) must
   // not collapse the whole sidebar to the blank state (#63593).
   const showSessionSections =
+    degramEnabled ||
     showSessionSkeletons ||
     sessionsLoadError ||
     filtersActive ||
@@ -1601,8 +1619,9 @@ export function ChatSidebar({
               {navItems.map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)
 
-                const active =
-                  (item.id === 'capabilities' && currentView === 'capabilities') ||
+                const active = degramEnabled
+                  ? isDegramNavActive(item.id, pathname, degramRegion)
+                  : (item.id === 'capabilities' && currentView === 'capabilities') ||
                   (item.id === 'messaging' && currentView === 'messaging') ||
                   (item.id === 'artifacts' && currentView === 'artifacts') ||
                   (item.id === 'cron' && currentView === 'cron') ||
@@ -1610,6 +1629,9 @@ export function ChatSidebar({
                   (currentView === 'extension' && Boolean(item.route) && pathname === item.route)
 
                 const isNewSession = item.id === 'new-session'
+                // The DeGram rows carry their own (locale-following) copy; a stock row's label is empty and comes
+                // from the sidebar catalog.
+                const navLabel = degramEnabled ? item.label : (s.nav[item.id] ?? item.label)
 
                 const button = (
                   <SidebarMenuButton
@@ -1644,6 +1666,10 @@ export function ChatSidebar({
                         recordAction(item.keybindActionId, 'click')
                       }
 
+                      if (degramEnabled && isDgRegionRow(item.id)) {
+                        activateDegramNavItem(item.id)
+                      }
+
                       onNavigate(item)
                     }}
                     onPointerDown={event => {
@@ -1669,10 +1695,10 @@ export function ChatSidebar({
                       item.keybindActionId
                         ? {
                             children: (
-                              <TipKeybindLabel actionId={item.keybindActionId} text={s.nav[item.id] ?? item.label} />
+                              <TipKeybindLabel actionId={item.keybindActionId} text={navLabel} />
                             )
                           }
-                        : (s.nav[item.id] ?? item.label)
+                        : navLabel
                     }
                     type="button"
                   >
@@ -1687,7 +1713,7 @@ export function ChatSidebar({
                         Its own `sidebar-nav-` namespace: the overlay nav owns
                         `nav-<id>`, and both are on screen with Settings open. */}
                     <span className="min-w-0 truncate" data-tip-arrow-only="" data-tour={`sidebar-nav-${item.id}`}>
-                      {s.nav[item.id] ?? item.label}
+                      {navLabel}
                     </span>
                     {isNewSession && (
                       <KbdGroup
@@ -1706,7 +1732,7 @@ export function ChatSidebar({
                     {isNewSession || item.route ? (
                       <ContextMenu>
                         <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
-                        <ContextMenuContent aria-label={s.nav[item.id] ?? item.label}>
+                        <ContextMenuContent aria-label={navLabel}>
                           <SplitSubmenu
                             kit={CONTEXT_SPLIT_KIT}
                             label={s.row.openInSplit}
@@ -1935,7 +1961,7 @@ export function ChatSidebar({
                             the project-drag variant: a drop opens the SAME
                             project dialog, and the created project starts at
                             the dropped spot. */}
-                        <SidebarSectionAddButton
+                        {!degramEnabled && <SidebarSectionAddButton
                           ariaLabel={agentsGrouped ? s.projects.newButton : s.nav['new-session']}
                           onNewProjectDrag={
                             agentsGrouped
@@ -1955,7 +1981,7 @@ export function ChatSidebar({
                               onNewSessionInWorkspace(null)
                             }
                           }}
-                        />
+                        />}
                         <div className="grid size-6 place-items-center">
                           <SidebarFilterMenu className={HEADER_NAV_BTN} />
                         </div>
@@ -2008,6 +2034,7 @@ export function ChatSidebar({
 
             {!trimmedQuery &&
               !worktreeGroupingActive &&
+              !degramEnabled &&
               messagingGroups.map(group => {
                 const visible = messagingVisible[group.sourceId] ?? NON_SESSION_INITIAL_ROWS
                 const shownSessions = group.sessions.slice(0, visible)
@@ -2064,7 +2091,7 @@ export function ChatSidebar({
                 )
               })}
 
-            {!trimmedQuery && !worktreeGroupingActive && showsAdvancedChrome && cronJobs.length > 0 && (
+            {!trimmedQuery && !worktreeGroupingActive && !degramEnabled && showsAdvancedChrome && cronJobs.length > 0 && (
               <SidebarCronJobsSection
                 jobs={cronJobs}
                 label={s.cronJobs}
@@ -2078,11 +2105,11 @@ export function ChatSidebar({
           </div>
         )}
 
-        {!showSessionSections && <SidebarBlankState onNewProject={openProjectCreate} />}
+        {!showSessionSections && !degramEnabled && <SidebarBlankState onNewProject={openProjectCreate} />}
 
         {/* Off, the statusbar's profile dropdown (beside the gateway switcher)
             takes over — the rail is a duplicate door for bot-only setups. */}
-        {profileRailVisible && (
+        {profileRailVisible && !degramEnabled && (
           <div className="shrink-0 px-0.5 pb-1 pt-0.5">
             <ProfileRail />
           </div>

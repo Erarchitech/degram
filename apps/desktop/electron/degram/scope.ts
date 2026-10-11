@@ -41,6 +41,8 @@ export type DegramEvent =
   | { type: 'dg-reachable' }
   | { type: 'grant-required'; project: string }
   | { type: 'backend-start-failed'; project: string }
+  /** The DG page's «Новая сессия» pill, forwarded only while a scope is ready (D-41); the renderer starts a fresh chat. */
+  | { type: 'new-session-requested' }
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
 
