@@ -233,6 +233,7 @@ import {
 import { createDegramMainWiring, type DegramMainWiring } from './degram/main-wiring'
 import { removeRetiredPairing } from './degram/pairing-store'
 import { createProfilesCli, resolveProfilesInvocation } from './degram/profiles-cli'
+import { createScopeBackendGate } from './degram/scope-gate'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
 import {
@@ -11113,6 +11114,10 @@ async function ensureBackend(
 
   profileDeletionGate.assertCanStart(key)
 
+  if (PRODUCT_IDENTITY.degram) {
+    scopeGate.assertCanStart(key)
+  }
+
   // The REQUEST is part of the routing decision (case 5/6): resolving without
   // it would collapse a profile onto the shared backend that the caller's
   // resolveProfileApiRequest deliberately kept pooled, and the unscopable
@@ -11315,6 +11320,10 @@ async function ensureRegistryBackend(
     // child pooled under the composite 'conn:local::<profile>' key so it
     // can't collide with the v1 remote descriptor cached at the bare key.
     profileDeletionGate.assertCanStart(profileKey)
+
+    if (PRODUCT_IDENTITY.degram) {
+      scopeGate.assertCanStart(profileKey)
+    }
 
     const rawProfile = String(profile ?? '').trim()
 
@@ -12626,10 +12635,23 @@ function broadcastPoolBackendRetiring(poolKey: string) {
   }
 }
 
+// DeGram (Phase 1301-35, G-25): one scope profile owns a backend at a time. The scope controller marks the scope it
+// starts and releases the one it leaves; every other start of a `scope-<hex>` profile is refused (see
+// electron/degram/scope-gate.ts), and the pool arbiter never picks the active scope as a victim. Inert outside the
+// DeGram identity: no other product has an active scope, so nothing is ever refused or protected there.
+const scopeGate = createScopeBackendGate({
+  log: rememberLog,
+  broadcastRetiring: broadcastPoolBackendRetiring,
+  poolKeys: localProfilePoolKeys
+})
+
+const poolRetirementClient = createPoolRetirementClient(fetchJson)
+
 const poolRetirer = createPoolRetirer({
   pool: backendPool,
   coordinator: localBackendSpawnCoordinator,
-  ...createPoolRetirementClient(fetchJson),
+  ...poolRetirementClient,
+  prepare: scopeGate.guardPrepare(poolRetirementClient.prepare),
   stopBackend: stopPoolBackend,
   onRetiring: broadcastPoolBackendRetiring,
   log: rememberLog
@@ -15303,6 +15325,8 @@ function ensureDegramWiring(): DegramMainWiring | null {
     profiles,
     backend: {
       ensure: async (profile: string) => {
+        // The scope controller's own start: this profile becomes the one active scope profile (G-25).
+        scopeGate.allow(profile)
         await ensureBackend(profile, { spawnPriority: 'foreground' })
 
         return {
@@ -15310,7 +15334,10 @@ function ensureDegramWiring(): DegramMainWiring | null {
             gatewayRpc(await freshGatewayWsUrl(profile), method, params)
         }
       },
-      release: (profile: string): Promise<void> => teardownPoolBackendAndWait(profile)
+      // Every window parks the left scope's sockets before the child is killed, so its dying socket starts no
+      // reconnect ladder (G-25); the gate also stops the profile being the active scope.
+      release: (profile: string): Promise<void> =>
+        scopeGate.release(profile, (): Promise<void> => teardownPoolBackendAndWait(profile))
     },
     ipcMain,
     cookieSession: dgSession,

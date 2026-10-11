@@ -1,19 +1,21 @@
 // document-picker.tsx — explicit document pinning with the bridge status in view (DGCL-04, 1301-UI-SPEC E3, D-13,
-// D-29). One document is pinned per bridge: each group shows its own pinned row and its own «Открепить».
+// D-29, D-43). One document is pinned per bridge: each group shows its own status, its own pinned row and its own
+// «Открепить».
 //
-// A Popover + `Command variant="menu"` anchored to the strip's document segment. Rows are grouped by bridge (app
-// glyph + name; path · identity in mono). Each bridge group loads on its own: a pending group is one row with the
-// glyph spinner and «Проверка» while the other groups stay selectable; an off, busy or setup-incomplete bridge is one
+// The panel lives on the DeGram «Модели» screen (models-page.tsx); it used to be a popover on the strip's document
+// segment (plan 14), which D-43 removed. A `Command variant="menu"` list. Rows are grouped by bridge (app glyph + name
+// + status; path · identity in mono). Each bridge group loads on its own: a pending group is one row with the glyph
+// spinner and «Проверка» while the other groups stay selectable; an off, busy or setup-incomplete bridge is one
 // neutral notice row with its diagnostic. Nothing is pinned implicitly: a single open document still needs a click.
 // An unsaved document reads «Не сохранён» in place of its path, and one without an identity is listed disabled.
 
-import { type ReactNode, useState } from 'react'
+import type { ReactNode } from 'react'
 
+import { StatusDot } from '@/components/status-dot'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { OverflowTip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 
@@ -80,7 +82,7 @@ function Notice({ children }: { children: ReactNode }) {
   )
 }
 
-function GroupBody({ app, entry }: { app: BridgeApp; entry: AppEntry }) {
+export function GroupBody({ app, entry }: { app: BridgeApp; entry: AppEntry }) {
   const { t } = useI18n()
   const copy = t.degram
   const documents = useDocuments()
@@ -154,11 +156,54 @@ function GroupBody({ app, entry }: { app: BridgeApp; entry: AppEntry }) {
   )
 }
 
-export function DocumentPicker({ children }: { children: ReactNode }) {
+/** The connector's name, status and its Unpin control: the heading of its group. */
+function GroupHeading({ app, entry }: { app: BridgeApp; entry: AppEntry }) {
   const { t } = useI18n()
   const copy = t.degram
   const documents = useDocuments()
-  const [open, setOpen] = useState(false)
+  const pin = documents.pinned[app]
+
+  // Before the first answer the group body carries the «Проверка» row; the heading shows a status only once known.
+  const group = entry.group ?? (entry.failed ? { app, state: 'off' as const, documents: [], code: 'BRIDGE_OFF' } : undefined)
+  const view = group ? bridgeView(copy, group, pin?.name) : null
+
+  return (
+    <span className="flex w-full items-center gap-1.5">
+      <Codicon name={APP_GLYPH[app]} size="0.9rem" />
+      {app === 'revit' ? copy.bridge.revit : copy.bridge.grasshopper}
+      {view && (
+        <span
+          className="inline-flex items-center gap-1 text-[0.6875rem] font-normal text-muted-foreground"
+          data-bridge-state={view.status}
+        >
+          <StatusDot className={view.status === 'pinned' ? 'bg-ring' : undefined} tone={view.status === 'ready' ? 'good' : 'muted'} />
+          {view.label}
+        </span>
+      )}
+      {pin && (
+        <Button
+          className="ml-auto"
+          data-testid="degram-unpin"
+          onClick={() => void unpin(app)}
+          size="micro"
+          variant="text"
+        >
+          {copy.document.unpin}
+        </Button>
+      )}
+    </span>
+  )
+}
+
+/**
+ * The documents of every connector (D-43): a refresh button, then one group per bridge with its status and rows, or the
+ * single «no open documents» empty state when every bridge answered and nothing is open. Reads happen in the caller
+ * (the page refreshes on mount and on a scope change); this only renders the cache and the refresh button.
+ */
+export function DocumentsPanel() {
+  const { t } = useI18n()
+  const copy = t.degram
+  const documents = useDocuments()
 
   const rowCount = BRIDGE_APPS.reduce((n, app) => n + (documents.apps[app].group?.documents.length ?? 0), 0)
 
@@ -171,78 +216,41 @@ export function DocumentPicker({ children }: { children: ReactNode }) {
   const nothingOpen = settled && everyReady && rowCount === 0
 
   return (
-    <Popover
-      onOpenChange={next => {
-        setOpen(next)
+    <div aria-label={copy.document.pickerLabel} data-testid="degram-documents-panel" role="region">
+      <div className="flex items-center justify-end gap-1 px-1 pb-1">
+        <Button
+          aria-label={copy.document.refreshList}
+          onClick={() => void refreshDocuments()}
+          size="icon-xs"
+          variant="ghost"
+        >
+          <Codicon name="refresh" size="0.8rem" />
+        </Button>
+      </div>
 
-        if (next) {
-          // Each bridge is read on its own; loading is set synchronously so a stale group is never painted.
-          void refreshDocuments()
-        }
-      }}
-      open={open}
-    >
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent
-        align="start"
-        aria-label={copy.document.pickerLabel}
-        className="max-w-[min(26rem,calc(100vw-1rem))] min-w-72"
-        variant="menu"
-      >
-        <div className="flex items-center justify-end gap-1 px-1 pb-1">
-          <Button
-            aria-label={copy.document.refreshList}
-            onClick={() => void refreshDocuments()}
-            size="icon-xs"
-            variant="ghost"
-          >
-            <Codicon name="refresh" size="0.8rem" />
-          </Button>
+      {nothingOpen ? (
+        <div className="grid gap-1 px-2 pb-2" data-testid="degram-no-documents">
+          <h3 className="text-base font-medium leading-tight">{copy.empty.noDocuments.title}</h3>
+          <p className="text-[0.8125rem] leading-[1.4] text-muted-foreground">{copy.empty.noDocuments.body}</p>
         </div>
-
-        {nothingOpen ? (
-          <div className="grid gap-1 px-2 pb-2" data-testid="degram-no-documents">
-            <h3 className="text-base font-medium leading-tight">{copy.empty.noDocuments.title}</h3>
-            <p className="text-[0.8125rem] leading-[1.4] text-muted-foreground">{copy.empty.noDocuments.body}</p>
-          </div>
-        ) : (
-          <Command variant="menu">
-            {rowCount > DOCUMENT_SEARCH_THRESHOLD && <CommandInput autoFocus placeholder={copy.document.pickerLabel} />}
-            <CommandList className="max-h-80 overscroll-y-contain">
-              {rowCount > DOCUMENT_SEARCH_THRESHOLD && <CommandEmpty>{copy.empty.noDocuments.title}</CommandEmpty>}
-              {BRIDGE_APPS.map(app => (
-                <CommandGroup
-                  className="[&_[cmdk-group-heading]]:sticky [&_[cmdk-group-heading]]:top-0 [&_[cmdk-group-heading]]:z-10 [&_[cmdk-group-heading]]:bg-popover [&_[cmdk-group-heading]]:text-base [&_[cmdk-group-heading]]:font-medium"
-                  data-bridge={app}
-                  heading={
-                    <span className="flex w-full items-center gap-1.5">
-                      <Codicon name={APP_GLYPH[app]} size="0.9rem" />
-                      {app === 'revit' ? copy.bridge.revit : copy.bridge.grasshopper}
-                      {documents.pinned[app] && (
-                        <Button
-                          className="ml-auto"
-                          data-testid="degram-unpin"
-                          onClick={() => {
-                            void unpin(app)
-                            setOpen(false)
-                          }}
-                          size="micro"
-                          variant="text"
-                        >
-                          {copy.document.unpin}
-                        </Button>
-                      )}
-                    </span>
-                  }
-                  key={app}
-                >
-                  <GroupBody app={app} entry={documents.apps[app]} />
-                </CommandGroup>
-              ))}
-            </CommandList>
-          </Command>
-        )}
-      </PopoverContent>
-    </Popover>
+      ) : (
+        <Command variant="menu">
+          {rowCount > DOCUMENT_SEARCH_THRESHOLD && <CommandInput autoFocus placeholder={copy.document.pickerLabel} />}
+          <CommandList className="max-h-none overscroll-y-contain">
+            {rowCount > DOCUMENT_SEARCH_THRESHOLD && <CommandEmpty>{copy.empty.noDocuments.title}</CommandEmpty>}
+            {BRIDGE_APPS.map(app => (
+              <CommandGroup
+                className="[&_[cmdk-group-heading]]:text-base [&_[cmdk-group-heading]]:font-medium"
+                data-bridge={app}
+                heading={<GroupHeading app={app} entry={documents.apps[app]} />}
+                key={app}
+              >
+                <GroupBody app={app} entry={documents.apps[app]} />
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      )}
+    </div>
   )
 }

@@ -1,16 +1,16 @@
-// connected-scope-strip.tsx — the scope strip fed with the document and the two bridges (Phase 1301-14, DGCL-02/04).
+// connected-scope-strip.tsx — the scope strip fed with the two bridges (Phase 1301-14, DGCL-02/04; D-43 plan 35).
 //
-// The strip itself (plan 13) is presentational. This feeds its document and bridge segments from the documents
-// cache, and keeps that cache fresh at the moments that matter: when a scope becomes ready (the dots leave
-// «Проверка») and when the picker opens. A project or document change shows in the strip in the same render
-// because the cache is scope-tagged (a reader of another scope sees an empty one).
+// The strip itself (plan 13) is presentational. This feeds its bridge segments from the documents cache, and keeps
+// that cache fresh when a scope becomes ready (the dots leave «Проверка»); the «Модели» screen reads it on open. A
+// project or document change shows in the strip in the same render because the cache is scope-tagged (a reader of
+// another scope sees an empty one). Documents are not chosen here any more (D-43).
 
 import { useEffect } from 'react'
 
 import { useI18n } from '@/i18n'
 
 import { bridgeView, toSegment } from './bridge-status'
-import { pinnedApps, refreshDocuments, scopeKeyOf, useDocuments } from './documents-store'
+import { refreshDocuments, scopeKeyOf, useDocuments } from './documents-store'
 import { ScopeStrip } from './scope-strip'
 import type { BridgeApp } from './use-degram-gateway'
 import { useDegram } from './use-degram-state'
@@ -55,11 +55,5 @@ export function ConnectedScopeStrip() {
     return segment
   }
 
-  return (
-    <ScopeStrip
-      bridges={{ revit: view('revit'), grasshopper: view('grasshopper') }}
-      document={{ count: pinnedApps(documents).length }}
-      documentPicker
-    />
-  )
+  return <ScopeStrip bridges={{ revit: view('revit'), grasshopper: view('grasshopper') }} />
 }

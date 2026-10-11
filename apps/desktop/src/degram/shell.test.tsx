@@ -135,7 +135,7 @@ describe('single start screen (D-33)', () => {
 })
 
 describe('scope strip (UI loading/error/long-text E1)', () => {
-  it('shows company, project, document and both bridges once a project is open, bridges neutral and checking', async () => {
+  it('shows company, project and both bridges once a project is open, bridges neutral and checking, with no document segment', async () => {
     install(
       makeState({ scope: { status: 'ready', project: 'Alpha', company: 'Acme', profile: 'p', epoch: 1, error: null } })
     )
@@ -144,7 +144,9 @@ describe('scope strip (UI loading/error/long-text E1)', () => {
 
     expect(screen.getByText('Acme')).toBeTruthy()
     expect(screen.getByText('Alpha')).toBeTruthy()
-    expect(screen.getByText('Select document')).toBeTruthy()
+    // D-43: documents are chosen on the models page; the strip has no document segment.
+    expect(screen.queryByText('Select document')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Document:/ })).toBeNull()
     expect(screen.getByText('Revit')).toBeTruthy()
     expect(screen.getByText('Grasshopper')).toBeTruthy()
     expect(screen.getAllByText('Checking')).toHaveLength(2)

@@ -46,7 +46,6 @@ export interface DegramCopy {
   /** Commands that leave the current session (the project menu and the tray menu). */
   actions: { signOut: string }
   cta: {
-    selectDocument: string
     signIn: string
     chooseProject: string
     send: string
@@ -87,8 +86,8 @@ export interface DegramCopy {
     /** A pinned document the read left out: «{document}: not included — {reason}» (D-29). */
     excluded: (document: string, reason: string) => string
   }
-  /** The scope strip's own copy (D-29): how many documents are pinned. */
-  strip: { documentsCount: (count: number) => string }
+  /** The «Модели» screen (D-43). */
+  models: { title: string }
   sessions: { empty: string }
   errors: {
     dgUnreachable: string
@@ -161,7 +160,6 @@ export interface DegramCopy {
     /** Accessible names of the scope-strip segments. */
     company: string
     project: string
-    document: string
     searchProjects: string
     isolationTitle: string
   }
@@ -181,7 +179,6 @@ export const degramEn: DegramCopy = {
   },
   actions: { signOut: 'Sign out of DG' },
   cta: {
-    selectDocument: 'Select document',
     signIn: 'Sign in with DG',
     chooseProject: 'Choose project',
     send: 'Send to model',
@@ -235,7 +232,7 @@ export const degramEn: DegramCopy = {
     wholeDefinition: 'Whole definition',
     excluded: (document, reason) => `${document}: not included — ${reason}`
   },
-  strip: { documentsCount: n => `Documents: ${n}` },
+  models: { title: 'Models' },
   sessions: { empty: "There are no sessions in this project yet." },
   errors: {
     dgUnreachable: "The DG server can't be reached. Check your network or VPN, then retry the request.",
@@ -321,7 +318,6 @@ export const degramEn: DegramCopy = {
   scope: {
     company: 'Company',
     project: 'Project',
-    document: 'Document',
     searchProjects: 'Search projects',
     isolationTitle: 'Runtime isolation'
   },
@@ -344,7 +340,6 @@ export const degramRu: DegramCopy = {
   },
   actions: { signOut: 'Выйти из DG' },
   cta: {
-    selectDocument: 'Выбрать документ',
     signIn: 'Войти через DG',
     chooseProject: 'Выбрать проект',
     send: 'Отправить модели',
@@ -398,7 +393,7 @@ export const degramRu: DegramCopy = {
     wholeDefinition: 'Всё определение',
     excluded: (document, reason) => `${document}: не включён — ${reason}`
   },
-  strip: { documentsCount: n => `Документы: ${n}` },
+  models: { title: 'Модели' },
   sessions: { empty: "В этом проекте пока нет сеансов." },
   errors: {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',
@@ -484,7 +479,6 @@ export const degramRu: DegramCopy = {
   scope: {
     company: 'Компания',
     project: 'Проект',
-    document: 'Документ',
     searchProjects: 'Поиск проектов',
     isolationTitle: 'Изоляция среды выполнения'
   },

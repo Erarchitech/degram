@@ -1,11 +1,12 @@
-// scope-strip.tsx — `company · project · document · Revit ● · Grasshopper ●` in the shell statusbar
+// scope-strip.tsx — `company · project · Revit ● · Grasshopper ●` in the shell statusbar
 // (DGCL-02, 1301-UI-SPEC E1). Visible whenever the user is signed in, so the scope of the next request is never a
-// guess. Company and project come from the bridge; the document and bridge segments are fed by plan 14
-// (`ConnectedScopeStrip`) and read «Выбрать документ» / «Проверка» until their first status arrives.
+// guess. Company and project come from the bridge; the bridge segments are fed by plan 14 (`ConnectedScopeStrip`) and
+// read «Проверка» until their first status arrives. D-43: documents are chosen on the «Модели» screen, so the strip
+// has no document segment; it only shows statuses.
 //
 // Colour: bridge dots are neutral (off/busy/setup-incomplete/identity-mismatch) or ink (ready); the accent dot is a
 // pinned document. D-29: one document is pinned per bridge, so each bridge segment carries its own pinned document
-// name and dot, and the document segment only counts them («Документы: 2»). Segment labels ellipsize at 24 characters, bridges never collapse or wrap, and the
+// name and dot. Segment labels ellipsize at 24 characters, bridges never collapse or wrap, and the
 // company segment is the first to give way when the bar is narrow (it shrinks fastest, then names ellipsize).
 
 import { StatusDot, type StatusTone } from '@/components/status-dot'
@@ -14,7 +15,6 @@ import { OverflowTip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
-import { DocumentPicker } from './document-picker'
 import { ProjectPicker } from './project-picker'
 import { useDegram } from './use-degram-state'
 
@@ -30,18 +30,8 @@ export interface BridgeSegment {
   document?: string
 }
 
-export interface ScopeStripDocument {
-  /** How many documents are pinned (0..2, one per bridge): the segment reads «Документы: {n}», or «Выбрать документ» at 0. */
-  count: number
-}
-
 export interface ScopeStripProps {
-  document?: ScopeStripDocument | null
   bridges?: { revit?: BridgeSegment; grasshopper?: BridgeSegment }
-  /** Opens a custom document picker. Without it (and without `documentPicker`) the document segment is plain text. */
-  onSelectDocument?: () => void
-  /** The document segment opens the bridge-grouped document picker (plan 14). */
-  documentPicker?: boolean
 }
 
 const CHECKING: BridgeSegment = { status: 'checking' }
@@ -94,7 +84,7 @@ function Bridge({
   return tip ? <OverflowTip label={tip}>{body}</OverflowTip> : body
 }
 
-export function ScopeStrip({ bridges, document, documentPicker, onSelectDocument }: ScopeStripProps) {
+export function ScopeStrip({ bridges }: ScopeStripProps) {
   const { t } = useI18n()
   const copy = t.degram
   const { state } = useDegram()
@@ -105,9 +95,6 @@ export function ScopeStrip({ bridges, document, documentPicker, onSelectDocument
 
   const { company, project } = state.scope
   const projectLabel = project ?? copy.cta.chooseProject
-
-  const documentLabel =
-    document && document.count > 0 ? copy.strip.documentsCount(document.count) : copy.cta.selectDocument
 
   return (
     <div
@@ -128,35 +115,6 @@ export function ScopeStrip({ bridges, document, documentPicker, onSelectDocument
           <span className={cn(SEGMENT_TEXT, project ? 'text-foreground' : undefined)}>{projectLabel}</span>
         </Button>
       </ProjectPicker>
-
-      {documentPicker ? (
-        <DocumentPicker>
-          <Button
-            aria-label={`${copy.scope.document}: ${documentLabel}`}
-            className="min-w-0 shrink"
-            size="micro"
-            variant="text"
-          >
-            <OverflowTip label={documentLabel}>
-              <span className={SEGMENT_TEXT}>{documentLabel}</span>
-            </OverflowTip>
-          </Button>
-        </DocumentPicker>
-      ) : onSelectDocument ? (
-        <Button
-          aria-label={`${copy.scope.document}: ${documentLabel}`}
-          className="min-w-0 shrink"
-          onClick={onSelectDocument}
-          size="micro"
-          variant="text"
-        >
-          <span className={SEGMENT_TEXT}>{documentLabel}</span>
-        </Button>
-      ) : (
-        <span className="inline-flex min-w-0 shrink items-center gap-1">
-          <Segment text={documentLabel} />
-        </span>
-      )}
 
       <Bridge name={copy.bridge.revit} {...(bridges?.revit ?? CHECKING)} />
       <Bridge name={copy.bridge.grasshopper} {...(bridges?.grasshopper ?? CHECKING)} />

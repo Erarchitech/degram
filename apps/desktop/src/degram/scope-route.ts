@@ -11,10 +11,12 @@
 // Import discipline: this module reads the route and the scope state it is handed, never the DeGram store, so the
 // store (`use-degram-state`) can ask `routeDisagreesWithScope` without a cycle.
 
+import { retireLocalProfileGateways } from '@/store/gateway'
 import { wipeSessionListsForGatewaySwitch } from '@/store/gateway-switch'
 import { $activeGatewayProfile, ensureGatewayProfile, normalizeProfileKey, pinNewChatProfile } from '@/store/profile'
 
 import type { DegramState } from '../../electron/degram/ipc'
+import { isScopeProfile } from '../../electron/degram/scope-gate'
 
 /**
  * The storage scope of what the sidebar remembers per project (pins): the signed-in user, company and project of the
@@ -74,6 +76,11 @@ let latestTicket = 0
  * - `switched`: the route was on another profile and now serves the scope.
  * - `failed`: the route could not be moved; it stays where it was and Send stays blocked by the guard.
  * - `superseded`: a newer call started meanwhile; the newer one owns the outcome.
+ *
+ * Once the route is on the new scope the scope the chat LEFT is retired in the renderer's gateway registry (G-25):
+ * main has released its backend, and a registry entry that stays wantOpen would redial it. Main parks that entry
+ * first (`hermes:pool:retiring`) and refuses the start (electron/degram/scope-gate.ts); this drops the entry itself
+ * so nothing in the renderer keeps a route to a scope that is not the active one.
  */
 export async function followScopeRoute(state: DegramState, opts: FollowOptions): Promise<FollowOutcome> {
   const { scope } = state
@@ -92,6 +99,7 @@ export async function followScopeRoute(state: DegramState, opts: FollowOptions):
   }
 
   const switching = routeDisagreesWithScope(state)
+  const leaving = normalizeProfileKey($activeGatewayProfile.get())
 
   if (switching) {
     wipeSessionListsForGatewaySwitch()
@@ -116,6 +124,10 @@ export async function followScopeRoute(state: DegramState, opts: FollowOptions):
     console.warn(`[degram-route] the route for scope ${scope.epoch} did not land on the scope profile`)
 
     return 'failed'
+  }
+
+  if (leaving !== target && isScopeProfile(leaving)) {
+    retireLocalProfileGateways(leaving)
   }
 
   pinNewChatProfile(target)

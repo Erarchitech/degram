@@ -1,7 +1,7 @@
 // chat.test.tsx — the DeGram chat surfaces of Phase 1301-14: document picker with bridge status, the Context card
 // (summary, plurals, truncation, exact payload, pending and failed reads), whole-definition consent, policy deny,
-// Stop, named failures with a manual retry, and the strip's document and bridge segments, and (1301-21, D-29) one
-// pinned document per bridge. The gateway is a scripted fake (`setDegramGatewayForTests`); nothing here talks to a
+// Stop, named failures with a manual retry, and the strip's bridge segments, and (1301-21, D-29) one pinned
+// document per bridge. Since 1301-35 (D-43) the documents are chosen on the models page, not in a strip popover. The gateway is a scripted fake (`setDegramGatewayForTests`); nothing here talks to a
 // bridge, a model or the DG server.
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -24,10 +24,11 @@ import { AGENT_OUTCOME_CODES } from '../../electron/degram/scope'
 import { degramOnStop, degramPromptSubmit, useDegramSendBlocked } from './composer-seam'
 import { ConnectedScopeStrip } from './connected-scope-strip'
 import { ContextCard, DegramComposerSections, FailureBanner } from './context-card'
-import { DocumentPicker, hasIdentity, middleEllipsize } from './document-picker'
+import { hasIdentity, middleEllipsize } from './document-picker'
 import { $documents, noteBridgeOutcome, pinRow, refreshDocuments, resetDocuments, unpin } from './documents-store'
 import { stopActiveResponse } from './host-actions'
 import { InterruptedBadge } from './interrupted-badge'
+import { ModelsPage } from './models-page'
 import { copyKeyForOutcome, failureSentence, FORWARDED_TO_MAIN, OUTCOME_CODES, parseFailureText } from './outcome-copy'
 import {
   $lifecycle,
@@ -275,19 +276,14 @@ const pinRevit = async () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-describe('document picker (UI E3, D-13)', () => {
+describe('documents on the models page (UI E3, D-13, D-43)', () => {
   const open = async (handlers: Record<string, Handler>, locale: 'en' | 'ru' = 'en') => {
     const h = await readyHarness()
     const gw = fakeGateway(handlers)
 
-    const ui = withActions(
-      <DocumentPicker>
-        <button type="button">pick</button>
-      </DocumentPicker>
-    )
+    const ui = withActions(<ModelsPage />)
 
     render(locale === 'ru' ? ru(ui) : ui)
-    fireEvent.click(screen.getByRole('button', { name: 'pick' }))
 
     return { h, gw }
   }
@@ -483,16 +479,20 @@ describe('document picker (UI E3, D-13)', () => {
         })
     })
 
-    render(withActions(<ConnectedScopeStrip />))
-    fireEvent.click(screen.getByRole('button', { name: 'Document: Select document' }))
+    render(
+      withActions(
+        <>
+          <ModelsPage />
+          <ConnectedScopeStrip />
+        </>
+      )
+    )
     const row = (await screen.findByText('tower.gh')).closest('[role="option"]') as HTMLElement
 
     fireEvent.click(row)
 
-    // Optimistic: the strip already counts the document and the Grasshopper segment names it, with the accent dot,
-    // while the pin RPC is still pending.
-    expect(screen.getByRole('button', { name: 'Document: Documents: 1' })).toBeTruthy()
-
+    // Optimistic: the strip's Grasshopper segment names the document, with the accent dot, while the pin RPC is
+    // still pending (the strip itself has no document segment any more).
     const segment = window.document.querySelector('[data-bridge-status="pinned"]') as HTMLElement
 
     expect(segment.textContent).toContain('Grasshopper')
@@ -551,7 +551,7 @@ describe('document picker (UI E3, D-13)', () => {
     await readyHarness()
     const gw = fakeGateway(ghHandlers())
 
-    render(withActions(<ConnectedScopeStrip />))
+    render(withActions(<ModelsPage />))
     await pinRevit()
     await pinGh()
 
@@ -559,7 +559,6 @@ describe('document picker (UI E3, D-13)', () => {
     // Pinning a document replaces no pin on the other bridge and calls no unpin.
     expect(gw.count('degram.documents.unpin')).toBe(0)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Document: Documents: 2' }))
     await screen.findByText('tower.gh')
 
     const groups = window.document.querySelectorAll('[cmdk-group]')
@@ -588,7 +587,7 @@ describe('document picker (UI E3, D-13)', () => {
   })
 })
 
-describe('scope strip document and bridge segments (DGCL-02, plan 13 hand-over)', () => {
+describe('scope strip bridge segments (DGCL-02, plan 13 hand-over; D-43 no document segment)', () => {
   it('shows «Проверка» until a bridge answers, then each bridge state with a neutral dot', async () => {
     let releaseRevit: (value: unknown) => void = () => undefined
 
@@ -613,28 +612,35 @@ describe('scope strip document and bridge segments (DGCL-02, plan 13 hand-over)'
     expect(screen.queryByText('Проверка')).toBeNull()
   })
 
-  it('reads «Select document» with no pin and «Documents: n» with one or two (D-29)', async () => {
+  it('has no document segment with no pin, one or two (D-43): only the bridges name their pinned document', async () => {
     await readyHarness()
     fakeGateway(ghHandlers())
     render(withActions(<ConnectedScopeStrip />))
 
-    expect(screen.getByRole('button', { name: 'Document: Select document' })).toBeTruthy()
+    const documentSegment = () =>
+      screen.queryByRole('button', { name: /^Document:/ }) ??
+      screen.queryByText('Select document') ??
+      screen.queryByText(/^Documents: \d+$/)
+
+    expect(documentSegment()).toBeNull()
 
     await pinGh()
-    expect(screen.getByRole('button', { name: 'Document: Documents: 1' })).toBeTruthy()
+    expect(documentSegment()).toBeNull()
 
     await pinRevit()
-    expect(screen.getByRole('button', { name: 'Document: Documents: 2' })).toBeTruthy()
+    expect(documentSegment()).toBeNull()
   })
 
-  it('reads «Документы: 2» in Russian', async () => {
+  it('has no «Документы: n» / «Выбрать документ» in Russian either', async () => {
     await readyHarness()
     fakeGateway(ghHandlers())
     render(ru(withActions(<ConnectedScopeStrip />)))
     await pinRevit()
     await pinGh()
 
-    expect(screen.getByRole('button', { name: 'Документ: Документы: 2' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Документ:/ })).toBeNull()
+    expect(screen.queryByText('Выбрать документ')).toBeNull()
+    expect(screen.queryByText(/^Документы: \d+$/)).toBeNull()
   })
 
   it('each bridge segment carries its own pinned document name and accent dot', async () => {
