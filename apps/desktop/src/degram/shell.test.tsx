@@ -437,6 +437,22 @@ describe('persistent start-screen notices (G-18, G-20, D-35)', () => {
     expect(screen.queryByText(message)).toBeNull()
   })
 
+  // 1301-39 F-05 (D-47): while a project opens, the DG page (painted) shows the only connecting indicator, the
+  // sphere in the ring centre; the gate adds no second «Connecting to DG» loader above it.
+  it('renders no Connecting to DG loader of its own while a project opens and the DG page has painted', async () => {
+    install(
+      makeState({
+        scope: { status: 'opening', project: null, company: null, profile: null, epoch: 1, error: null },
+        dg: { mode: 'graph', page: 'dg', reachable: true }
+      })
+    )
+    await act(async () => undefined)
+    render(withActions(<DegramGate />))
+
+    expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
+    expect(screen.queryByText('Connecting to DG')).toBeNull()
+  })
+
   // 1301-37 F-07 (D-48): a pick refused for a missing grant while a project stays open keeps that project and
   // shows the same notice above the DG page, not only on the first screen.
   it('shows the grant-required notice above the DG page while a project stays open, until dismissed', async () => {

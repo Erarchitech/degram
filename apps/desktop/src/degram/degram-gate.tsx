@@ -12,7 +12,7 @@ import { DialogPortalContainerContext } from '@/components/ui/dialog-portal-cont
 import { useI18n } from '@/i18n'
 
 import { IsolationBootFailure } from './isolation-boot-failure'
-import { DgConnecting, DgUnreachable, SignInState } from './sign-in-state'
+import { DgUnreachable, SignInState } from './sign-in-state'
 import { degramBridge, dismissDegramNotice, refreshDegramState, useDegram } from './use-degram-state'
 
 function Surface({ children }: { children: React.ReactNode }) {
@@ -45,8 +45,6 @@ async function retryDgAndRefresh(): Promise<void> {
 export function FirstScreen() {
   const { t } = useI18n()
   const { accessRevoked, backendFailed, grantRequired, state } = useDegram()
-  const opening = state?.scope.status === 'opening'
-  const unreachable = state?.dg.reachable === false || state?.scope.error === 'DG_UNREACHABLE'
 
   return <SignInState>
     <div className="grid w-full max-w-prose gap-2" data-testid="degram-first-screen">
@@ -54,7 +52,7 @@ export function FirstScreen() {
       {grantRequired && <Notice onDismiss={() => dismissDegramNotice('grant')}>{t.degram.notice.grantRequired(grantRequired.project)}</Notice>}
       {backendFailed && <Notice action={() => void degramBridge()?.selectProject(backendFailed.project)} onDismiss={() => dismissDegramNotice('backend')}>{t.degram.errors.backendStartFailed(backendFailed.project)}</Notice>}
     </div>
-    {opening && !unreachable && <DgConnecting label={t.degram.signIn.connecting} />}
+    {/* D-47: while a project opens the sphere in the DG host ring centre is the only connecting indicator. */}
     {state?.scope.error === 'DG_UNREACHABLE' && state.dg.reachable && <DgUnreachable action={() => void retryDgAndRefresh()} actionLabel={t.degram.cta.retry} />}
   </SignInState>
 }
