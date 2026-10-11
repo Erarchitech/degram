@@ -25,6 +25,7 @@ import { createClientSessionState } from '@/lib/chat-runtime'
 import { $clarifyRequests, clearClarifyRequest, setClarifyRequest } from '@/store/clarify'
 import { clearSessionDraft, stashSessionDraft, takeSessionDraft } from '@/store/composer'
 import { $backgroundStatusBySession, type ComposerStatusItem } from '@/store/composer-status'
+import { $degramEnabled } from '@/store/degram-flag'
 import {
   activeGatewayConnectionId,
   requestGatewayForAgent,
@@ -2288,6 +2289,50 @@ describe('resumeSession failure recovery', () => {
     expect(renderedMessages).toContain('prompt after compression')
     expect(renderedMessages).toContain('answer after compression')
     expect(renderedMessages).not.toContain('answer before compression')
+  })
+
+  it('DeGram reopens an earlier chat from the gateway transcript, never over the locked REST read (D-31)', async () => {
+    $degramEnabled.set(true)
+
+    try {
+      const requestGateway = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+        if (method === 'session.resume') {
+          return {
+            info: {},
+            message_count: 2,
+            messages: [
+              { role: 'user', text: 'earlier question' },
+              { role: 'assistant', text: 'earlier answer kept in the project' }
+            ],
+            resumed: params?.session_id,
+            running: false,
+            session_id: 'runtime-1',
+            session_key: params?.session_id,
+            status: 'idle'
+          } as never
+        }
+
+        return {} as never
+      })
+
+      vi.mocked(getLatestSessionMessages).mockClear()
+      vi.mocked(getLatestSessionMessages).mockRejectedValue(
+        new Error('403: {"detail":{"code":"DEGRAM_LOCKED","message":"/api/sessions/stored-1/messages is not available in DeGram"}}')
+      )
+
+      await runResume(requestGateway)
+
+      const resumeCalls = requestGateway.mock.calls.filter(([method]) => method === 'session.resume')
+
+      expect(resumeCalls).toHaveLength(1)
+      expect(resumeCalls[0][1]).not.toHaveProperty('omit_messages')
+      expect(resumeCalls[0][1]).toMatchObject({ defer_history: false, session_id: 'stored-1' })
+      expect(getLatestSessionMessages).not.toHaveBeenCalled()
+      await waitFor(() => expect(JSON.stringify($messages.get())).toContain('earlier answer kept in the project'))
+      expect($resumeFailedSessionId.get()).toBeNull()
+    } finally {
+      $degramEnabled.set(false)
+    }
   })
 
   it('leaves the failure latch clear when resume succeeds', async () => {

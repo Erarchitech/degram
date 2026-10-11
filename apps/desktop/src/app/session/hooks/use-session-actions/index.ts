@@ -37,6 +37,7 @@ import { announceGoneSessionDraft, announceNewSessionDraftKey, migrateSessionDra
 import { clearQueuedPrompts, migrateQueuedPrompts } from '@/store/composer-queue'
 import { resetSessionBackground } from '@/store/composer-status'
 import { $connectionRequests } from '@/store/connection-request'
+import { $degramEnabled } from '@/store/degram-flag'
 import {
   $gateway,
   isActivePrimary,
@@ -2171,7 +2172,12 @@ export function useSessionActions({
         // max(prefetch, resume) instead of their sum. The prefetch paints the
         // transcript as soon as it lands; the RPC binds the runtime id.
         // Watch windows skip the prefetch — lazy resume attaches the live mirror.
-        const prefetchPromise = watchWindow ? null : getLatestSessionMessages(storedSessionId, sessionRestScope)
+        // DeGram locks every REST transcript read (403 DEGRAM_LOCKED), so there the
+        // gateway's cold resume carries the transcript instead (D-31).
+        const restTranscript = !$degramEnabled.get()
+
+        const prefetchPromise =
+          watchWindow || !restTranscript ? null : getLatestSessionMessages(storedSessionId, sessionRestScope)
 
         let resumeRuntimeBaselineMessages: ChatMessage[] = []
         const resumeStartedAt = Date.now() / 1000
@@ -2181,7 +2187,7 @@ export function useSessionActions({
             session_id: storedSessionId,
             cols: 96,
             source: 'desktop',
-            defer_history: !watchWindow,
+            defer_history: !watchWindow && restTranscript,
             // REST is the transcript authority for Desktop. Avoid duplicating a
             // potentially huge compression lineage in the WebSocket response.
             // Watch windows attach lazily (live mirror). Every other cold resume
@@ -2189,7 +2195,7 @@ export function useSessionActions({
             // transcript immediately instead of blocking the switch on _make_agent
             // (MCP discovery / prompt build), and the agent pre-warms in the
             // background while the prefetch above paints the transcript.
-            ...(watchWindow ? { lazy: true } : { omit_messages: true }),
+            ...(watchWindow ? { lazy: true } : restTranscript ? { omit_messages: true } : {}),
             ...(sessionProfile ? { profile: sessionProfile } : {})
           })
         ).then(resumed => {
