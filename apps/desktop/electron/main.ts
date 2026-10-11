@@ -231,7 +231,7 @@ import {
   updateMenuEntries
 } from './degram/isolation'
 import { createDegramMainWiring, type DegramMainWiring } from './degram/main-wiring'
-import { createPairingStore } from './degram/pairing-store'
+import { removeRetiredPairing } from './degram/pairing-store'
 import { createProfilesCli, resolveProfilesInvocation } from './degram/profiles-cli'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
@@ -15281,6 +15281,8 @@ function ensureDegramWiring(): DegramMainWiring | null {
     }
   })
 
+  removeRetiredPairing(app.getPath('userData'), { info: rememberLog, warn: rememberLog, error: rememberLog })
+
   degramWiring = createDegramMainWiring({
     origin,
     fetch: createNetPartitionFetch({ net: electronNet as never, session: dgSession as never }),
@@ -15310,15 +15312,6 @@ function ensureDegramWiring(): DegramMainWiring | null {
       },
       release: (profile: string): Promise<void> => teardownPoolBackendAndWait(profile)
     },
-    // Phase 1301-17 (D-25): the DeGram pairing token, encrypted with safeStorage in DeGram's own userData.
-    // Without OS encryption there is no store and the pairing panel says so; nothing is kept in clear text.
-    pairing: safeStorage.isEncryptionAvailable()
-      ? createPairingStore({
-          dir: app.getPath('userData'),
-          safeStorage,
-          logger: { info: rememberLog, warn: rememberLog, error: rememberLog }
-        })
-      : undefined,
     ipcMain,
     cookieSession: dgSession,
     // Phase 1301-20 (G-17): the tray's sign-out entry brings the window forward and its label follows the locale.

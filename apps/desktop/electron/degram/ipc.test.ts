@@ -6,10 +6,8 @@ import type { BackendHandle, ScopeKey } from './scope'
 import {
   createFakeClock,
   createFakeDg,
-  createFakePairing,
   createFakeViewFactory,
   createLog,
-  PAIRING_TOKEN,
   TOKEN_A
 } from './test-support'
 
@@ -19,7 +17,6 @@ function rig(
   options: {
     signedIn?: boolean
     memberships?: { project: string; company?: string | null }[]
-    pairing?: ReturnType<typeof createFakePairing> | null
   } = {}
 ) {
   const log = createLog()
@@ -79,7 +76,6 @@ function rig(
       cleanupLegacy: async () => ({ ran: false, failed: [] })
     },
     backend: { ensure: async () => handle, release: async () => undefined },
-    pairing: options.pairing === null ? undefined : (options.pairing ?? createFakePairing()),
     onTrayLabelsChanged: trayChanged,
     send: (channel, payload) => {
       log.push(`send:${channel}${channel === DEGRAM_CHANNELS.event ? `:${(payload as { type: string }).type}` : ''}`)
@@ -137,18 +133,14 @@ describe('degram runtime: sign-in page and initial state', () => {
     expect(r.rpcCalls).toEqual([])
   })
 
-  it('probes a stored pairing once on start and publishes revoked status after a refused probe', async () => {
-    const pairing = createFakePairing(PAIRING_TOKEN)
-    const r = rig({ pairing })
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+  it('does not mint credentials until a project is selected', async () => {
+    const r = rig()
 
     await r.runtime.start()
 
-    expect(r.dg.exchangeCount()).toBe(1)
-    expect(pairing.get()).toBeNull()
-    expect(r.runtime.getState().pairing.status).toBe('revoked')
-    expect(eventsOf(r.sent)).toContainEqual({ type: 'pairing-revoked' })
+    expect(r.dg.mintCount()).toBe(0)
     expect(r.runtime.getState().scope.status).toBe('no-project')
+    expect(r.dg.requests.some(q => q.url.endsWith('/auth/degram/exchange'))).toBe(false)
   })
 
   it('a sign-in completed inside the DG page is picked up from the cookie change and opens the DG page', async () => {
@@ -178,7 +170,7 @@ describe('degram runtime: sign-in page and initial state', () => {
   })
 
   it('a project chosen on the start page is announced by the page and opens the scope', async () => {
-    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
+    const r = rig()
 
     await r.runtime.start()
     r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=alpha`, true)
@@ -500,9 +492,7 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.setTrayLabels,
         DEGRAM_CHANNELS.setDgBounds,
         DEGRAM_CHANNELS.reportOutcome,
-        DEGRAM_CHANNELS.openExternalConfirmed,
-        DEGRAM_CHANNELS.setPairing,
-        DEGRAM_CHANNELS.clearPairing
+        DEGRAM_CHANNELS.openExternalConfirmed
       ].sort()
     )
 
@@ -653,7 +643,9 @@ describe('degram runtime: revocation reaches the renderer only after clearing (T
     await r.runtime.selectProject('alpha')
 
     expect(await r.runtime.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
-    expect(eventsOf(r.sent)).toContainEqual({ type: 'session-ended' })
+    expect(eventsOf(r.sent)).not.toContainEqual({ type: 'session-ended' })
+    expect(r.runtime.getState().scope.status).toBe('ready')
+    expect(r.dg.mintCount()).toBe(2)
     expect(await r.runtime.reportOutcome('NOT_AN_ACCESS_CODE')).toBe(false)
   })
 
@@ -687,111 +679,47 @@ describe('degram runtime: revocation reaches the renderer only after clearing (T
   })
 })
 
-describe('DeGram pairing over IPC (Phase 1301-17, D-25)', () => {
-  function register(runtime: DegramRuntime) {
-    const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
-
-    registerDegramIpc(
-      { handle: (channel, handler) => void handlers.set(channel, handler as never) },
-      runtime,
-      () => true
-    )
-
-    return handlers
-  }
-
-  const event = { sender: 'main' }
-
-  it('state carries the pairing status and never the token', async () => {
+describe('DeGram grant-required runtime path', () => {
+  it('never exposes pairing channels, state or a pasted token field through IPC', async () => {
     const r = rig()
-
+    const handlers = new Map<string, unknown>()
+    registerDegramIpc({ handle: (channel, handler) => void handlers.set(channel, handler) }, r.runtime, () => true)
     await r.runtime.start()
 
-    expect(r.runtime.getState().pairing).toEqual({ status: 'none', company: null, available: true })
-
-    const handlers = register(r.runtime)
-    const result = await handlers.get(DEGRAM_CHANNELS.setPairing)!(event, PAIRING_TOKEN)
-
-    expect(result).toEqual({ ok: true })
-    expect(r.runtime.getState().pairing.status).toBe('stored')
-    expect(JSON.stringify(r.sent)).not.toContain(PAIRING_TOKEN)
-    expect(JSON.stringify(r.runtime.getState())).not.toContain('dgp_')
-    expect(JSON.stringify(result)).not.toContain('dgp_')
+    expect([...handlers.keys()].join(' ')).not.toContain('pairing')
+    expect(r.runtime.getState()).not.toHaveProperty('pairing')
+    expect(r.dg.requests.some(q => q.url.endsWith('/auth/degram/exchange'))).toBe(false)
   })
 
-  it('validates the token before it reaches the store', async () => {
-    const pairing = createFakePairing()
-    const r = rig({ pairing })
-    const handlers = register(r.runtime)
-
-    for (const bad of ['', 'dgd_' + 'A'.repeat(43), 'dgp_short', 7, null, `dgp_${'A'.repeat(300)}`]) {
-      await expect(handlers.get(DEGRAM_CHANNELS.setPairing)!(event, bad)).rejects.toThrow(/invalid pairing/)
-    }
-
-    expect(pairing.get()).toBeNull()
-  })
-
-  it('clearPairing forgets the stored token and the state returns to none', async () => {
-    const pairing = createFakePairing(PAIRING_TOKEN)
-    const r = rig({ pairing })
-    const handlers = register(r.runtime)
-
-    expect(r.runtime.getState().pairing.status).toBe('stored')
-    await handlers.get(DEGRAM_CHANNELS.clearPairing)!(event)
-
-    expect(pairing.get()).toBeNull()
-    expect(r.runtime.getState().pairing.status).toBe('none')
-  })
-
-  it('without a pairing store the feature reports unavailable and refuses to store', async () => {
-    const r = rig({ pairing: null })
-    const handlers = register(r.runtime)
-
-    expect(r.runtime.getState().pairing).toEqual({ status: 'none', company: null, available: false })
-    expect(await handlers.get(DEGRAM_CHANNELS.setPairing)!(event, PAIRING_TOKEN)).toEqual({
-      ok: false,
-      code: 'ENCRYPTION_UNAVAILABLE'
-    })
-  })
-
-  it('a revoked pairing is published as the revoked state and announced once', async () => {
-    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
-
+  it('a missing grant returns to the start screen without signing out or purging membership', async () => {
+    const r = rig()
     await r.runtime.start()
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
+    await r.runtime.setDgMode('graph')
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
 
     const result = await r.runtime.selectProject('alpha')
 
-    expect(result).toMatchObject({ ok: false, code: 'PAIRING_REVOKED' })
-    expect(r.runtime.getState().pairing.status).toBe('revoked')
-    expect(eventsOf(r.sent).filter(e => e.type === 'pairing-revoked')).toHaveLength(1)
-    expect(states(r.sent).at(-1).pairing.status).toBe('revoked')
+    expect(result).toMatchObject({ ok: false, code: 'GRANT_REQUIRED' })
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'grant-required', project: 'alpha' })
+    expect(r.runtime.getState().auth.kind).toBe('signed-in')
+    expect(r.runtime.getState().scope.status).toBe('no-project')
+    expect(r.log.entries.some(entry => entry.startsWith('profiles.purge:'))).toBe(false)
+    await vi.waitFor(() => expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram`))
   })
 
-  it('a pairing revoked while the graph slice is shown brings the host-mode start page back', async () => {
-    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
-
+  it('a revoked grant while the scope is open returns to start with the same notice', async () => {
+    const r = rig()
     await r.runtime.start()
-    await r.runtime.setDgMode('graph')
-    expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/#degram`)
-
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
     await r.runtime.selectProject('alpha')
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
 
-    await vi.waitFor(() => expect(r.fake.loaded[r.fake.loaded.length - 1]).toBe(`${r.dg.origin}/?host=degram`))
-  })
+    await r.runtime.reportOutcome('DELEGATED_SESSION_ENDED')
 
-  it('a pairing revoked while the start page is already shown does not reload it', async () => {
-    const r = rig({ pairing: createFakePairing(PAIRING_TOKEN) })
-
-    await r.runtime.start()
-    const loads = r.fake.loaded.length
-
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
-    await r.runtime.selectProject('alpha')
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    expect(r.fake.loaded.length).toBe(loads)
+    expect(r.rpcCalls.map(c => c.method)).toEqual(['degram.credentials.set', 'degram.credentials.clear'])
+    expect(eventsOf(r.sent)).toContainEqual({ type: 'grant-required', project: 'alpha' })
+    expect(r.runtime.getState().auth.kind).toBe('signed-in')
+    expect(r.runtime.getState().scope.status).toBe('no-project')
+    expect(r.log.entries.some(entry => entry.startsWith('profiles.purge:'))).toBe(false)
   })
 })
 

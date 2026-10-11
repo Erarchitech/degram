@@ -4,15 +4,13 @@
 //
 //   1. confirm with a fresh GET /auth/me that the user is signed in and a member of the project,
 //   2. close the previously open scope (agent credential cleared first),
-//   3. ensure that scope's own Hermes profile (python -m degram_variant.profiles ensure),
-//   4. start / attach the profile's agent backend,
-//   5. mint a delegated token through the DG partition,
+//   3. mint a delegated token through the DG partition (before preparing a profile or backend),
+//   4. ensure that scope's own Hermes profile (python -m degram_variant.profiles ensure),
+//   5. start / attach the profile's agent backend,
 //   6. hand it to the agent with degram.credentials.set (BEFORE the renderer may create a session),
 //   7. report the scope ready.
 //
-// Phase 1301-17 (D-25, D-27): step 5 exchanges a stored DeGram pairing token instead of the cookie mint
-// when one is stored (dg-session.ts). A pairing refused by DG closes the scope with `pairing-revoked`: the
-// DG sign-in, the local history and the DG view stay, since neither the session nor the membership ended.
+// A grant refused by DG closes the scope without purging its profile: membership and local history stay.
 //
 // The delegated token exists only in this call chain and in the agent process memory: it is not part of
 // any state object, event, log line or file. The renderer starts a fresh chat session when it sees a
@@ -21,7 +19,7 @@
 // All collaborators are injected (see test-support.ts for the fakes).
 
 import { relayBaseUrlFor } from './dg-config'
-import type { AuthState, Clock, DgSession, Logger, MeResult, MintResult, MintSource } from './dg-session'
+import type { AuthState, Clock, DgSession, Logger, MeResult, MintResult } from './dg-session'
 import { DEGRAM_HEARTBEAT_S, DEGRAM_TOKEN_RENEW_S } from './dg-session'
 
 export interface ScopeKey {
@@ -41,9 +39,7 @@ export type DegramEvent =
   | { type: 'external-link-blocked'; url: string }
   | { type: 'dg-unreachable' }
   | { type: 'dg-reachable' }
-  /** DG refused the stored pairing (revoked on the Connectors tab); the scope closed, the sign-in stays. */
-  | { type: 'pairing-revoked' }
-  | { type: 'pairing-required' }
+  | { type: 'grant-required'; project: string }
   | { type: 'backend-start-failed'; project: string }
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
@@ -69,7 +65,7 @@ export type ScopeErrorCode =
   | 'CREDENTIALS_REJECTED'
   | 'ACCESS_DENIED'
   | 'MINT_FAILED'
-  | 'PAIRING_REVOKED'
+  | 'GRANT_REQUIRED'
 
 export type SelectResult = { ok: true; state: ScopeState } | { ok: false; code: ScopeErrorCode; state: ScopeState }
 
@@ -163,8 +159,6 @@ interface OpenScope {
   key: ScopeKey
   profile: string
   handle: BackendHandle | null
-  /** Where the agent's current credential came from. */
-  source: MintSource
 }
 
 const IDLE: Omit<ScopeState, 'epoch'> = {
@@ -352,16 +346,13 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
   }
 
-  /**
-   * DG refused the stored pairing: close the open scope (agent credential cleared first) and tell the renderer.
-   * No purge, no view wipe, no sign-out: the session and the membership are intact (D-27).
-   */
-  const pairingEnded = async (): Promise<void> => {
+  /** A revoked/missing grant ends only the scope; DG sign-in, membership and local profile remain. */
+  const grantRequired = async (project: string): Promise<void> => {
     epoch += 1
     await closeCurrent()
     active = null
     setState({ ...IDLE, epoch })
-    deps.emit({ type: 'pairing-revoked' })
+    deps.emit({ type: 'grant-required', project })
   }
 
   /** Access to the active project is gone (403 / membership loss): purge that scope only, then tell the renderer. */
@@ -416,11 +407,6 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   }
 
   const announceProject = async (project: string): Promise<void> => {
-    const pairing = session.pairing()
-    if (pairing.status !== 'stored' && pairing.status !== 'connected') {
-      deps.emit({ type: 'pairing-required' })
-      return
-    }
     await selectProject(project)
   }
 
@@ -454,6 +440,37 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     await closeCurrent()
     active = { key, profile: null }
     setState({ status: 'opening', project, company: membership.company, profile: null, epoch: mine, error: null })
+
+    const minted: MintResult = await session.mint(project)
+
+    if (superseded()) {
+      return fail('SUPERSEDED', false)
+    }
+
+    if (minted.kind === 'grant-required') {
+      await grantRequired(project)
+      return { ok: false, code: 'GRANT_REQUIRED', state }
+    }
+
+    if (minted.kind !== 'ok') {
+      const code: ScopeErrorCode =
+        minted.kind === 'unreachable'
+          ? 'DG_UNREACHABLE'
+          : minted.kind === 'signed-out'
+            ? 'NOT_SIGNED_IN'
+            : minted.kind === 'forbidden'
+              ? 'ACCESS_DENIED'
+              : 'MINT_FAILED'
+
+      if (minted.kind === 'forbidden') {
+        // DG says the access ended (G-15, D-19): the same revoke path as a lost membership, not a bare error.
+        await revokeActive()
+
+        return { ok: false, code, state }
+      }
+
+      return fail(code, false)
+    }
 
     let profile: string
 
@@ -493,39 +510,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       return fail('SUPERSEDED', false)
     }
 
-    const minted: MintResult = await session.mint(project)
-
-    if (superseded()) {
-      return fail('SUPERSEDED', false)
-    }
-
-    if (minted.kind === 'pairing-revoked') {
-      current = { key, profile, handle, source: 'pairing' }
-      await pairingEnded()
-      return { ok: false, code: 'PAIRING_REVOKED', state }
-    }
-
-    if (minted.kind !== 'ok') {
-      const code: ScopeErrorCode =
-        minted.kind === 'unreachable'
-          ? 'DG_UNREACHABLE'
-          : minted.kind === 'signed-out'
-            ? 'NOT_SIGNED_IN'
-            : minted.kind === 'forbidden'
-              ? 'ACCESS_DENIED'
-              : 'MINT_FAILED'
-
-      if (minted.kind === 'forbidden') {
-        // DG says the access ended (G-15, D-19): the same revoke path as a lost membership, not a bare error.
-        await revokeActive()
-
-        return { ok: false, code, state }
-      }
-
-      return fail(code, false)
-    }
-
-    current = { key, profile, handle, source: minted.source }
+    current = { key, profile, handle }
 
     try {
       await handle.call('degram.credentials.set', credentialParams(key, minted))
@@ -584,7 +569,6 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       if (minted.kind === 'ok') {
         try {
           await open.handle.call('degram.credentials.set', credentialParams(open.key, minted))
-          open.source = minted.source
           renewPending = false
         } catch {
           logger.warn('[degram] the agent did not accept the renewed credential; retrying on the next heartbeat')
@@ -592,8 +576,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
         }
       } else if (minted.kind === 'signed-out') {
         await endSession()
-      } else if (minted.kind === 'pairing-revoked') {
-        await pairingEnded()
+      } else if (minted.kind === 'grant-required') {
+        await grantRequired(open.key.project)
       } else if (minted.kind === 'forbidden') {
         await revokeActive()
       } else {
@@ -692,16 +676,11 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
 
     if (OUTCOMES_END_SESSION.has(code)) {
-      // A pairing credential's parent is the pairing, not the DG session: ask DG about the pairing (one
-      // re-mint) instead of signing the user out. A refused pairing closes the scope (pairingEnded).
-      if (current?.source === 'pairing') {
+      // The parent may be the DG session or the grant. Re-mint once to distinguish them.
+      if (current) {
         await renew()
-
-        return true
-      }
-
-      if (live) {
-        await endSession()
+      } else if (live) {
+        await checkAccess('outcome')
       }
 
       return true

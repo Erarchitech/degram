@@ -34,7 +34,7 @@ export interface DegramStore {
   /** A 401 ended the session: the sign-in view carries the session-ended copy above it. */
   sessionEnded: boolean
   accessRevoked: { project: string } | null
-  pairingNotice: 'revoked' | 'required' | null
+  grantRequired: { project: string } | null
   backendFailed: { project: string } | null
   bootError: DegramBootError | null
   /** State of an explicit refresh (the project picker's list). */
@@ -47,7 +47,7 @@ const INITIAL: DegramStore = {
   painted: false,
   sessionEnded: false,
   accessRevoked: null,
-  pairingNotice: null,
+  grantRequired: null,
   backendFailed: null,
   bootError: null,
   refresh: 'idle'
@@ -97,7 +97,7 @@ function applyState(state: DegramState): void {
           ? prev.painted
           : false,
     sessionEnded: state.auth.kind === 'signed-in' ? false : prev.sessionEnded,
-    pairingNotice: signedOut ? null : state.pairing.status === 'revoked' ? 'revoked' : (state.pairing.status === 'stored' || state.pairing.status === 'connected' ? null : prev.pairingNotice),
+    grantRequired: signedOut || state.scope.status === 'ready' ? null : prev.grantRequired,
     backendFailed: signedOut || state.scope.status === 'ready' ? null : state.scope.error === 'BACKEND_START_FAILED' && state.scope.project ? { project: state.scope.project } : prev.backendFailed,
     accessRevoked: signedOut || state.scope.status === 'ready' ? null : prev.accessRevoked
   })
@@ -172,12 +172,8 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
 
       return
 
-    case 'pairing-revoked':
-      $degram.set({ ...$degram.get(), pairingNotice: 'revoked' })
-      return
-
-    case 'pairing-required':
-      $degram.set({ ...$degram.get(), pairingNotice: 'required' })
+    case 'grant-required':
+      $degram.set({ ...$degram.get(), grantRequired: { project: event.project } })
       return
 
     case 'backend-start-failed':
@@ -301,7 +297,7 @@ export function useDegramActions(): DegramActions {
   return useContext(DegramActionsContext)
 }
 
-export function dismissDegramNotice(kind: 'access' | 'pairing' | 'backend'): void {
+export function dismissDegramNotice(kind: 'access' | 'grant' | 'backend'): void {
   const current = $degram.get()
-  $degram.set({ ...current, accessRevoked: kind === 'access' ? null : current.accessRevoked, pairingNotice: kind === 'pairing' ? null : current.pairingNotice, backendFailed: kind === 'backend' ? null : current.backendFailed })
+  $degram.set({ ...current, accessRevoked: kind === 'access' ? null : current.accessRevoked, grantRequired: kind === 'grant' ? null : current.grantRequired, backendFailed: kind === 'backend' ? null : current.backendFailed })
 }

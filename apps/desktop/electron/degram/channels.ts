@@ -16,9 +16,6 @@ export const DEGRAM_CHANNELS = {
   setDgBounds: 'degram:set-dg-bounds',
   reportOutcome: 'degram:report-outcome',
   openExternalConfirmed: 'degram:open-external-confirmed',
-  // Phase 1301-17 (D-25): the pairing token crosses IPC once, renderer to main; nothing returns it.
-  setPairing: 'degram:pairing:set',
-  clearPairing: 'degram:pairing:clear',
   // Phase 1301-20 (G-17): the tray's sign-out entry. The renderer owns the label (locale) and the confirmation.
   setTrayLabels: 'degram:set-tray-labels',
   requestSignOut: 'degram:request-sign-out',

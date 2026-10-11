@@ -12,7 +12,6 @@ import { DialogPortalContainerContext } from '@/components/ui/dialog-portal-cont
 import { useI18n } from '@/i18n'
 
 import { IsolationBootFailure } from './isolation-boot-failure'
-import { PairingPanel } from './pairing-panel'
 import { DgConnecting, DgUnreachable, SignInState } from './sign-in-state'
 import { degramBridge, dismissDegramNotice, refreshDegramState, useDegram } from './use-degram-state'
 
@@ -45,19 +44,16 @@ async function retryDgAndRefresh(): Promise<void> {
 /** The single start screen, before sign-in and until an explicit project is open. */
 export function FirstScreen() {
   const { t } = useI18n()
-  const { accessRevoked, backendFailed, pairingNotice, state } = useDegram()
-  const signedIn = state?.auth.kind === 'signed-in'
-  const hasPairing = state?.pairing.status === 'stored' || state?.pairing.status === 'connected'
+  const { accessRevoked, backendFailed, grantRequired, state } = useDegram()
   const opening = state?.scope.status === 'opening'
   const unreachable = state?.dg.reachable === false || state?.scope.error === 'DG_UNREACHABLE'
 
   return <SignInState>
     <div className="grid w-full max-w-prose gap-2" data-testid="degram-first-screen">
       {accessRevoked && <Notice onDismiss={() => dismissDegramNotice('access')}>{t.degram.errors.accessRevoked(accessRevoked.project)}</Notice>}
-      {pairingNotice && <Notice onDismiss={() => dismissDegramNotice('pairing')}>{pairingNotice === 'revoked' ? t.degram.pairing.revokedNotice : t.degram.pairing.requiredNotice}</Notice>}
+      {grantRequired && <Notice onDismiss={() => dismissDegramNotice('grant')}>{t.degram.notice.grantRequired(grantRequired.project)}</Notice>}
       {backendFailed && <Notice action={() => void degramBridge()?.selectProject(backendFailed.project)} onDismiss={() => dismissDegramNotice('backend')}>{t.degram.errors.backendStartFailed(backendFailed.project)}</Notice>}
     </div>
-    {signedIn && !hasPairing && <PairingPanel focusRequest={pairingNotice !== null} />}
     {opening && !unreachable && <DgConnecting label={t.degram.signIn.connecting} />}
     {state?.scope.error === 'DG_UNREACHABLE' && state.dg.reachable && <DgUnreachable action={() => void retryDgAndRefresh()} actionLabel={t.degram.cta.retry} />}
   </SignInState>

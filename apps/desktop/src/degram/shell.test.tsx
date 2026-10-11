@@ -120,22 +120,16 @@ describe('isolation boot failure (D-02, UI overflow/long-text E8)', () => {
 })
 
 describe('single start screen (D-33)', () => {
-  it('keeps the DG view and pairing field on the signed-in start screen with no project-choice button', async () => {
+  it('keeps the DG view on the signed-in start screen without a token field or duplicate project choice', async () => {
     const h = install(makeState())
     await act(async () => undefined)
     render(withActions(<DegramGate />))
 
     expect(screen.getByTestId('degram-first-screen')).toBeTruthy()
-    expect(screen.getByTestId('degram-pairing')).toBeTruthy()
+    expect(screen.queryByTestId('degram-pairing')).toBeNull()
+    expect(screen.queryByLabelText('Pairing token')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
     expect(h.bridge.selectProject).not.toHaveBeenCalled()
-  })
-
-  it('hides the pairing panel once a token is stored', async () => {
-    install(makeState({ pairing: { status: 'stored', company: 'Acme', available: true } }))
-    await act(async () => undefined)
-    render(withActions(<DegramGate />))
-    expect(screen.queryByTestId('degram-pairing')).toBeNull()
   })
 })
 
@@ -426,21 +420,18 @@ describe('persistent start-screen notices (G-18, G-20, D-35)', () => {
     expect(screen.queryByText(/You no longer have access/)).toBeNull()
   })
 
-  it('shows pairing revocation from the snapshot and focuses the field', async () => {
-    install(makeState({ pairing: { status: 'revoked', company: null, available: true } }))
-    await act(async () => undefined)
-    render(withActions(<DegramGate />))
-    expect(screen.getByText('The pairing token was revoked. Create a new one on the Connectors tab in DG (in a browser) and paste it below.')).toBeTruthy()
-    expect(document.activeElement).toBe(screen.getByLabelText('Pairing token'))
-  })
-
-  it('shows the pairing-required notice and focuses the field', async () => {
+  it('shows a project-specific grant-required notice until dismissed, without a token field', async () => {
     const h = install(makeState())
     await act(async () => undefined)
     render(withActions(<DegramGate />))
-    h.emitEvent({ type: 'pairing-required' })
-    expect(screen.getByText('Paste a pairing token before choosing a project.')).toBeTruthy()
-    expect(document.activeElement).toBe(screen.getByLabelText('Pairing token'))
+    h.emitEvent({ type: 'grant-required', project: 'Alpha' })
+    const message = 'DeGram access to Alpha has not been granted yet. Request it under Connectors or ask the project owner.'
+    expect(screen.getByText(message)).toBeTruthy()
+    h.emitState(makeState())
+    expect(screen.getByText(message)).toBeTruthy()
+    expect(screen.queryByLabelText('Pairing token')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss notice' }))
+    expect(screen.queryByText(message)).toBeNull()
   })
 
   it('shows backend-start failure from the snapshot and retries that project', async () => {

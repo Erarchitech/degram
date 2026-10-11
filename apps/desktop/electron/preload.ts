@@ -742,9 +742,6 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       return () => ipcRenderer.removeListener(DEGRAM_CHANNELS.requestSignOut, listener)
     },
     reportOutcome: code => ipcRenderer.invoke(DEGRAM_CHANNELS.reportOutcome, code),
-    openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url),
-    // Phase 1301-17: the pasted pairing token goes to main once; there is no getter for it.
-    setPairing: token => ipcRenderer.invoke(DEGRAM_CHANNELS.setPairing, token),
-    clearPairing: () => ipcRenderer.invoke(DEGRAM_CHANNELS.clearPairing)
+    openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url)
   }
 })

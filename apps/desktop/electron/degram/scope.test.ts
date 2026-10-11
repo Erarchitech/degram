@@ -13,9 +13,7 @@ import {
 import {
   createFakeClock,
   createFakeDg,
-  createFakePairing,
   createLog,
-  PAIRING_TOKEN,
   TOKEN_A,
   TOKEN_B
 } from './test-support'
@@ -58,8 +56,7 @@ function profileFor(scope: ScopeKey): string {
 }
 
 function rig(
-  memberships: { project: string; company?: string | null; role?: string }[] = [{ project: 'alpha' }],
-  pairing?: ReturnType<typeof createFakePairing>
+  memberships: { project: string; company?: string | null; role?: string }[] = [{ project: 'alpha' }]
 ): Rig {
   const dg = createFakeDg()
   const clock = createFakeClock()
@@ -97,7 +94,7 @@ function rig(
     }
   })
 
-  const session = createDgSession({ origin: dg.origin, fetch: dg.fetch, clock, logger, pairing })
+  const session = createDgSession({ origin: dg.origin, fetch: dg.fetch, clock, logger })
 
   const out = {
     dg,
@@ -321,18 +318,33 @@ describe('createScopeController: explicit project selection (D-19)', () => {
 })
 
 describe('project announcements (D-33)', () => {
-  it('requires pairing before opening an announced project', async () => {
+  it('opens an announced project without a pairing when a grant exists', async () => {
     const r = rig()
 
     await r.scope.announceProject('alpha')
 
-    expect(r.events).toEqual([{ type: 'pairing-required' }])
+    expect(r.events).toEqual([])
+    expect(r.scope.getState().status).toBe('ready')
+    expect(r.dg.requests.some(q => q.url.endsWith('/auth/degram/session-exchange'))).toBe(true)
+  })
+
+  it('a missing grant refuses selection without handing a credential to the agent', async () => {
+    const r = rig()
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'GRANT_REQUIRED' })
+    expect(r.events).toEqual([{ type: 'grant-required', project: 'alpha' }])
+    expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set')).toEqual([])
     expect(r.ensured).toEqual([])
+    expect(r.log.entries).not.toContain('backend.ensure:scope-alice-ACME-alpha')
+    expect(r.purged).toEqual([])
     expect(r.scope.getState().status).toBe('no-project')
   })
 
   it('does not open an announced project the user is not a member of', async () => {
-    const r = rig([{ project: 'alpha' }], createFakePairing(PAIRING_TOKEN))
+    const r = rig([{ project: 'alpha' }])
 
     await r.scope.announceProject('beta')
 
@@ -518,7 +530,7 @@ async function openAlpha(r: Rig): Promise<void> {
 }
 
 const meRequests = (r: Rig): number => r.dg.requests.filter(req => req.url.endsWith('/auth/me')).length
-const mintRequests = (r: Rig): number => r.dg.requests.filter(req => req.url.endsWith('/auth/delegated-token')).length
+const mintRequests = (r: Rig): number => r.dg.requests.filter(req => req.url.endsWith('/auth/degram/session-exchange')).length
 
 function expectOrdered(r: Rig, entries: string[]): void {
   const order = entries.map(entry => r.log.indexOf(entry))
@@ -541,6 +553,32 @@ function freshMint(): () => { status: number; body: unknown } {
 }
 
 describe('token renewal', () => {
+  it('a revoked grant closes the scope without purging membership or signing out', async () => {
+    const r = rig()
+    await openAlpha(r)
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    await r.clock.advance(RENEW_MS)
+
+    expect(r.log.entries).toContain(CLEAR_ALPHA)
+    expect(r.scope.getState().status).toBe('no-project')
+    expect(r.events).toEqual([{ type: 'grant-required', project: 'alpha' }])
+    expect(r.purged).toEqual([])
+    expect(r.storageClears).toBe(0)
+    expect(r.session.state().kind).toBe('signed-in')
+  })
+
+  it('a delegated-session-ended agent outcome re-mints once and closes only if the grant is gone', async () => {
+    const r = rig()
+    await openAlpha(r)
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    expect(await r.scope.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
+    expect(r.dg.requests.filter(q => q.url.endsWith('/auth/degram/session-exchange'))).toHaveLength(1)
+    expect(r.events).toEqual([{ type: 'grant-required', project: 'alpha' }])
+    expect(r.session.state().kind).toBe('signed-in')
+    expect(r.purged).toEqual([])
+  })
   it('re-mints every 600 s while a scope is open and hands each new token to the agent', async () => {
     const r = rig()
 
@@ -574,7 +612,7 @@ describe('token renewal', () => {
 
     await r.clock.advance(RENEW_MS)
 
-    const mints = r.dg.requests.filter(req => req.url.endsWith('/auth/delegated-token'))
+    const mints = r.dg.requests.filter(req => req.url.endsWith('/auth/degram/session-exchange'))
 
     expect(mints).toHaveLength(1)
     expect(JSON.parse(mints[0]!.body ?? '{}')).toEqual({ project: 'beta' })
@@ -813,16 +851,17 @@ describe('access revoked for the active project (403 / membership loss)', () => 
     expect(result).toMatchObject({ ok: false, code: 'ACCESS_DENIED' })
     expect(r.purged).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
     expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'alpha' }])
-    expect(r.released).toEqual(['scope-alice-ACME-alpha'])
+    expect(r.released).toEqual([]) // the exchange rejected access before a backend was started
+    expect(r.ensured).toEqual([])
     expect(r.events).toEqual([{ type: 'access-revoked', project: 'alpha', purged: true }])
     expect(r.scope.getState()).toMatchObject({ status: 'no-project', project: null, profile: null, error: null })
     expect(r.rpcCalls.map(c => c.method)).not.toContain('degram.credentials.set')
   })
 
-  it('a 403 from the pairing exchange at selection also takes the revoke path', async () => {
-    const r = rig([{ project: 'alpha' }], createFakePairing(PAIRING_TOKEN))
+  it('a 403 from the session exchange at selection also takes the revoke path', async () => {
+    const r = rig([{ project: 'alpha' }])
 
-    r.dg.setExchange({ status: 403, body: { detail: { code: 'DELEGATED_SCOPE_CHANGED' } } })
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'DELEGATED_SCOPE_CHANGED' } } })
 
     const result = await r.scope.selectProject('alpha')
 
@@ -854,10 +893,11 @@ describe('access revoked for the active project (403 / membership loss)', () => 
 })
 
 describe('forwarded agent outcomes', () => {
-  it('DELEGATED_SESSION_ENDED ends the session', async () => {
+  it('DELEGATED_SESSION_ENDED distinguishes an ended DG session on re-mint', async () => {
     const r = rig()
 
     await openAlpha(r)
+    r.dg.setSessionExchange({ status: 401, body: { detail: { code: 'AUTH_REQUIRED' } } })
 
     expect(await r.scope.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
     expect(r.events).toEqual([{ type: 'session-ended' }])
@@ -973,108 +1013,6 @@ describe('dispose', () => {
     r.scope.dispose()
 
     expect(r.clock.activeIntervals()).toBe(0)
-  })
-})
-
-describe('DeGram pairing as the credential source (Phase 1301-17, D-25, D-27)', () => {
-  const exchanges = (r: Rig): number => r.dg.requests.filter(q => q.url.endsWith('/auth/degram/exchange')).length
-
-  it('a stored pairing mints through the exchange and the agent gets the same credential shape', async () => {
-    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
-
-    const result = await r.scope.selectProject('alpha')
-
-    expect(result.ok).toBe(true)
-    expect(r.dg.exchangeCount()).toBe(1)
-    expect(r.dg.mintCount()).toBe(0)
-    expect(r.rpcCalls[0]).toMatchObject({
-      method: 'degram.credentials.set',
-      params: { user: 'alice', company: 'ACME', project: 'alpha' }
-    })
-    expect(String(r.rpcCalls[0]!.params.token)).toMatch(/^dgd_PAIRED-/)
-  })
-
-  it('renewal keeps using the pairing every 600 s', async () => {
-    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
-
-    await openAlpha(r)
-    await r.clock.advance(RENEW_MS)
-
-    expect(exchanges(r)).toBe(1)
-    expect(r.dg.mintCount()).toBe(0)
-  })
-
-  it('a revoked pairing at selection reports PAIRING_REVOKED, purges nothing and keeps the DG sign-in', async () => {
-    const pairing = createFakePairing(PAIRING_TOKEN)
-    const r = rig(undefined, pairing)
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
-
-    const result = await r.scope.selectProject('alpha')
-
-    expect(result).toMatchObject({ ok: false, code: 'PAIRING_REVOKED' })
-    expect(r.events).toEqual([{ type: 'pairing-revoked' }])
-    expect(r.purged).toEqual([])
-    expect(r.session.state().kind).toBe('signed-in')
-    expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set')).toEqual([])
-    expect(pairing.get()).toBeNull()
-  })
-
-  it('a pairing revoked while the scope is open closes the scope on the next renewal, without a purge or sign-out', async () => {
-    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
-
-    await openAlpha(r)
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
-    await r.clock.advance(RENEW_MS)
-
-    expect(r.log.entries).toContain(CLEAR_ALPHA)
-    expect(r.scope.getState()).toMatchObject({ status: 'no-project', project: null })
-    expect(r.events).toEqual([{ type: 'pairing-revoked' }])
-    expect(r.purged).toEqual([])
-    expect(r.storageClears).toBe(0)
-    expect(r.session.state().kind).toBe('signed-in')
-  })
-
-  it('DELEGATED_SESSION_ENDED from a pairing credential checks the pairing instead of signing the user out', async () => {
-    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
-
-    await openAlpha(r)
-    r.dg.setExchange({ status: 401, body: { detail: { code: 'PAIRING_AUTH_FAILED' } } })
-
-    expect(await r.scope.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
-    expect(r.events).toEqual([{ type: 'pairing-revoked' }])
-    expect(r.scope.getState().status).toBe('no-project')
-    expect(r.session.state().kind).toBe('signed-in')
-  })
-
-  it('DELEGATED_SESSION_ENDED from a pairing credential that is still live re-mints and keeps the scope', async () => {
-    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
-
-    await openAlpha(r)
-
-    expect(await r.scope.reportOutcome('DELEGATED_SESSION_ENDED')).toBe(true)
-    expect(r.events).toEqual([])
-    expect(r.scope.getState().status).toBe('ready')
-    expect(r.rpcCalls.map(c => c.method)).toEqual(['degram.credentials.set'])
-  })
-
-  it('a pairing of another DG user never reaches the agent', async () => {
-    const r = rig(undefined, createFakePairing(PAIRING_TOKEN))
-    r.dg.setExchange(request => ({
-      status: 201,
-      body: {
-        token: 'dgd_BOB',
-        project: JSON.parse(request.body ?? '{}').project,
-        company: 'ACME',
-        expiresAt: '2030-01-01T00:15:00Z',
-        expiresInSeconds: 900,
-        username: 'bob'
-      }
-    }))
-
-    const result = await r.scope.selectProject('alpha')
-
-    expect(result).toMatchObject({ ok: false, code: 'MINT_FAILED' })
-    expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set')).toEqual([])
   })
 })
 

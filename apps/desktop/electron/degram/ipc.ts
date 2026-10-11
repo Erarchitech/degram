@@ -9,15 +9,11 @@
 // `registerDegramIpc` is the only place that touches ipcMain: it verifies the sender is the DeGram window,
 // validates every payload, and calls the runtime. There is no channel that can read a credential.
 //
-// Phase 1301-17 (D-25): `setPairing` takes the DeGram pairing token pasted in the renderer exactly once and
-// hands it to the safeStorage-backed store; the state carries only the pairing status, never the token.
-
 import { DEGRAM_CHANNELS } from './channels'
-import type { AuthState, Clock, DgSession, Logger, Membership, PairingStatus, PartitionFetch } from './dg-session'
+import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
 import type { DgBounds, DgMode, DgView, DgViewDeps, DgViewPage } from './dg-view'
 import { createDgView } from './dg-view'
-import { isPairingToken, type PairingSetResult, type PairingStore } from './pairing-store'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
@@ -29,14 +25,6 @@ export interface DegramAuthView {
   username: string | null
   isAdmin: boolean
   memberships: Membership[]
-}
-
-/** The DeGram pairing as the renderer may see it: a status, never the token. */
-export interface DegramPairingView {
-  status: PairingStatus
-  company: string | null
-  /** False when no encrypted store exists (OS encryption unavailable): the panel cannot store a token. */
-  available: boolean
 }
 
 /** Texts of native menus (the tray) that the renderer owns because it owns the locale. */
@@ -51,7 +39,6 @@ export interface DegramState {
   auth: DegramAuthView
   scope: ScopeState
   dg: { mode: DgMode; page: DgViewPage; reachable: boolean }
-  pairing: DegramPairingView
 }
 
 /** The renderer-facing bridge exposed by preload.ts as `window.hermesDesktop.degram`. No credential getter. */
@@ -75,10 +62,6 @@ export interface DegramBridge {
   reportOutcome: (code: string) => Promise<boolean>
   /** Open a URL the DG view refused to show in the system browser. Call only from a user action. */
   openExternalConfirmed: (url: string) => Promise<boolean>
-  /** Store a pasted DeGram pairing token (Phase 1301-17). The token is never sent back. */
-  setPairing: (token: string) => Promise<PairingSetResult>
-  /** Forget the stored pairing on this PC (revoking it is done on the DG Connectors tab). */
-  clearPairing: () => Promise<void>
 }
 
 export interface DegramRuntimeDeps {
@@ -90,8 +73,6 @@ export interface DegramRuntimeDeps {
   openExternal: DgViewDeps['openExternal']
   profiles: ScopeDeps['profiles']
   backend: ScopeDeps['backend']
-  /** The safeStorage-backed pairing store (pairing-store.ts); absent when OS encryption is unavailable. */
-  pairing?: PairingStore
   /** Renderer sender (`webContents.send`). */
   send: (channel: string, payload: unknown) => void
   /** The tray labels changed: rebuild the native menu. */
@@ -116,8 +97,6 @@ export interface DegramRuntime {
   /** Ask the renderer to run its sign-out flow (the tray entry). */
   requestSignOut: () => void
   openExternalConfirmed: (url: string) => boolean
-  setPairing: (token: string) => PairingSetResult
-  clearPairing: () => void
   /** An agent outcome code forwarded by the renderer; false when it is not an access signal. */
   reportOutcome: (code: string) => Promise<boolean>
   /** The DeGram window gained focus: verify the DG session and the active project's membership. */
@@ -162,8 +141,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     origin: deps.origin,
     fetch: deps.fetch,
     clock: deps.clock,
-    logger,
-    pairing: deps.pairing
+    logger
   })
 
   let scope: ScopeController
@@ -171,8 +149,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   const getState = (): DegramState => ({
     auth: authView(session.state()),
     scope: scope.getState(),
-    dg: { mode: dgView.getState().mode, page: dgView.getState().page, reachable },
-    pairing: { ...session.pairing(), available: deps.pairing !== undefined }
+    dg: { mode: dgView.getState().mode, page: dgView.getState().page, reachable }
   })
 
   const publish = (): void => {
@@ -216,8 +193,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       reachable = true
     } else if (event.type === 'session-ended') {
       void viewTask(() => dgView.showSignIn())
-    } else if (event.type === 'access-revoked' || event.type === 'pairing-revoked') {
-      // An access loss left the view blank, a pairing loss may have left the graph slice: neither offers a project.
+    } else if (event.type === 'access-revoked' || event.type === 'grant-required') {
+      // A project lost its access while the DG sign-in remains intact; return to the project choice.
       void viewTask(restoreStartPage)
     }
 
@@ -260,27 +237,15 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     // Signing in inside the DG page: show the DG page once the session is confirmed.
     if (auth.kind === 'signed-in' && !wasSignedIn) {
       void viewTask(showDgForScope)
-      void session.probePairing().then(result => {
-        if (result === 'revoked') {
-          onEvent({ type: 'pairing-revoked' })
-        }
-      })
     }
 
     publish()
   })
 
   scope.onState(() => publish())
-  session.onPairing(() => publish())
 
   const start = async (): Promise<void> => {
     const me = await session.refresh()
-    if (me.kind === 'signed-in') {
-      const pairingProbe = await session.probePairing()
-      if (pairingProbe === 'revoked') {
-        onEvent({ type: 'pairing-revoked' })
-      }
-    }
 
     if (me.kind === 'unreachable') {
       // G-16: DG reset or refused the first check. Say so now (the renderer shows the DG-unreachable state with
@@ -374,23 +339,6 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     getTrayLabels: (): DegramTrayLabels => trayLabels,
     requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
-    setPairing: (token: string): PairingSetResult => {
-      if (!deps.pairing) {
-        return { ok: false, code: 'ENCRYPTION_UNAVAILABLE' }
-      }
-
-      const result = deps.pairing.set(token)
-
-      session.notePairingChanged()
-      publish()
-
-      return result
-    },
-    clearPairing: (): void => {
-      deps.pairing?.clear()
-      session.notePairingChanged()
-      publish()
-    },
     reportOutcome: async (code: string): Promise<boolean> => {
       const known = await scope.reportOutcome(code)
 
@@ -486,14 +434,6 @@ function asOutcome(value: unknown): string {
   return value
 }
 
-function asPairing(value: unknown): string {
-  if (!isPairingToken(value)) {
-    throw invalid('pairing token')
-  }
-
-  return value
-}
-
 const MAX_LABEL_LENGTH = 80
 
 function asTrayLabels(value: unknown): DegramTrayLabels {
@@ -577,13 +517,5 @@ export function registerDegramIpc(
   ipc.handle(
     DEGRAM_CHANNELS.openExternalConfirmed,
     guarded((url: unknown) => runtime.openExternalConfirmed(asUrl(url)))
-  )
-  ipc.handle(
-    DEGRAM_CHANNELS.setPairing,
-    guarded((token: unknown) => runtime.setPairing(asPairing(token)))
-  )
-  ipc.handle(
-    DEGRAM_CHANNELS.clearPairing,
-    guarded(() => runtime.clearPairing())
   )
 }

@@ -5,130 +5,57 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createPairingStore, DEGRAM_PAIRING_FILE, isPairingToken, type SafeStorageLike } from './pairing-store'
+import { DEGRAM_PAIRING_FILE, removeRetiredPairing } from './pairing-store'
 
-const TOKEN = 'dgp_' + 'A'.repeat(43)
-
-function fakeSafeStorage(available = true): SafeStorageLike {
-  return {
-    isEncryptionAvailable: () => available,
-    // Reversible, but never the clear text: the test proves the file holds ciphertext only.
-    encryptString: (text: string) =>
-      Buffer.from(Buffer.from(text.split('').reverse().join(''), 'utf8').map(b => b ^ 0x5a)),
-    decryptString: (data: Buffer) =>
-      Buffer.from(data.map(b => b ^ 0x5a))
-        .toString('utf8')
-        .split('')
-        .reverse()
-        .join('')
-  }
-}
-
-describe('pairing-store', () => {
+describe('retired DeGram pairing migration', () => {
   let dir: string
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'degram-pairing-'))
-    logger.info.mockClear()
-    logger.warn.mockClear()
-    logger.error.mockClear()
+    vi.clearAllMocks()
   })
 
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  const build = (available = true) => createPairingStore({ dir, safeStorage: fakeSafeStorage(available), logger })
+  it('deletes the old file without reading or decrypting it and never recreates it', () => {
+    const file = path.join(dir, DEGRAM_PAIRING_FILE)
+    fs.writeFileSync(file, Buffer.from('opaque old credential'))
+    const reads = vi.spyOn(fs, 'readFileSync')
 
-  it('stores a dgp_ token as ciphertext only and reads it back in main', () => {
-    const store = build()
+    removeRetiredPairing(dir, logger)
+    removeRetiredPairing(dir, logger)
 
-    expect(store.has()).toBe(false)
-    expect(store.set(TOKEN)).toEqual({ ok: true })
-    expect(store.has()).toBe(true)
-    expect(store.get()).toBe(TOKEN)
-
-    const raw = fs.readFileSync(path.join(dir, DEGRAM_PAIRING_FILE))
-
-    expect(raw.toString('utf8')).not.toContain(TOKEN)
-    expect(raw.toString('latin1')).not.toContain('dgp_')
-  })
-
-  it('refuses anything that is not a pairing token', () => {
-    const store = build()
-
-    for (const bad of [
-      '',
-      'dgd_' + 'A'.repeat(43),
-      'dgc_' + 'A'.repeat(43),
-      'dgp_short',
-      `dgp_${'A'.repeat(40)} x`,
-      42
-    ]) {
-      expect(store.set(bad as never)).toEqual({ ok: false, code: 'PAIRING_INVALID' })
-    }
-
-    expect(store.has()).toBe(false)
-    expect(fs.existsSync(path.join(dir, DEGRAM_PAIRING_FILE))).toBe(false)
-  })
-
-  it('refuses to store when OS encryption is unavailable (never clear text on disk)', () => {
-    const store = build(false)
-
-    expect(store.set(TOKEN)).toEqual({ ok: false, code: 'ENCRYPTION_UNAVAILABLE' })
-    expect(store.has()).toBe(false)
+    expect(fs.existsSync(file)).toBe(false)
+    expect(reads).not.toHaveBeenCalled()
+    expect(logger.info).toHaveBeenCalledTimes(1)
+    expect(logger.info).toHaveBeenCalledWith('[degram] removed the retired pairing token')
     expect(fs.readdirSync(dir)).toEqual([])
+    reads.mockRestore()
   })
 
-  it('clear() removes the file', () => {
-    const store = build()
+  it('leaves other userData files untouched', () => {
+    const other = path.join(dir, 'profile.json')
+    fs.writeFileSync(other, '{}')
 
-    store.set(TOKEN)
-    store.clear()
+    removeRetiredPairing(dir, logger)
 
-    expect(store.has()).toBe(false)
-    expect(store.get()).toBeNull()
-    expect(fs.existsSync(path.join(dir, DEGRAM_PAIRING_FILE))).toBe(false)
+    expect(fs.readFileSync(other, 'utf8')).toBe('{}')
+    expect(logger.info).not.toHaveBeenCalled()
   })
 
-  it('writes atomically: no temp file is left behind and a second set replaces the first', () => {
-    const store = build()
-    const second = 'dgp_' + 'B'.repeat(43)
+  it('reports a failed removal and allows the next startup to retry', () => {
+    const file = path.join(dir, DEGRAM_PAIRING_FILE)
+    fs.writeFileSync(file, 'opaque')
+    const failFs = { ...fs, rmSync: vi.fn(() => { throw new Error('locked') }) } as typeof fs
 
-    store.set(TOKEN)
-    store.set(second)
+    removeRetiredPairing(dir, logger, failFs)
 
-    expect(store.get()).toBe(second)
-    expect(fs.readdirSync(dir)).toEqual([DEGRAM_PAIRING_FILE])
-  })
-
-  it('a corrupt or foreign file reads as no pairing', () => {
-    fs.writeFileSync(path.join(dir, DEGRAM_PAIRING_FILE), Buffer.from('garbage'))
-
-    const store = build()
-
-    expect(store.get()).toBeNull()
-    expect(store.has()).toBe(false)
-  })
-
-  it('never logs the token', () => {
-    const store = build()
-
-    store.set(TOKEN)
-    store.get()
-    store.clear()
-    build(false).set(TOKEN)
-
-    const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls, logger.error.mock.calls])
-
-    expect(logged).not.toContain('dgp_')
-  })
-
-  it('isPairingToken accepts only the dgp_ url-safe shape', () => {
-    expect(isPairingToken(TOKEN)).toBe(true)
-    expect(isPairingToken(`dgp_${'a-_'.repeat(15)}`)).toBe(true)
-    expect(isPairingToken('dgd_' + 'A'.repeat(43))).toBe(false)
-    expect(isPairingToken(`dgp_${'A'.repeat(300)}`)).toBe(false)
+    expect(fs.existsSync(file)).toBe(true)
+    expect(logger.warn).toHaveBeenCalledWith('[degram] could not remove the retired pairing token')
+    removeRetiredPairing(dir, logger)
+    expect(fs.existsSync(file)).toBe(false)
   })
 })
