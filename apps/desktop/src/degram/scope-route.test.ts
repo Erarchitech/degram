@@ -1,14 +1,20 @@
 // scope-route.test.ts — the chat follows the ready scope's profile (Phase 1301-18, G-7, G-3, D-19, DGCL-02).
 
+import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { $activeGatewayProfile, $freshSessionPreserveRoute, requestFreshSession } from '@/store/profile'
+import { filterSessionsByProfileScope } from '@/app/chat/sidebar/profile-scope'
+import { useSessionListActions } from '@/app/session/hooks/use-session-list-actions'
+import { $degramEnabled } from '@/store/degram-flag'
+import { $activeGatewayProfile, $freshSessionPreserveRoute, $profileScope, requestFreshSession } from '@/store/profile'
 import { $sessions, setSessions } from '@/store/session'
 
 import type { DegramState } from '../../electron/degram/ipc'
 
 import { degramScopeTag, followScopeRoute, handleNewScope, routeDisagreesWithScope } from './scope-route'
 import { makeState, noScope } from './test-harness'
+import { setDegramGatewayForTests } from './use-degram-gateway'
+import { $degram, resetDegramStore } from './use-degram-state'
 
 vi.mock('@/lib/query-client', () => ({
   invalidateProfileScopedQueries: vi.fn()
@@ -251,5 +257,121 @@ describe('requestFreshSession route preservation (D-41)', () => {
 
     requestFreshSession()
     expect($freshSessionPreserveRoute.get()).toBe(false)
+  })
+})
+
+// F-04 (0.1.10 live recheck): the sidebar said «Сеансов пока нет» in v12 after returning to it while the member's scope
+// profile held 2 stored sessions. The sequences below drive the REAL route follow, the REAL session list request and
+// the REAL refresh the sidebar's effect runs, against a fake backend that answers per active route.
+describe('F-04: the list of a project is back whenever the project is reopened', () => {
+  const PA = 'scope-00000000000000aa'
+  const PB = 'scope-00000000000000bb'
+
+  /** The stored sessions per scope profile, newest first, as `session.list` returns them (no profile field). */
+  const stored: Record<string, Array<{ id: string; last_active: number }>> = {
+    [PA]: [
+      { id: 'a-2233', last_active: 2233 },
+      { id: 'a-2210', last_active: 2210 }
+    ],
+    [PB]: [{ id: 'b-1', last_active: 1 }]
+  }
+
+  const asked: string[] = []
+
+  const readyOf = (name: string): DegramState =>
+    makeState({ scope: { status: 'ready', project: name, company: null, profile: name, epoch: 1, error: null } })
+
+  const setState = (state: DegramState): void => {
+    $degram.set({ ...$degram.get(), loaded: true, state })
+  }
+
+  /** What the sidebar's effect does once the route moved: one refresh with the profile scope the sidebar reads. */
+  async function refreshLikeTheSidebar(): Promise<void> {
+    const { result, unmount } = renderHook(() => useSessionListActions({ profileScope: $profileScope.get() }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+    unmount()
+  }
+
+  const visible = (): string[] => filterSessionsByProfileScope($sessions.get(), $profileScope.get()).map(row => row.id)
+
+  /** Open a scope the way the shell host does: the state turns ready, the route follows, the sidebar refreshes. */
+  async function open(name: string): Promise<void> {
+    const state = readyOf(name)
+
+    setState(state)
+    await followScopeRoute(state, { fresh: false })
+    await refreshLikeTheSidebar()
+  }
+
+  beforeEach(() => {
+    asked.length = 0
+    resetDegramStore()
+    $degramEnabled.set(true)
+    setSessions([])
+    setDegramGatewayForTests(async <T,>(method: string) => {
+      asked.push(normalizeRoute())
+
+      if (method !== 'session.list') {
+        throw new Error(`unexpected ${method}`)
+      }
+
+      return { status: 'ok', sessions: stored[$activeGatewayProfile.get() ?? ''] ?? [] } as T
+    })
+  })
+
+  afterEach(() => {
+    setDegramGatewayForTests(null)
+    $degramEnabled.set(false)
+    resetDegramStore()
+  })
+
+  const normalizeRoute = (): string => profile.normalizeProfileKey($activeGatewayProfile.get())
+
+  it('F-04 fresh open: the member sees the stored sessions of the project, newest first', async () => {
+    await open(PA)
+
+    expect(visible()).toEqual(['a-2233', 'a-2210'])
+  })
+
+  it('F-04 A -> B -> A: the list of A is back, with no row of B', async () => {
+    await open(PA)
+    await open(PB)
+    expect(visible()).toEqual(['b-1'])
+
+    await open(PA)
+
+    expect(visible()).toEqual(['a-2233', 'a-2210'])
+    expect($sessions.get().some(row => row.id === 'b-1')).toBe(false)
+  })
+
+  it('F-04 A -> refused C -> A: the open project keeps its list and a re-follow refills it', async () => {
+    await open(PA)
+    // A refused pick leaves A open (plan 37): the state stays ready for A, the route stays on A, nothing is wiped.
+    await open(PA)
+
+    expect(visible()).toEqual(['a-2233', 'a-2210'])
+  })
+
+  it('F-04 A -> Menu -> A: the scope is released (route back on the primary, state idle) and re-opened', async () => {
+    await open(PA)
+
+    // main released the scope; the renderer's registry restored the active route to the primary profile.
+    setState(makeState({ scope: { ...noScope } }))
+    $activeGatewayProfile.set('default')
+
+    await open(PA)
+
+    expect(visible()).toEqual(['a-2233', 'a-2210'])
+  })
+
+  it('F-04 only the ready scope route is asked (G-25): no request while the route disagrees with the scope', async () => {
+    await open(PA)
+    await open(PB)
+
+    expect(asked.every(route => route === PA || route === PB)).toBe(true)
+    expect(asked[asked.length - 1]).toBe(PB)
   })
 })

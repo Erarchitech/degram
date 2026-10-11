@@ -40,8 +40,15 @@ function nullableString(value: unknown): null | string {
   return typeof value === 'string' ? value : null
 }
 
-/** Map gateway compact rows to the sidebar shape without disclosing backend identity fields. */
-function mapRow(value: unknown): SessionInfo | null {
+/**
+ * Map gateway compact rows to the sidebar shape without disclosing backend identity fields.
+ *
+ * `profile` is the READY SCOPE's own profile (the renderer already holds it; never a field the backend sent): the
+ * sidebar keeps only rows whose profile equals the active route (`filterSessionsByProfileScope`), and an untagged row
+ * normalizes to `default`, so after any list wipe (leaving and re-opening a project) every stored session was
+ * filtered out and the sidebar said «Сеансов пока нет» (F-04, 0.1.10).
+ */
+function mapRow(value: unknown, scopeProfile: null | string): SessionInfo | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
@@ -62,6 +69,7 @@ function mapRow(value: unknown): SessionInfo | null {
     message_count: number(row.message_count),
     model: null,
     output_tokens: 0,
+    ...(scopeProfile ? { profile: scopeProfile } : {}),
     preview: nullableString(row.preview),
     source: null,
     started_at: number(row.started_at),
@@ -96,7 +104,10 @@ export async function listScopeSessions(
 
     const rows = Array.isArray(response.sessions) ? response.sessions : []
 
-    return { sessions: rows.map(mapRow).filter((row): row is SessionInfo => row !== null) }
+    // The route agreed with the scope above (or there is no ready scope), so the rows are the scope profile's own.
+    const scopeProfile = state?.scope.status === 'ready' ? (state.scope.profile ?? null) : null
+
+    return { sessions: rows.map(row => mapRow(row, scopeProfile)).filter((row): row is SessionInfo => row !== null) }
   } catch {
     return { failed: true, sessions: [] }
   }

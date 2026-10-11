@@ -85,4 +85,21 @@ describe('listScopeSessions', () => {
     activeProfile = 'scope-a'
     await expect(listScopeSessions(40, undefined, route, requester)).resolves.toMatchObject({ sessions: [{ id: 'a-1' }] })
   })
+
+  it('F-04 tags every row with the ready scope profile, never with the profile the backend sent', async () => {
+    const request = vi.fn(async () => ({
+      status: 'ok',
+      sessions: [{ id: 'a-1', title: 'A', started_at: 1, last_active: 2, profile: 'scope-someone-else' }]
+    }))
+
+    const result = await listScopeSessions(
+      40,
+      { scope: { status: 'ready', profile: 'scope-a' } } as never,
+      route,
+      { request: request as never }
+    )
+
+    expect(result.sessions).toHaveLength(1)
+    expect(result.sessions[0].profile).toBe('scope-a')
+  })
 })
