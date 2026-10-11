@@ -373,6 +373,26 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   }
 
   /**
+   * DG refused a project the user tried to open while ANOTHER project is open (403 on the exchange: the membership
+   * for the requested project is gone). Purge only the requested project's local profiles (D-19, G-15) and tell the
+   * renderer; the open scope, its backend and the state stay untouched (F-07).
+   */
+  const purgeRefusedProject = async (key: ScopeKey): Promise<void> => {
+    let purged = true
+
+    try {
+      await deps.profiles.purge(key)
+      // Also every other profile of this user + project (opened under another company key, G-15, D-19).
+      await deps.profiles.purgeProject(key.user, key.project)
+    } catch {
+      purged = false
+      logger.warn('[degram] could not purge the local profile of a revoked scope')
+    }
+
+    deps.emit({ type: 'access-revoked', project: key.project, purged })
+  }
+
+  /**
    * The D-30 one-time cleanup of manifest-less profiles, at most once per run and never concurrent with a
    * selection (selectProject awaits it before it ensures a profile). The signed-in user's current scopes are
    * back-filled first, so a profile the user can still open keeps its history; a failure is logged only.
@@ -439,18 +459,27 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     const key: ScopeKey = { user: me.username, company: membership.company, project }
     const superseded = (): boolean => mine !== epoch
 
-    await closeCurrent()
-    active = { key, profile: null }
-    setState({ status: 'opening', project, company: membership.company, profile: null, epoch: mine, error: null })
-
+    // F-07 (D-48): ask DG for the delegated credential BEFORE the open scope is released. A refusal (no grant,
+    // access lost, DG unreachable) must leave the project that is open, with its backend and credential, running;
+    // only an `ok` mint proceeds to close the previous scope.
     const minted: MintResult = await session.mint(project)
 
     if (superseded()) {
       return fail('SUPERSEDED', false)
     }
 
+    /** The scope that stays up when this selection is refused. */
+    const open = current
+    /** The refusal concerns a project other than the one that is open: the open scope is not affected by it. */
+    const otherOpen = open !== null && open.key.project !== project
+
     if (minted.kind === 'grant-required') {
-      await grantRequired(project)
+      if (otherOpen) {
+        deps.emit({ type: 'grant-required', project })
+      } else {
+        await grantRequired(project)
+      }
+
       return { ok: false, code: 'GRANT_REQUIRED', state }
     }
 
@@ -466,13 +495,34 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
 
       if (minted.kind === 'forbidden') {
         // DG says the access ended (G-15, D-19): the same revoke path as a lost membership, not a bare error.
-        await revokeActive()
+        if (otherOpen) {
+          await purgeRefusedProject(key)
+        } else {
+          if (!open) {
+            active = { key, profile: null }
+          }
+
+          await revokeActive()
+        }
+
+        return { ok: false, code, state }
+      }
+
+      if (open) {
+        // The open project stays as it is; only a lost session (401) ends it, through the normal clearing.
+        if (minted.kind === 'signed-out') {
+          await endSession()
+        }
 
         return { ok: false, code, state }
       }
 
       return fail(code, false)
     }
+
+    await closeCurrent()
+    active = { key, profile: null }
+    setState({ status: 'opening', project, company: membership.company, profile: null, epoch: mine, error: null })
 
     let profile: string
 

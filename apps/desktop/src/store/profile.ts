@@ -1016,7 +1016,10 @@ export function selectProfile(name: string): void {
   // preference.
   const onPrimary = activeGatewayConnectionId() == null
 
-  const shouldRememberStartupProfile = onPrimary ? isLocalDesktopProfile(target) : Promise.resolve(false)
+  // Variant DeGram (1301-37, F-03): a scope profile is never the startup profile (main ignores it too).
+  const rememberable = onPrimary && !($degramEnabled.get() && SCOPE_PROFILE_NAME.test(target))
+
+  const shouldRememberStartupProfile = rememberable ? isLocalDesktopProfile(target) : Promise.resolve(false)
 
   void Promise.all([activateOnCurrentSource(target), shouldRememberStartupProfile])
     .then(([, shouldRemember]) => {
@@ -1032,6 +1035,9 @@ export function selectProfile(name: string): void {
       }
     })
 }
+
+/** `scope-` + 16 hex: a DeGram scope profile (mirrors electron/degram/scope-gate.ts SCOPE_PROFILE_KEY). */
+const SCOPE_PROFILE_NAME = /^(?:conn:local::)?scope-[0-9a-f]{16}$/i
 
 // Resolve persistence from the saved per-profile Desktop route, rather than the
 // live backend descriptor. A descriptor lookup is intentionally best-effort:

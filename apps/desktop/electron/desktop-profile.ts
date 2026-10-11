@@ -88,6 +88,8 @@ export function resolveDesktopConnectionRequest(
 export function createDesktopProfilePreferences(
   configPath: string,
   options: {
+    /** Profiles that must never be the startup/primary profile (variant degram: scope profiles, 1301-37 F-03). */
+    ignoreProfile?: (name: string) => boolean
     onDefaultChanged?: (route: DesktopProfileRoute | null) => void
     validateRoute?: (route: DesktopProfileRoute) => void
   } = {}
@@ -125,7 +127,11 @@ export function createDesktopProfilePreferences(
     const value = read().profile
     const profile = typeof value === 'string' ? value.trim() : ''
 
-    return DESKTOP_PROFILE_NAME_RE.test(profile) ? profile : null
+    if (!DESKTOP_PROFILE_NAME_RE.test(profile) || options.ignoreProfile?.(profile)) {
+      return null
+    }
+
+    return profile
   }
 
   function remember(name: unknown): null | string {
@@ -135,9 +141,32 @@ export function createDesktopProfilePreferences(
       throw new Error(`Invalid profile name: ${profile}`)
     }
 
+    // An ignored profile is never recorded as last-used; the stored preference stays as it was.
+    if (profile && options.ignoreProfile?.(profile)) {
+      return readActive()
+    }
+
     write({ ...read(true), profile: profile || null })
 
     return profile || null
+  }
+
+  /** One-time cleanup on launch: a stored ignored profile (a scope profile left by an older build) becomes `default`. */
+  function normalizeOnLoad(): boolean {
+    const stored = read().profile
+    const profile = typeof stored === 'string' ? stored.trim() : ''
+
+    if (!profile || !options.ignoreProfile?.(profile)) {
+      return false
+    }
+
+    try {
+      write({ ...read(true), profile: 'default' })
+
+      return true
+    } catch {
+      return false
+    }
   }
 
   function setDefault(value: unknown): DesktopProfileRoute {
@@ -202,5 +231,14 @@ export function createDesktopProfilePreferences(
     }
   }
 
-  return { afterProfileRequest, connectionRemoved, getDefault, profileChanged, readActive, remember, setDefault }
+  return {
+    afterProfileRequest,
+    connectionRemoved,
+    getDefault,
+    normalizeOnLoad,
+    profileChanged,
+    readActive,
+    remember,
+    setDefault
+  }
 }

@@ -59,9 +59,24 @@ export function FirstScreen() {
   </SignInState>
 }
 
-function Notice({ children, onDismiss, action }: { children: React.ReactNode; onDismiss: () => void; action?: () => void }) {
+export function Notice({ children, onDismiss, action }: { children: React.ReactNode; onDismiss: () => void; action?: () => void }) {
   const { t } = useI18n()
   return <div className="flex gap-2 text-sm" role="status"><span>{children}</span>{action && <Button onClick={action} variant="secondary">{t.degram.cta.retry}</Button>}<Button aria-label={t.degram.notice.dismiss} onClick={onDismiss} variant="text">×</Button></div>
+}
+
+/** The notices of a refused pick while a project stays open (grant missing, access lost for another project). */
+export function OpenProjectNotices() {
+  const { t } = useI18n()
+  const { accessRevoked, grantRequired } = useDegram()
+
+  if (!accessRevoked && !grantRequired) {
+    return null
+  }
+
+  return <div className="mr-auto grid min-w-0 gap-1" data-testid="degram-open-notices">
+    {accessRevoked && <Notice onDismiss={() => dismissDegramNotice('access')}>{t.degram.errors.accessRevoked(accessRevoked.project)}</Notice>}
+    {grantRequired && <Notice onDismiss={() => dismissDegramNotice('grant')}>{t.degram.notice.grantRequired(grantRequired.project)}</Notice>}
+  </div>
 }
 
 export function DegramGate() {

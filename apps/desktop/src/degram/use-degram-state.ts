@@ -90,6 +90,12 @@ function applyState(state: DegramState): void {
 
   const signedOut = state.auth.kind !== 'signed-in'
 
+  // A project that STAYS open keeps the notice of a refused pick (grant-required / access-revoked for another
+  // project, 1301-37 F-07): a state of the same scope epoch does not clear it. Opening a project (a new epoch) does.
+  const openedNew =
+    state.scope.status === 'ready' &&
+    (prev.state?.scope.status !== 'ready' || prev.state.scope.epoch !== state.scope.epoch)
+
   $degram.set({
     ...prev,
     loaded: true,
@@ -102,9 +108,9 @@ function applyState(state: DegramState): void {
           ? prev.painted
           : false,
     sessionEnded: state.auth.kind === 'signed-in' ? false : prev.sessionEnded,
-    grantRequired: signedOut || state.scope.status === 'ready' ? null : prev.grantRequired,
+    grantRequired: signedOut || openedNew ? null : prev.grantRequired,
     backendFailed: signedOut || state.scope.status === 'ready' ? null : state.scope.error === 'BACKEND_START_FAILED' && state.scope.project ? { project: state.scope.project } : prev.backendFailed,
-    accessRevoked: signedOut || state.scope.status === 'ready' ? null : prev.accessRevoked
+    accessRevoked: signedOut || openedNew ? null : prev.accessRevoked
   })
   reachableSinceState = false
 }

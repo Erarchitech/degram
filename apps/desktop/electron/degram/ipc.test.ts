@@ -814,6 +814,65 @@ describe('degram runtime: host to page signals and new-session (D-41, D-42, D-44
     expect(stateFragments(refused)[0]).toBe('#degram-state=connecting')
   })
 
+  // 1301-37 F-07 (D-48): a refused pick leaves the open project running and puts the DG page back on it.
+  const projectFragments = (r: ReturnType<typeof rig>) =>
+    r.fake.loaded.filter(url => url.includes('#degram-project=')).map(url => url.slice(url.indexOf('#')))
+
+  const twoProjects = [
+    { project: 'alpha', company: 'ACME' },
+    { project: 'beta', company: 'ACME' }
+  ]
+
+  it('a pick refused for a missing grant keeps the open project and signals it back to the DG page', async () => {
+    const r = rig({ memberships: twoProjects })
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=alpha`, true)
+    await vi.waitFor(() => expect(r.runtime.getState().scope.status).toBe('ready'))
+
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=beta`, true)
+
+    await vi.waitFor(() => expect(projectFragments(r)).toEqual(['#degram-project=alpha']))
+    await vi.waitFor(() => expect(stateFragments(r).at(-1)).toBe('#degram-state=ready'))
+    expect(r.runtime.getState().scope).toMatchObject({ status: 'ready', project: 'alpha' })
+    expect(r.runtime.getState().scope.profile).toBe('scope-alpha')
+    // The page was never reloaded and the DG start page was not swapped for the sign-in or a blank page.
+    expect(r.fake.reloads()).toBe(0)
+  })
+
+  it('a pick refused with no project open signals no project and an idle ring', async () => {
+    const r = rig({ memberships: twoProjects })
+
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=beta`, true)
+
+    await vi.waitFor(() => expect(projectFragments(r)).toEqual(['#degram-project=']))
+    await vi.waitFor(() => expect(stateFragments(r).at(-1)).toBe('#degram-state=idle'))
+  })
+
+  it('a refused pick through the renderer selection also signals the open project', async () => {
+    const r = rig({ memberships: twoProjects })
+
+    await r.runtime.start()
+    await r.runtime.selectProject('alpha')
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    expect(await r.runtime.selectProject('beta')).toMatchObject({ ok: false, code: 'GRANT_REQUIRED' })
+    await vi.waitFor(() => expect(projectFragments(r)).toEqual(['#degram-project=alpha']))
+  })
+
+  it('a pick that opened the requested project signals no #degram-project (the page already shows it)', async () => {
+    const r = rig({ memberships: twoProjects })
+
+    await r.runtime.start()
+    r.fake.emit('did-navigate-in-page', {}, `${r.dg.origin}/?host=degram#degram-select=alpha`, true)
+    await vi.waitFor(() => expect(r.runtime.getState().scope.status).toBe('ready'))
+
+    expect(projectFragments(r)).toEqual([])
+  })
+
   it('a malformed or non-announcing hash signals nothing', async () => {
     const r = rig()
 

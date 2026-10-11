@@ -34,6 +34,7 @@ vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }
 vi.mock('@/store/starmap', () => ({ resetStarmapGraph }))
 
 const { $activeGatewayProfile, newSessionInProfile, selectProfile } = await import('./profile')
+const { $degramEnabled } = await import('./degram-flag')
 
 beforeEach(() => {
   ensureGatewayForProfile.mockClear()
@@ -225,5 +226,24 @@ describe('selectProfile startup preference (#79886)', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(rememberProfile).not.toHaveBeenCalled()
+  })
+
+  // 1301-37 F-03: in variant degram a scope profile is never the startup profile.
+  it('does not remember a DeGram scope profile as the startup profile in variant degram', async () => {
+    activeGatewayConnectionId.mockReturnValue(null)
+    $degramEnabled.set(true)
+
+    try {
+      selectProfile('scope-3a5ba019269a6038')
+
+      await vi.waitFor(() => expect(ensureGatewayForProfile).toHaveBeenCalledWith('scope-3a5ba019269a6038'))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(rememberProfile).not.toHaveBeenCalled()
+
+      selectProfile('tilly')
+      await vi.waitFor(() => expect(rememberProfile).toHaveBeenCalledWith('tilly'))
+    } finally {
+      $degramEnabled.set(false)
+    }
   })
 })

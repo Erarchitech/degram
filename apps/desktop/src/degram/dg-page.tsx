@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { RefreshCw } from '@/lib/icons'
 
-import { FirstScreen } from './degram-gate'
+import { FirstScreen, OpenProjectNotices } from './degram-gate'
 import { DgConnecting, DgUnreachable } from './sign-in-state'
 import { degramBridge, useDegram } from './use-degram-state'
 import { useDgBounds } from './use-dg-bounds'
@@ -53,7 +53,8 @@ export function DgPage() {
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden" data-testid="dg-page">
-      <div className="flex shrink-0 items-center justify-end px-6 py-1">
+      <div className="flex shrink-0 items-center justify-end gap-3 px-6 py-1">
+        <OpenProjectNotices />
         <Button
           aria-label={copy.dgPage.reloadAria}
           onClick={() => void bridge?.reloadDg()}

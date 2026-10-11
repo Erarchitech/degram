@@ -388,6 +388,44 @@ describe('host to page fragments (D-41, D-44)', () => {
     expect(fake.reloads()).toBe(0)
   })
 
+  it('signals the project the host actually opened (or none) as a #degram-project fragment (1301-37, F-07)', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showStart()
+    await dgView.signal('#degram-project=alpha')
+    await dgView.signal('#degram-project=My%20Project_1.2')
+    await dgView.signal('#degram-project=')
+
+    expect(fake.loaded).toEqual([
+      HOST,
+      `${HOST}#degram-project=alpha`,
+      `${HOST}#degram-project=My%20Project_1.2`,
+      `${HOST}#degram-project=`
+    ])
+    expect(fake.reloads()).toBe(0)
+  })
+
+  it('rejects a #degram-project fragment outside the grammar (name over 64 chars, extra keys, malformed or odd names)', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showStart()
+
+    for (const bad of [
+      `#degram-project=${'x'.repeat(65)}`,
+      '#degram-project=a&x=1',
+      '#degram-project=a#b',
+      '#degram-project=%E0%A4%A',
+      '#degram-project=-lead',
+      '#degram-project=<script>',
+      '#degram-project=a%0Ab',
+      '#degram-project=../x'
+    ]) {
+      await expect(dgView.signal(bad)).rejects.toThrow()
+    }
+
+    expect(fake.loaded).toEqual([HOST])
+  })
+
   it('rejects anything outside the fixed vocabulary without loading', async () => {
     const { dgView, fake } = setup()
 

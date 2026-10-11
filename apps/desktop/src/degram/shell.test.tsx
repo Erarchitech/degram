@@ -437,6 +437,49 @@ describe('persistent start-screen notices (G-18, G-20, D-35)', () => {
     expect(screen.queryByText(message)).toBeNull()
   })
 
+  // 1301-37 F-07 (D-48): a pick refused for a missing grant while a project stays open keeps that project and
+  // shows the same notice above the DG page, not only on the first screen.
+  it('shows the grant-required notice above the DG page while a project stays open, until dismissed', async () => {
+    const open = makeState({
+      scope: { status: 'ready', project: 'Alpha', company: 'Acme', profile: 'p', epoch: 1, error: null },
+      dg: { mode: 'full', page: 'dg', reachable: true }
+    })
+
+    const h = install(open)
+    await act(async () => undefined)
+    render(withActions(<DgPage />))
+
+    const message = 'DeGram access to Beta has not been granted yet. Request it under Connectors or ask the project owner.'
+
+    expect(screen.queryByText(message)).toBeNull()
+    h.emitEvent({ type: 'grant-required', project: 'Beta' })
+    expect(screen.getByText(message)).toBeTruthy()
+    // A later state of the SAME open scope (no new project opened) does not clear it.
+    h.emitState({ ...open, dg: { mode: 'full', page: 'dg', reachable: false } })
+    h.emitState(open)
+    expect(screen.getByText(message)).toBeTruthy()
+    expect(screen.getByTestId('dg-page')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss notice' }))
+    expect(screen.queryByText(message)).toBeNull()
+  })
+
+  it('clears the open-project grant notice once another project is opened (a new scope epoch)', async () => {
+    const open = (project: string, epoch: number) =>
+      makeState({
+        scope: { status: 'ready', project, company: 'Acme', profile: `p-${project}`, epoch, error: null },
+        dg: { mode: 'full', page: 'dg', reachable: true }
+      })
+
+    const h = install(open('Alpha', 1))
+    await act(async () => undefined)
+    render(withActions(<DgPage />))
+
+    h.emitEvent({ type: 'grant-required', project: 'Gamma' })
+    expect(screen.getByText(/DeGram access to Gamma/)).toBeTruthy()
+    h.emitState(open('Beta', 2))
+    expect(screen.queryByText(/DeGram access to Gamma/)).toBeNull()
+  })
+
   it('shows backend-start failure from the snapshot and retries that project', async () => {
     const h = install(makeState({ scope: { status: 'error', project: 'Alpha', company: 'Acme', profile: null, epoch: 1, error: 'BACKEND_START_FAILED' } }))
     await act(async () => undefined)

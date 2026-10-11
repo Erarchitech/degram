@@ -31,6 +31,38 @@ export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'co
 
 const HOST_STATE_FRAGMENT = /^#degram-state=(connecting|ready|idle)$/
 const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors)$/
+/** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
+const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
+/** The same name grammar the page's announcement is validated with (and ui-v2's 64 character cap). */
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/
+
+/** True for a `#degram-project=` fragment whose decoded value is empty or a valid project name. */
+export function isHostProjectFragment(fragment: unknown): boolean {
+  if (typeof fragment !== 'string') {
+    return false
+  }
+
+  const match = HOST_PROJECT_FRAGMENT.exec(fragment)
+
+  if (!match) {
+    return false
+  }
+
+  try {
+    const name = decodeURIComponent(match[1])
+
+    return name === '' || PROJECT_NAME.test(name)
+  } catch {
+    return false
+  }
+}
+
+/** The fragment that tells the page which project is open (`null`: none). Null when the name cannot be signalled. */
+export function projectFragment(name: string | null): string | null {
+  const fragment = `#degram-project=${name ? encodeURIComponent(name) : ''}`
+
+  return isHostProjectFragment(fragment) ? fragment : null
+}
 
 export interface DgViewState {
   page: DgViewPage
@@ -107,7 +139,8 @@ export interface DgView {
   showStart: () => Promise<void>
   /**
    * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
-   * `#degram-state=connecting|ready|idle` or `#degram-go=landing|graph|model|connectors`. Throws on anything else.
+   * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors` or
+   * `#degram-project=<name>` (empty: no project open). Throws on anything else.
    * Nothing is loaded while the host page is not shown.
    */
   signal: (fragment: string) => Promise<void>
@@ -346,7 +379,10 @@ export function createDgView(deps: DgViewDeps): DgView {
       }
     },
     signal: async (fragment: string): Promise<void> => {
-      if (typeof fragment !== 'string' || !(HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment))) {
+      if (
+        typeof fragment !== 'string' ||
+        !(HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+      ) {
         throw new Error('unknown DG signal')
       }
 

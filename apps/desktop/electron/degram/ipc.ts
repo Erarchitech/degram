@@ -13,7 +13,7 @@ import { DEGRAM_CHANNELS } from './channels'
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
 import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgView, DgViewDeps, DgViewPage } from './dg-view'
-import { createDgView, DG_REGIONS } from './dg-view'
+import { createDgView, DG_REGIONS, projectFragment } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
@@ -225,6 +225,27 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   const hostStateOf = (status: ScopeState['status']): DgHostState =>
     status === 'ready' ? 'ready' : status === 'opening' ? 'connecting' : 'idle'
 
+  /**
+   * A selection that did not open the requested project (no grant, access lost, DG unreachable, a failed start)
+   * leaves the DG page showing the refused project as picked. Put it back on the project that is actually open, or
+   * on none, and settle the ring (F-07, D-48). A superseded selection is left to the one that superseded it.
+   */
+  const settleAfterSelection = (result: SelectResult): void => {
+    // `in` narrows without strictNullChecks, where `ok` alone does not discriminate the union.
+    if (result.ok || ('code' in result && result.code === 'SUPERSEDED')) {
+      return
+    }
+
+    const { status, project } = scope.getState()
+    const fragment = projectFragment(status === 'ready' ? project : null)
+
+    if (fragment) {
+      void viewTask(() => dgView.signal(fragment))
+    }
+
+    noteHostState(hostStateOf(status))
+  }
+
   const dgView: DgView = createDgView({
     origin: deps.origin,
     createView: deps.createView,
@@ -235,7 +256,10 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       // The page already shows its own connecting sphere; the host confirms it, then settles on the outcome
       // (a refused project never changes the scope state, so the final state is read once the call returns).
       noteHostState('connecting')
-      void scope.announceProject(name).finally(() => noteHostState(hostStateOf(scope.getState().status)))
+      void scope
+        .selectProject(name)
+        .then(settleAfterSelection)
+        .finally(() => noteHostState(hostStateOf(scope.getState().status)))
     },
     // D-41: a fresh chat only while a scope is ready; the page's hash is a request, never an authority.
     onNewSessionRequested: () => {
@@ -344,6 +368,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     selectProject: async (project: string): Promise<SelectResult> => {
       const result = await scope.selectProject(project)
 
+      settleAfterSelection(result)
       publish()
 
       return result

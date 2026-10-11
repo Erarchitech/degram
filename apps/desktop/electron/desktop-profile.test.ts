@@ -214,3 +214,56 @@ test.each([null, 'local'])(
     }
   }
 )
+
+// 1301-37 F-03: in variant degram the last-used profile must never be a scope profile (`scope-<16 hex>`): every
+// cold start would ask for a backend the G-25 gate refuses and the primary would run on another user's scope.
+const SCOPE_RE = /^scope-[0-9a-f]{16}$/
+
+test('scope profile is ignored by the startup preference: read as none, not remembered, rewritten once to default', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-profile-scope-'))
+  const target = path.join(root, 'active-profile.json')
+
+  try {
+    fs.writeFileSync(target, JSON.stringify({ profile: 'scope-3a5ba019269a6038', _migrated: true }), 'utf8')
+    const preferences = createDesktopProfilePreferences(target, { ignoreProfile: name => SCOPE_RE.test(name) })
+
+    // A stored scope value reads as no preference (the caller falls back to `default`).
+    assert.equal(preferences.readActive(), null)
+
+    // remember() of a scope profile leaves the file untouched.
+    const before = fs.readFileSync(target, 'utf8')
+    assert.equal(preferences.remember('scope-3a5ba019269a6038'), null)
+    assert.equal(fs.readFileSync(target, 'utf8'), before)
+
+    // The first launch rewrites the stored scope value to `default`, keeping other keys; a second call is a no-op.
+    assert.equal(preferences.normalizeOnLoad(), true)
+    const rewritten = JSON.parse(fs.readFileSync(target, 'utf8'))
+    assert.equal(rewritten.profile, 'default')
+    assert.equal(rewritten._migrated, true)
+    assert.equal(preferences.readActive(), 'default')
+    const after = fs.readFileSync(target, 'utf8')
+    assert.equal(preferences.normalizeOnLoad(), false)
+    assert.equal(fs.readFileSync(target, 'utf8'), after)
+
+    // An ordinary profile is still remembered.
+    assert.equal(preferences.remember('work'), 'work')
+    assert.equal(preferences.readActive(), 'work')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('without an ignoreProfile option a scope-shaped profile is remembered as before (Hermes behaviour unchanged)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-profile-scope-hermes-'))
+  const target = path.join(root, 'active-profile.json')
+
+  try {
+    const preferences = createDesktopProfilePreferences(target)
+    assert.equal(preferences.remember('scope-3a5ba019269a6038'), 'scope-3a5ba019269a6038')
+    assert.equal(preferences.readActive(), 'scope-3a5ba019269a6038')
+    assert.equal(preferences.normalizeOnLoad(), false)
+    assert.equal(preferences.readActive(), 'scope-3a5ba019269a6038')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

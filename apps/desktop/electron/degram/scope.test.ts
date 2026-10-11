@@ -892,6 +892,116 @@ describe('access revoked for the active project (403 / membership loss)', () => 
   })
 })
 
+// 1301-37 F-07 (D-48): a selection the grant or access check refuses must not take the open project down. The mint
+// runs BEFORE the open scope is released; only an `ok` mint proceeds to close the previous scope.
+describe('a refused selection leaves the open project running (F-07, D-48, T-1301-37-02)', () => {
+  const RELEASE_ALPHA = 'backend.release:scope-alice-ACME-alpha'
+
+  it('a missing grant for another project releases nothing, keeps the state ready and emits grant-required', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+
+    await openAlpha(r)
+    const before = r.scope.getState()
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    const result = await r.scope.selectProject('beta')
+
+    expect(result).toMatchObject({ ok: false, code: 'GRANT_REQUIRED' })
+    expect(r.released).toEqual([])
+    expect(r.log.entries).not.toContain(RELEASE_ALPHA)
+    expect(r.log.entries).not.toContain(CLEAR_ALPHA)
+    expect(r.scope.getState()).toMatchObject({ status: 'ready', project: 'alpha', profile: 'scope-alice-ACME-alpha' })
+    expect(r.scope.getState().profile).toBe(before.profile)
+    expect(r.events).toEqual([{ type: 'grant-required', project: 'beta' }])
+    expect(r.ensured.map(k => k.project)).toEqual(['alpha'])
+    expect(r.purged).toEqual([])
+    expect(r.viewResets).toBe(0)
+  })
+
+  it('the open project keeps renewing its credential after a refused pick', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+
+    await openAlpha(r)
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+    await r.scope.selectProject('beta')
+    r.dg.setMint(freshMint())
+    r.rpcCalls.length = 0
+
+    await r.clock.advance(RENEW_MS)
+
+    expect(r.rpcCalls.filter(c => c.method === 'degram.credentials.set').map(c => c.profile)).toEqual([
+      'scope-alice-ACME-alpha'
+    ])
+  })
+
+  it('with no project open a missing grant still resets to no-project and emits grant-required', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    const result = await r.scope.selectProject('beta')
+
+    expect(result).toMatchObject({ ok: false, code: 'GRANT_REQUIRED' })
+    expect(r.events).toEqual([{ type: 'grant-required', project: 'beta' }])
+    expect(r.scope.getState().status).toBe('no-project')
+    expect(r.released).toEqual([])
+  })
+
+  it('a lost grant for the project that is itself open closes that scope (the open one is the refused one)', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+
+    await openAlpha(r)
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'GRANT_REQUIRED' } } })
+
+    const result = await r.scope.selectProject('alpha')
+
+    expect(result).toMatchObject({ ok: false, code: 'GRANT_REQUIRED' })
+    expect(r.released).toEqual(['scope-alice-ACME-alpha'])
+    expect(r.scope.getState().status).toBe('no-project')
+    expect(r.events).toEqual([{ type: 'grant-required', project: 'alpha' }])
+  })
+
+  it('a 403 access denial for another project purges only that project and leaves the open scope untouched', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta', company: 'GLOBEX' }])
+
+    await openAlpha(r)
+    r.dg.setSessionExchange({ status: 403, body: { detail: { code: 'PROJECT_FORBIDDEN' } } })
+
+    const result = await r.scope.selectProject('beta')
+
+    expect(result).toMatchObject({ ok: false, code: 'ACCESS_DENIED' })
+    expect(r.purged).toEqual([{ user: 'alice', company: 'GLOBEX', project: 'beta' }])
+    expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'beta' }])
+    expect(r.events).toEqual([{ type: 'access-revoked', project: 'beta', purged: true }])
+    expect(r.released).toEqual([])
+    expect(r.log.entries).not.toContain(CLEAR_ALPHA)
+    expect(r.viewResets).toBe(0)
+    expect(r.scope.getState()).toMatchObject({ status: 'ready', project: 'alpha' })
+  })
+
+  it('an unreachable DG while picking another project keeps the open scope and its backend', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta' }])
+
+    await openAlpha(r)
+    r.dg.setMint('network-error')
+
+    const result = await r.scope.selectProject('beta')
+
+    expect(result).toMatchObject({ ok: false, code: 'DG_UNREACHABLE' })
+    expect(r.released).toEqual([])
+    expect(r.scope.getState()).toMatchObject({ status: 'ready', project: 'alpha', error: null })
+  })
+
+  it('an ok mint still closes the previous scope and opens the new one', async () => {
+    const r = rig([{ project: 'alpha' }, { project: 'beta', company: 'GLOBEX' }])
+
+    await openAlpha(r)
+
+    expect(await r.scope.selectProject('beta')).toMatchObject({ ok: true })
+    expect(r.released).toEqual(['scope-alice-ACME-alpha'])
+    expect(r.scope.getState()).toMatchObject({ status: 'ready', project: 'beta' })
+  })
+})
+
 describe('forwarded agent outcomes', () => {
   it('DELEGATED_SESSION_ENDED distinguishes an ended DG session on re-mint', async () => {
     const r = rig()

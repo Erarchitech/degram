@@ -234,6 +234,7 @@ import { createDegramMainWiring, type DegramMainWiring } from './degram/main-wir
 import { removeRetiredPairing } from './degram/pairing-store'
 import { createProfilesCli, resolveProfilesInvocation } from './degram/profiles-cli'
 import { createScopeBackendGate } from './degram/scope-gate'
+import { isScopeProfile } from './degram/scope-gate'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
 import {
@@ -9340,7 +9341,12 @@ async function saveRegistryConnection(input: any = {}) {
 
 // Last-used profile and explicit app-wide default share the existing desktop
 // preference file, but only the explicit action changes the default route.
+//
+// Variant DeGram (1301-37, F-03): a `scope-<16 hex>` profile belongs to one signed-in DG user and may only run while the
+// scope controller owns it (G-25 gate), so it is never the primary/last-used profile. Remembering it made every cold
+// start dial a backend the gate refuses and ran the primary on another user's scope.
 const desktopProfilePreferences = createDesktopProfilePreferences(DESKTOP_PROFILE_CONFIG_PATH, {
+  ...(PRODUCT_IDENTITY.degram ? { ignoreProfile: isScopeProfile } : {}),
   validateRoute: validateDesktopProfileRoute,
   onDefaultChanged: route => {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -9350,6 +9356,11 @@ const desktopProfilePreferences = createDesktopProfilePreferences(DESKTOP_PROFIL
     }
   }
 })
+
+// One-time cleanup before the first primaryProfileKey() use: a scope profile stored by an older build becomes `default`.
+if (PRODUCT_IDENTITY.degram) {
+  desktopProfilePreferences.normalizeOnLoad()
+}
 
 function validateDesktopProfileRoute(route: DesktopProfileRoute) {
   if (
@@ -17367,6 +17378,10 @@ ipcMain.handle('hermes:profile:remember', async (_event, name) => ({
   profile: writeActiveDesktopProfile(name)
 }))
 ipcMain.handle('hermes:profile:set', async (_event, name) => {
+  if (PRODUCT_IDENTITY.degram && typeof name === 'string' && isScopeProfile(name)) {
+    throw new Error('A DeGram scope profile cannot be the primary profile.')
+  }
+
   assertCanMutateManagedPrimaryRouting()
   const next = writeActiveDesktopProfile(name)
 
