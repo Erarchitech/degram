@@ -90,7 +90,7 @@ afterEach(() => {
 })
 
 describe('the DeGram row set (D-42)', () => {
-  it('is exactly six rows in the planned order, in both catalogs', () => {
+  it('is exactly seven rows in the planned order, in both catalogs', () => {
     const rows = (nav: typeof degramEn.nav) => degramSidebarNav(nav).map(item => [item.id, item.label])
 
     expect(degramSidebarNav(degramRu.nav).map(item => item.id)).toEqual([...DEGRAM_NAV_IDS])
@@ -100,6 +100,7 @@ describe('the DeGram row set (D-42)', () => {
       'Валидатор',
       'Коннекторы',
       'Модели',
+      'Проекты',
       'Меню'
     ])
     expect(rows(degramEn.nav).map(row => row[1])).toEqual([
@@ -108,11 +109,12 @@ describe('the DeGram row set (D-42)', () => {
       'Model Viewer',
       'Connectors',
       'Models',
+      'Projects',
       'Menu'
     ])
   })
 
-  it('renders only those six rows with a ready scope; upstream rows and contributed rows are not rendered', () => {
+  it('renders only those seven rows with a ready scope; upstream rows and contributed rows are not rendered', () => {
     install(ready('Alpha'))
     $degramEnabled.set(true)
 
@@ -123,7 +125,7 @@ describe('the DeGram row set (D-42)', () => {
 
     renderSidebar(DG_PAGE_PATH)
 
-    expect(navLabels()).toEqual(['New session', 'Graph Viewer', 'Model Viewer', 'Connectors', 'Models', 'Menu'])
+    expect(navLabels()).toEqual(['New session', 'Graph Viewer', 'Model Viewer', 'Connectors', 'Models', 'Projects', 'Menu'])
 
     for (const gone of ['Capabilities', 'Messaging', 'Artifacts', 'Scheduled jobs', 'Kanban', 'DG']) {
       expect(screen.queryByRole('button', { name: gone })).toBeNull()
@@ -147,7 +149,7 @@ describe('the DeGram row set (D-42)', () => {
 
     renderSidebar(DG_PAGE_PATH)
 
-    expect(navLabels()).toHaveLength(6)
+    expect(navLabels()).toHaveLength(7)
     expect(navLabels()).toContain('Graph Viewer')
     dispose()
   })
@@ -179,7 +181,7 @@ describe('the DeGram row set (D-42)', () => {
 })
 
 describe('the DeGram rows route and steer the DG page (D-42)', () => {
-  it('Граф проекта / Валидатор / Коннекторы / Меню navigate to /dg and send the matching region', () => {
+  it('Граф проекта / Валидатор / Коннекторы / Проекты / Меню navigate to /dg and send the matching region', () => {
     const h = install(ready('Alpha'))
     const onNavigate = vi.fn()
 
@@ -190,6 +192,7 @@ describe('the DeGram rows route and steer the DG page (D-42)', () => {
       ['Graph Viewer', 'dg-graph', 'graph'],
       ['Model Viewer', 'dg-model', 'model'],
       ['Connectors', 'dg-connectors', 'connectors'],
+      ['Projects', 'dg-projects', 'projects'],
       ['Menu', 'dg-menu', 'landing']
     ] as const) {
       fireEvent.click(screen.getByRole('button', { name: label }))
@@ -197,7 +200,7 @@ describe('the DeGram rows route and steer the DG page (D-42)', () => {
       expect(h.bridge.dgGo).toHaveBeenLastCalledWith(region)
     }
 
-    expect(h.bridge.dgGo).toHaveBeenCalledTimes(4)
+    expect(h.bridge.dgGo).toHaveBeenCalledTimes(5)
   })
 
   it('Новая сессия is the stock new-session action and sends no region; Модели opens its own route', () => {

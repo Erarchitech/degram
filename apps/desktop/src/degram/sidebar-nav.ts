@@ -1,8 +1,8 @@
 // sidebar-nav.ts — the DeGram sidebar row set (Phase 1301-34, D-42).
 //
 // Variant `degram` replaces the stock nav rows (Capabilities, Messaging, Artifacts, Scheduled jobs, the old «DG» row)
-// with exactly six, in this order: «Новая сессия», «Граф проекта», «Валидатор», «Коннекторы», «Модели», «Меню». The
-// four DG rows open the DG page (`/dg`) and steer its region through main (`degram.dgGo`, the fixed `#degram-go=`
+// with exactly seven, in this order: «Новая сессия», «Граф проекта», «Валидатор», «Коннекторы», «Модели», «Проекты», «Меню». The
+// five DG rows open the DG page (`/dg`) and steer its region through main (`degram.dgGo`, the fixed `#degram-go=`
 // vocabulary of ui-v2/src/lib/hostMode.js); «Новая сессия» starts a fresh chat (Ctrl+N unchanged); «Модели» opens the
 // DeGram models screen (plan 1301-35) at `DEGRAM_MODELS_PATH`.
 //
@@ -26,7 +26,7 @@ export const DG_PAGE_PATH = '/dg'
 export const DEGRAM_MODELS_PATH = '/degram/models'
 
 /** Row ids, in display order. `new-session` keeps the stock id so the Ctrl+N hint and the drag source stay wired. */
-export const DEGRAM_NAV_IDS = ['new-session', 'dg-graph', 'dg-model', 'dg-connectors', 'models', 'dg-menu'] as const
+export const DEGRAM_NAV_IDS = ['new-session', 'dg-graph', 'dg-model', 'dg-connectors', 'models', 'dg-projects', 'dg-menu'] as const
 
 export type DegramNavId = (typeof DEGRAM_NAV_IDS)[number]
 
@@ -35,6 +35,7 @@ const REGION_BY_ID: Readonly<Record<string, DgRegion>> = {
   'dg-graph': 'graph',
   'dg-model': 'model',
   'dg-connectors': 'connectors',
+  'dg-projects': 'projects',
   'dg-menu': 'landing'
 }
 
@@ -50,6 +51,7 @@ export function degramSidebarNav(nav: DegramCopy['nav']): SidebarNavItem[] {
     { id: 'dg-model', label: nav.validator, icon: icon('checklist'), route: DG_PAGE_PATH },
     { id: 'dg-connectors', label: nav.connectors, icon: icon('plug'), route: DG_PAGE_PATH },
     { id: 'models', label: nav.models, icon: icon('layers'), route: DEGRAM_MODELS_PATH },
+    { id: 'dg-projects', label: nav.projects, icon: icon('folder'), route: DG_PAGE_PATH },
     { id: 'dg-menu', label: nav.menu, icon: icon('menu'), route: DG_PAGE_PATH }
   ]
 }

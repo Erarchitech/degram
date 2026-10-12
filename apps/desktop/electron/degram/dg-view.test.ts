@@ -374,6 +374,7 @@ describe('host to page fragments (D-41, D-44)', () => {
     await dgView.signal('#degram-state=connecting')
     await dgView.signal('#degram-state=ready')
     await dgView.signal('#degram-go=graph')
+    await dgView.signal('#degram-go=projects')
     await dgView.signal('#degram-go=landing')
     await dgView.signal('#degram-state=idle')
 
@@ -382,6 +383,7 @@ describe('host to page fragments (D-41, D-44)', () => {
       `${HOST}#degram-state=connecting`,
       `${HOST}#degram-state=ready`,
       `${HOST}#degram-go=graph`,
+      `${HOST}#degram-go=projects`,
       `${HOST}#degram-go=landing`,
       `${HOST}#degram-state=idle`
     ])
@@ -433,7 +435,7 @@ describe('host to page fragments (D-41, D-44)', () => {
 
     for (const bad of [
       '#degram-state=bogus',
-      '#degram-go=projects',
+      '#degram-go=aiengine',
       '#degram-go=graph&x=1',
       '#degram-select=Alpha',
       'degram-state=ready',

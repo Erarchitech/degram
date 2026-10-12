@@ -33,7 +33,7 @@ interface TitledCopy {
 export interface DegramCopy {
   /** The product wordmark. Brand text, identical in every locale. */
   brand: string
-  /** The DeGram sidebar rows (D-42): exactly these six, in this order. */
+  /** The DeGram sidebar rows (D-42): exactly these seven, in this order. */
   nav: {
     dg: string
     newSession: string
@@ -41,6 +41,7 @@ export interface DegramCopy {
     validator: string
     connectors: string
     models: string
+    projects: string
     menu: string
   }
   /** Commands that leave the current session (the project menu and the tray menu). */
@@ -175,6 +176,7 @@ export const degramEn: DegramCopy = {
     validator: 'Model Viewer',
     connectors: 'Connectors',
     models: 'Models',
+    projects: 'Projects',
     menu: 'Menu'
   },
   actions: { signOut: 'Sign out of DG' },
@@ -336,6 +338,7 @@ export const degramRu: DegramCopy = {
     validator: 'Валидатор',
     connectors: 'Коннекторы',
     models: 'Модели',
+    projects: 'Проекты',
     menu: 'Меню'
   },
   actions: { signOut: 'Выйти из DG' },

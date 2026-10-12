@@ -23,14 +23,14 @@ export type DgViewPage = 'blank' | 'sign-in' | 'dg'
 /** What the host tells the page about the scope (D-44), exactly the vocabulary of ui-v2/src/lib/hostMode.js. */
 export type DgHostState = 'connecting' | 'ready' | 'idle'
 /** The regions the host may steer the page to (D-42). */
-export type DgRegion = 'landing' | 'graph' | 'model' | 'connectors'
+export type DgRegion = 'landing' | 'graph' | 'model' | 'connectors' | 'projects'
 export type DgLocale = 'ru' | 'en'
 
 export const DG_HOST_STATES: readonly DgHostState[] = ['connecting', 'ready', 'idle']
-export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'connectors']
+export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'connectors', 'projects']
 
 const HOST_STATE_FRAGMENT = /^#degram-state=(connecting|ready|idle)$/
-const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors)$/
+const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors|projects)$/
 /** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
 const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
 /** The same name grammar the page's announcement is validated with (and ui-v2's 64 character cap). */

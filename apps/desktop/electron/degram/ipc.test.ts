@@ -525,7 +525,7 @@ describe('registerDegramIpc', () => {
     await expect(call(DEGRAM_CHANNELS.selectProject, 'x'.repeat(300))).rejects.toThrow(/project/i)
     await expect(call(DEGRAM_CHANNELS.setDgMode, 'bogus')).rejects.toThrow(/mode/i)
     await expect(call(DEGRAM_CHANNELS.setDgBounds, { x: 'a' })).rejects.toThrow(/bounds/i)
-    await expect(call(DEGRAM_CHANNELS.dgGo, 'projects')).rejects.toThrow(/region/i)
+    await expect(call(DEGRAM_CHANNELS.dgGo, 'aiengine')).rejects.toThrow(/region/i)
     await expect(call(DEGRAM_CHANNELS.dgGo, '#degram-go=graph')).rejects.toThrow(/region/i)
     await expect(call(DEGRAM_CHANNELS.dgGo, 7)).rejects.toThrow(/region/i)
     await expect(call(DEGRAM_CHANNELS.setLocale, 'de')).rejects.toThrow(/locale/i)
@@ -932,11 +932,13 @@ describe('degram runtime: host to page signals and new-session (D-41, D-42, D-44
 
     await go({ sender: 'main' }, 'graph')
     await go({ sender: 'main' }, 'connectors')
-    await expect(go({ sender: 'main' }, 'projects')).rejects.toThrow(/region/)
+    await go({ sender: 'main' }, 'projects')
+    await expect(go({ sender: 'main' }, 'aiengine')).rejects.toThrow(/region/)
 
     expect(r.fake.loaded.slice(1)).toEqual([
       `${r.dg.origin}/?host=degram#degram-go=graph`,
-      `${r.dg.origin}/?host=degram#degram-go=connectors`
+      `${r.dg.origin}/?host=degram#degram-go=connectors`,
+      `${r.dg.origin}/?host=degram#degram-go=projects`
     ])
 
     await handlers.get(DEGRAM_CHANNELS.setLocale)!({ sender: 'main' }, 'ru')
