@@ -28,9 +28,14 @@ describe('degramLocaleConfigClient (Phase 1301: language without /api/config)', 
     expect(await degramLocaleConfigClient.getConfig()).toEqual({ display: { language: 'en' } })
   })
 
-  it('ignores a malformed stored value', async () => {
+  it('ignores an empty stored value and coerces an unsupported language to English', async () => {
     window.localStorage.setItem(DEGRAM_LOCALE_KEY, '   ')
     expect(await degramLocaleConfigClient.getConfig()).toEqual({})
+
+    window.localStorage.setItem(DEGRAM_LOCALE_KEY, 'de')
+    expect(await degramLocaleConfigClient.getConfig()).toEqual({ display: { language: 'en' } })
+    window.localStorage.setItem(DEGRAM_LOCALE_KEY, 'ru')
+    expect(await degramLocaleConfigClient.getConfig()).toEqual({ display: { language: 'ru' } })
   })
 })
 

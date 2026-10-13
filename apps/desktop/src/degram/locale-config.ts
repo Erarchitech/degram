@@ -24,7 +24,7 @@ export const degramLocaleConfigClient: I18nConfigClient = {
   getConfig: async () => {
     const language = readStored()
 
-    return language ? { display: { language } } : {}
+    return language ? { display: { language: language === 'ru' ? 'ru' : 'en' } } : {}
   },
   saveConfig: async config => {
     const display = config.display

@@ -921,6 +921,28 @@ describe('degram runtime: host to page signals and new-session (D-41, D-42, D-44
     expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram&lang=ru#degram-state=ready`)
   })
 
+  it('queues a live locale signal ahead of later DG navigation', async () => {
+    const r = rig()
+    await r.runtime.start()
+
+    let finishLocaleLoad!: () => void
+    const localeLoad = new Promise<void>(resolve => { finishLocaleLoad = resolve })
+    r.fake.view.webContents.loadURL.mockImplementationOnce(async (url: string) => {
+      r.fake.loaded.push(url)
+      await localeLoad
+    })
+
+    const changeLocale = r.runtime.setLocale('ru')
+    await vi.waitFor(() => expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram#degram-lang=ru`))
+    const goProjects = r.runtime.dgGo('projects')
+    await Promise.resolve()
+    expect(r.fake.loaded).toHaveLength(2)
+
+    finishLocaleLoad()
+    await Promise.all([changeLocale, goProjects])
+    expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram#degram-go=projects`)
+  })
+
   it('dg-go steers the page by fragment through the handler and refuses an unknown region', async () => {
     const r = rig()
     const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()

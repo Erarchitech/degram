@@ -18,6 +18,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import { ChevronDown, Globe } from '@/lib/icons'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
+import { $degramEnabled } from '@/store/degram-flag'
 import { notifyError } from '@/store/notifications'
 
 export interface LanguageSwitcherProps {
@@ -29,6 +30,7 @@ export interface LanguageSwitcherProps {
 interface LanguageCommandProps {
   allLocales: LanguageOption[]
   autoFocus?: boolean
+  degram?: boolean
   disabled?: boolean
   locale: Locale
   noResults: string
@@ -46,9 +48,18 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
   // Bundled ∪ plugin-registered ∪ backend `i18n.languages`; the registry
   // version re-lists when a pack lands after first paint.
   const registryVersion = useStore($appLocaleVersion)
+  const degram = useStore($degramEnabled)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion is the registry's change token
   const allLocales = useMemo(() => languageOptions(), [registryVersion])
-  const current = allLocales.find(option => option.id === locale) ?? { id: locale, ...localeMeta(locale) }
+  const options = degram
+    ? (['ru', 'en'] as const).flatMap(id =>
+        allLocales.filter(option => option.id === id).map(option => ({
+          ...option,
+          endonym: id === 'ru' ? 'Русский' : 'English'
+        }))
+      )
+    : allLocales
+  const current = options.find(option => option.id === locale) ?? { id: locale, ...localeMeta(locale) }
   const title = t.language.switchTo
 
   const selectLocale = async (code: Locale) => {
@@ -101,7 +112,8 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
             <SheetDescription>{t.language.description}</SheetDescription>
           </SheetHeader>
           <LanguageCommand
-            allLocales={allLocales}
+            allLocales={options}
+            degram={degram}
             disabled={isSavingLocale}
             locale={locale}
             noResults={t.language.noResults}
@@ -118,8 +130,9 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent align="end" className="w-56" side={dropUp ? 'top' : 'bottom'} variant="menu">
         <LanguageCommand
-          allLocales={allLocales}
-          autoFocus
+          allLocales={options}
+          autoFocus={!degram}
+          degram={degram}
           disabled={isSavingLocale}
           locale={locale}
           noResults={t.language.noResults}
@@ -135,6 +148,7 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
 function LanguageCommand({
   allLocales,
   autoFocus,
+  degram = false,
   disabled,
   locale,
   noResults,
@@ -162,9 +176,9 @@ function LanguageCommand({
 
   return (
     <Command className="bg-transparent" shouldFilter={false} variant={variant}>
-      <CommandInput autoFocus={autoFocus} onValueChange={setSearch} placeholder={searchPlaceholder} value={search} />
+      {!degram && <CommandInput autoFocus={autoFocus} onValueChange={setSearch} placeholder={searchPlaceholder} value={search} />}
       <CommandList className={variant === 'menu' ? undefined : 'max-h-80 p-1'}>
-        <CommandEmpty>{noResults}</CommandEmpty>
+        {!degram && <CommandEmpty>{noResults}</CommandEmpty>}
         {filtered.map(option => {
           const selected = option.id === locale
 

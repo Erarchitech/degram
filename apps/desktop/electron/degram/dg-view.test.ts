@@ -437,6 +437,9 @@ describe('host to page fragments (D-41, D-44)', () => {
       '#degram-state=bogus',
       '#degram-go=aiengine',
       '#degram-go=graph&x=1',
+      '#degram-lang=de',
+      '#degram-lang=',
+      '#degram-lang=ru&x=1',
       '#degram-select=Alpha',
       'degram-state=ready',
       '#degram-state=ready#x',
@@ -469,27 +472,66 @@ describe('host to page fragments (D-41, D-44)', () => {
     expect(fake.loaded[fake.loaded.length - 1]).toBe('about:blank')
   })
 
-  it('a locale appends &lang= to the next host load and a fragment never changes the loaded page query', async () => {
+  it('signals a changed locale in-page while keeping the loaded query until the next page load', async () => {
     const { dgView, fake } = setup()
 
-    dgView.setLocale('ru')
+    await dgView.setLocale('en')
     await dgView.showStart()
-    dgView.setLocale('en')
+    await dgView.setLocale('ru')
+    await dgView.setLocale('ru')
+    await dgView.signal('#degram-lang=en')
     await dgView.signal('#degram-state=ready')
     await dgView.showSignIn()
 
     expect(fake.loaded).toEqual([
-      `${HOST}&lang=ru`,
-      `${HOST}&lang=ru#degram-state=ready`,
-      `${HOST}&lang=en`
+      `${HOST}&lang=en`,
+      `${HOST}&lang=en#degram-lang=ru`,
+      `${HOST}&lang=en#degram-lang=en`,
+      `${HOST}&lang=en#degram-state=ready`,
+      `${HOST}&lang=ru`
     ])
-    expect(() => dgView.setLocale('de' as never)).toThrow()
+    expect(fake.reloads()).toBe(0)
+    await expect(dgView.setLocale('de' as never)).rejects.toThrow()
+  })
+
+  it('remembers locale while blank, signing in or in the graph slice without sending a fragment', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.setLocale('ru')
+    expect(fake.loaded).toEqual([])
+    await dgView.showSignIn()
+    await dgView.setLocale('en')
+    expect(fake.loaded).toEqual([`${HOST}&lang=ru`])
+    await dgView.showDg()
+    await dgView.setLocale('ru')
+    expect(fake.loaded).toEqual([`${HOST}&lang=ru`, `${ORIGIN}/#degram`])
+    await dgView.showStart()
+    expect(fake.loaded.at(-1)).toBe(`${HOST}&lang=ru`)
+  })
+
+  it('reloads the full host page with the current locale after an in-page change', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.setLocale('en')
+    await dgView.showStart()
+    dgView.setHostState('ready')
+    await dgView.setLocale('ru')
+    await dgView.reload()
+
+    expect(fake.loaded).toEqual([
+      `${HOST}&lang=en`,
+      `${HOST}&lang=en#degram-lang=ru`,
+      `${HOST}&lang=ru#degram-state=ready`
+    ])
+    expect(fake.reloads()).toBe(0)
+    await dgView.reload()
+    expect(fake.reloads()).toBe(1)
   })
 
   it('the graph slice (#degram) takes no host fragment or locale', async () => {
     const { dgView, fake } = setup()
 
-    dgView.setLocale('ru')
+    await dgView.setLocale('ru')
     await dgView.showDg()
     await dgView.signal('#degram-state=ready')
 

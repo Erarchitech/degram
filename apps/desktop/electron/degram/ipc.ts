@@ -58,7 +58,7 @@ export interface DegramBridge {
   setTrayLabels: (labels: DegramTrayLabels) => Promise<void>
   /** Steer the embedded DG page to a region (the sidebar rows, D-42). */
   dgGo: (region: DgRegion) => Promise<void>
-  /** The DeGram locale; the DG page URL carries it as `&lang=` from its next load. */
+  /** The DeGram locale; signal the open DG page in place and carry `&lang=` on later loads. */
   setLocale: (locale: DgLocale) => Promise<void>
   /** The tray's sign-out entry was clicked: the renderer shows its confirmation or signs out (G-17). */
   onRequestSignOut: (callback: () => void) => () => void
@@ -98,7 +98,7 @@ export interface DegramRuntime {
   setDgBounds: (bounds: DgBounds | null) => void
   setTrayLabels: (labels: DegramTrayLabels) => void
   dgGo: (region: DgRegion) => Promise<void>
-  setLocale: (locale: DgLocale) => void
+  setLocale: (locale: DgLocale) => Promise<void>
   getTrayLabels: () => DegramTrayLabels
   /** Ask the renderer to run its sign-out flow (the tray entry). */
   requestSignOut: () => void
@@ -400,7 +400,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     },
     getTrayLabels: (): DegramTrayLabels => trayLabels,
     dgGo: (region: DgRegion): Promise<void> => viewTask(() => dgView.signal(`#degram-go=${region}`)),
-    setLocale: (locale: DgLocale): void => dgView.setLocale(locale),
+    setLocale: (locale: DgLocale): Promise<void> => viewTask(() => dgView.setLocale(locale)),
     requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
     reportOutcome: async (code: string): Promise<boolean> => {

@@ -31,6 +31,7 @@ export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'co
 
 const HOST_STATE_FRAGMENT = /^#degram-state=(connecting|ready|idle)$/
 const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors|projects)$/
+const HOST_LANG_FRAGMENT = /^#degram-lang=(ru|en)$/
 /** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
 const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
 /** The same name grammar the page's announcement is validated with (and ui-v2's 64 character cap). */
@@ -139,8 +140,8 @@ export interface DgView {
   showStart: () => Promise<void>
   /**
    * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
-   * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors` or
-   * `#degram-project=<name>` (empty: no project open). Throws on anything else.
+   * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors|projects`,
+   * `#degram-lang=ru|en` or `#degram-project=<name>` (empty: no project open). Throws on anything else.
    * Nothing is loaded while the host page is not shown.
    */
   signal: (fragment: string) => Promise<void>
@@ -149,8 +150,8 @@ export interface DgView {
    * in its initial hash, so a reload or a sign-in round trip never shows a stale ring.
    */
   setHostState: (next: DgHostState) => void
-  /** The DeGram locale, appended as `&lang=ru|en` to the host page URL of the next load. */
-  setLocale: (locale: DgLocale) => void
+  /** The DeGram locale: signal the open host page in-place and use `&lang=ru|en` on the next load. */
+  setLocale: (locale: DgLocale) => Promise<void>
   reload: () => Promise<void>
   /** Blank the view so no tenant page stays painted. */
   reset: () => Promise<void>
@@ -381,7 +382,7 @@ export function createDgView(deps: DgViewDeps): DgView {
     signal: async (fragment: string): Promise<void> => {
       if (
         typeof fragment !== 'string' ||
-        !(HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+        !(HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
       ) {
         throw new Error('unknown DG signal')
       }
@@ -399,12 +400,17 @@ export function createDgView(deps: DgViewDeps): DgView {
 
       hostState = next
     },
-    setLocale: (locale: DgLocale): void => {
+    setLocale: async (locale: DgLocale): Promise<void> => {
       if (locale !== 'ru' && locale !== 'en') {
         throw new Error('unknown DG locale')
       }
 
+      const changed = lang !== locale
       lang = locale
+
+      if (changed && state.page === 'dg' && state.mode === 'full' && loadedBase) {
+        await load(`${loadedBase}#degram-lang=${locale}`)
+      }
     },
     showSignIn,
     showDg,
@@ -412,6 +418,13 @@ export function createDgView(deps: DgViewDeps): DgView {
     reload: async (): Promise<void> => {
       if (state.page === 'blank') {
         await loadPage(null, 'about:blank')
+
+        return
+      }
+
+      const base = hostPageUrl(origin, lang)
+      if (state.page === 'dg' && state.mode === 'full' && loadedBase && loadedBase !== base) {
+        await loadPage(base, hostLoadUrl(base))
 
         return
       }
