@@ -1,10 +1,11 @@
-// mapping-view.ts — pure presentation helpers of the Mapping sub-tab (Phase 1303-10): option and type labels, class
-// labels, the five progress segments and the polling rule. Fixed option ids are UI text in the user's language; class
-// and property names stay data.
+// mapping-view.ts — pure presentation helpers of the Mapping sub-tab (Phase 1303-10, 1303-13): option and type labels,
+// class labels, which rows can be shown in their CAD application, the five progress segments and the polling rule.
+// Fixed option ids are UI text in the user's language; class and property names stay data.
 
 import type { DegramCopy } from './i18n'
 import {
   MAPPING_STATES,
+  type MappingItem,
   type MappingOption,
   type MappingSession,
   type MappingState,
@@ -39,6 +40,31 @@ export const typeLabel = (copy: MappingCopy, type: string): string =>
 
 export const kindLabel = (copy: MappingCopy, kind: string): string =>
   KIND_KEYS[kind] ? copy.kinds[KIND_KEYS[kind]] : ''
+
+interface ShowRule {
+  /** The row can be shown: Grasshopper needs its canvas component, Revit shows element groups (stream rows). */
+  showable: (item: MappingItem) => boolean
+  /** Accessible name of the row's chip, enabled or not. */
+  label: (copy: MappingCopy, item: MappingItem) => string
+}
+
+const SHOW_RULES: Record<BridgeApp, ShowRule> = {
+  grasshopper: {
+    showable: item => Boolean(item.componentId),
+    label: (copy, item) => (item.componentId ? copy.focus(item.name) : `${item.name} — ${copy.noComponent}`)
+  },
+  revit: {
+    showable: item => item.kind === 'stream',
+    label: (copy, item) =>
+      item.kind === 'stream' ? copy.focusRevit(item.name) : `${item.name} — ${copy.notShowableRevit}`
+  }
+}
+
+/** A click on this row shows it in its CAD application (Grasshopper canvas component, Revit element group). */
+export const itemShowable = (app: BridgeApp, item: MappingItem): boolean => SHOW_RULES[app].showable(item)
+
+export const itemChipLabel = (copy: MappingCopy, app: BridgeApp, item: MappingItem): string =>
+  SHOW_RULES[app].label(copy, item)
 
 /** `class:ex:GlassPanel` -> `{ kind: 'class', arg: 'ex:GlassPanel' }`; ids without an argument have `arg: ''`. */
 export function optionKind(optionId: string): { kind: string; arg: string } {

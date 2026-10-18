@@ -1,5 +1,5 @@
-"""Revit as a read-only MCP stdio child, document merge, bridge states and the degram toolset
-(plan 1301-11 task 2; D-11, D-13, D-14, D-22, D-23).
+"""Revit as an MCP stdio child (the DG Revit connector), document merge, bridge states and the degram toolset
+(plan 1301-11 task 2; D-11, D-13, D-14, D-22, D-23; D-45/D-46 lifted the read-only allowlist).
 
 The adapter is a fake MCP server over stdio (``fixtures/fake_revit_mcp.py``, real ``mcp`` SDK, no Revit)."""
 
@@ -14,7 +14,13 @@ import pytest
 
 from degram_variant import profiles, revit_bridge
 from utils import fast_safe_load
-from degram_variant.lockdown import ALLOWED_TOOL_NAMES, DEGRAM_TOOL_NAMES, REVIT_TOOL_NAMES
+from degram_variant.lockdown import (
+    ALLOWED_TOOL_NAMES,
+    DEGRAM_TOOL_NAMES,
+    REVIT_TOOL_PREFIX,
+    REVIT_TOOL_READ_NAMES,
+    revit_tool_allowed,
+)
 from degram_variant.outcomes import BridgeError
 
 from .conftest import GH_PIN, PROJECT, TOKEN, default_gh_handlers
@@ -38,7 +44,8 @@ class TestConfigTemplate:
         assert revit["args"] == ["${DEGRAM_REVIT_MCP_DIR}/main.py"]
         assert revit["env"] == {"DEGRAM_MODE": "1"}
         assert revit["enabled"] is True and revit["connect_timeout"] == 20 and revit["timeout"] == 40
-        assert sorted(revit["tools"]["include"]) == sorted(EIGHT)
+        # D-45/D-46: no tools.include, so every tool of the DG Revit connector registers (writes included).
+        assert "include" not in revit["tools"] and "exclude" not in revit["tools"]
         assert revit["tools"]["resources"] is False and revit["tools"]["prompts"] is False
         assert revit["sampling"] == {"enabled": False} and revit["elicitation"] == {"enabled": False}
 
@@ -46,12 +53,10 @@ class TestConfigTemplate:
         revit = _template()["mcp_servers"]["revit"]
         assert not ({"url", "headers", "auth", "oauth", "transport"} & set(revit))
 
-    def test_tool_include_equals_the_lockdown_names_and_the_adapter_contract(self):
-        include = set(_template()["mcp_servers"]["revit"]["tools"]["include"])
-        assert {f"mcp__revit__{name}" for name in include} == set(REVIT_TOOL_NAMES)
-        contract = Path(__file__).resolve().parents[4] / "apps" / "revit-mcp" / "tests" / "tool_contract.json"
-        if contract.is_file():
-            assert include == set(json.loads(contract.read_text(encoding="utf-8")))
+    def test_the_fake_adapter_serves_the_documented_read_subset(self):
+        """No include list any more (D-45): the eight read names survive as the documented subset DeGram's own reads
+        use, and the fake adapter below registers exactly those."""
+        assert {f"{REVIT_TOOL_PREFIX}{name}" for name in EIGHT} == set(REVIT_TOOL_READ_NAMES)
 
     def test_the_variant_keeps_the_entry_when_the_placeholders_are_present(self, monkeypatch):
         monkeypatch.setenv("HERMES_DEGRAM", "1")
@@ -229,13 +234,24 @@ class TestRevitSnapshot:
         assert view["status"] == "error" and view["code"] == "SCOPE_NOT_SUPPORTED"
         assert not any(c["tool"] == "get_selection_snapshot" for c in adapter.calls())
 
-    def test_the_client_only_calls_allowlisted_adapter_tools(self, rt, adapter):
+    def test_the_client_calls_every_connector_tool_writes_included(self, rt, adapter):
+        """D-45: the 1301 read-only allowlist is gone; the client's one rule is the ``mcp__revit__`` prefix."""
+        client = revit_bridge.RevitBridgeClient()
+        for tool in ("execute_revit_code", "set_parameter", "modify_element", "delete_elements"):
+            assert revit_tool_allowed(f"{REVIT_TOOL_PREFIX}{tool}"), tool
+            with pytest.raises(BridgeError) as exc:  # the fake adapter does not expose it, but the gate let it through
+                client.call(tool, {"code": "x"})
+            assert exc.value.code != "DEGRAM_LOCKED", tool
+            assert (exc.value.code, exc.value.reason) == ("SETUP_INCOMPLETE", "REVIT_ADAPTER_NOT_CONNECTED")
+        assert not [c for c in adapter.calls() if c["tool"] in {"execute_revit_code", "set_parameter"}]
+
+    def test_the_client_refuses_a_name_that_names_no_connector_tool(self):
+        """The client and the registry gate share one prefix rule; a name that leaves no tool after the prefix is
+        refused before the registry or Revit is asked."""
+        assert revit_bridge.TOOL_PREFIX == REVIT_TOOL_PREFIX
         with pytest.raises(BridgeError) as exc:
-            revit_bridge.RevitBridgeClient().call("execute_revit_code", {"code": "x"})
-        assert exc.value.code == "DEGRAM_LOCKED"
-        with pytest.raises(BridgeError):
-            revit_bridge.RevitBridgeClient().call("set_parameter", {})
-        assert adapter.calls() == []
+            revit_bridge.RevitBridgeClient().call("")
+        assert (exc.value.code, exc.value.reason) == ("DEGRAM_LOCKED", "REVIT_TOOL_NOT_ALLOWED")
 
 
 class TestChildLifecycle:

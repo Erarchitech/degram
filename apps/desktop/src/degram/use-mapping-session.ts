@@ -2,7 +2,8 @@
 // sub-tab is open (Phase 1303-10). DG owns the session; this is a cache of it. Reads start on expand, repeat every
 // MAPPING_POLL_MS while the session can still change on its own (needsPolling) and stop on collapse or unmount. A
 // generation counter drops answers that arrive after a newer read or a local answer/undo, so a stale poll never
-// brings back an undone answer. A start is followed for START_FOLLOW_MS, then polling ends on its own.
+// brings back an undone answer. A start is followed for START_FOLLOW_MS (until a session other than the one shown at
+// the start appears: a Revit model can be read again over an existing session), then polling ends on its own.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -21,7 +22,7 @@ export interface MappingPanelState {
   session: MappingSession | null
   /** The last read failed with this outcome (a bridge, DG or refusal code). */
   outcome: null | OutcomeInfo
-  /** Grasshopper: CONNECTOR is signed in; null when the canvas did not say. */
+  /** CONNECTOR (Grasshopper) or the DG Revit connector is signed in; null when the connector did not say. */
   signedIn: boolean | null
   connectorMessage: null | string
 }
@@ -44,6 +45,8 @@ export function useMappingSession(app: string, document: string, open: boolean, 
   const [state, setState] = useState<MappingPanelState>(INITIAL)
   const [followUntil, setFollowUntil] = useState(0)
   const generation = useRef(0)
+  /** The session shown when the followed start began; only a different one ends the follow. */
+  const followFrom = useRef<null | string>(null)
 
   /** Read the session `sessionId`, or (without one) find the document's newest session first. */
   const read = useCallback(
@@ -131,9 +134,9 @@ export function useMappingSession(app: string, document: string, open: boolean, 
   const following = followUntil > Date.now()
   const sessionId = state.session?.sessionId
 
-  // The start button shows only without a session, so the first session found while following is the started one.
+  // The first session found while following that is not the one shown at the start is the started one.
   useEffect(() => {
-    if (following && sessionId) {
+    if (following && sessionId && sessionId !== followFrom.current) {
       setFollowUntil(0)
     }
   }, [following, sessionId])
@@ -155,10 +158,15 @@ export function useMappingSession(app: string, document: string, open: boolean, 
     setState(s => ({ ...s, loading: false, loaded: true, outcome: null, session }))
   }, [])
 
-  const follow = useCallback(() => {
-    setFollowUntil(Date.now() + START_FOLLOW_MS)
-    void read()
-  }, [read])
+  /** Follow a start: re-read the document's newest session until one other than `fromSessionId` appears. */
+  const follow = useCallback(
+    (fromSessionId: null | string = null) => {
+      followFrom.current = fromSessionId
+      setFollowUntil(Date.now() + START_FOLLOW_MS)
+      void read()
+    },
+    [read]
+  )
 
   const reload = useCallback(() => void read(), [read])
 

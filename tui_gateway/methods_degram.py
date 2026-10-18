@@ -193,7 +193,8 @@ def _(rid, params: dict) -> dict:
 
 
 # -- Mapping sub-tab of «Модели» (Phase 1303-10) -----------------------------------------------------
-# DG sessions with the delegated token of the bound project and the Grasshopper canvas commands. A bridge or DG
+# DG sessions with the delegated token of the bound project, the Grasshopper canvas commands and the DG Revit
+# connector's mapping tools (1303-13: start and show for ``app: "revit"``). A bridge or DG
 # failure is an outcome result like degram.documents.*; a request DG refuses for what it is (unknown session or
 # answer, applied session, invalid option: HTTP 400/404/409) is a JSON-RPC error whose data.code is DG's own code.
 
@@ -248,12 +249,14 @@ def _(rid, params: dict) -> dict:
 
 @method("degram.mapping.start")
 def _(rid, params: dict) -> dict:
-    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(t))
+    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(app=params.get("app"), cancel=t))
 
 
 @method("degram.mapping.focus")
 def _(rid, params: dict) -> dict:
-    return _mapping_call(rid, "degram.mapping.focus", lambda m, t: m.focus(params.get("componentId"), t))
+    return _mapping_call(rid, "degram.mapping.focus", lambda m, t: m.focus(
+        component_id=params.get("componentId"), app=params.get("app"), session_id=params.get("sessionId"),
+        item_id=params.get("itemId"), cancel=t))
 
 
 def register(server) -> None:

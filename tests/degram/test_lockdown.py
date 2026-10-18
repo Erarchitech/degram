@@ -22,12 +22,17 @@ import pytest
 import tui_gateway.server as server
 from degram_variant import lockdown
 from degram_variant.lockdown import (
+    ALLOWED_MCP_SERVERS,
     ALLOWED_RPC_METHODS,
     ALLOWED_TOOL_NAMES,
     DEGRAM_TOOL_NAMES,
     DegramLockedError,
+    REVIT_TOOL_NAMES,
+    REVIT_TOOL_READ_NAMES,
     assert_rpc_allowed,
     is_degram,
+    revit_tool_allowed,
+    tool_name_allowed,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -87,9 +92,32 @@ class TestAllowlistContents:
             "mcp__revit__get_selection_snapshot", "mcp__revit__get_element_properties", "mcp__revit__list_levels",
             "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})
 
+    def test_every_revit_connector_tool_is_allowed_by_the_prefix_rule(self, degram):
+        """D-45: the rule is the server prefix, so the connector's write tools are allowed with no list entry."""
+        for name in ("modify_element", "delete_elements", "set_parameter", "place_family", "execute_revit_code",
+                     "dg_mapping_status", "dg_start_mapping", "dg_show_elements", "dg_clear_mapping_colours",
+                     "a_tool_the_fork_adds_tomorrow"):
+            assert revit_tool_allowed(f"mcp__revit__{name}"), name
+            assert tool_name_allowed(f"mcp__revit__{name}"), name
+        assert tool_name_allowed("terminal") is False, "the prefix opens Revit only, never a stock tool"
+
+    def test_a_tool_of_another_mcp_server_stays_refused(self, degram):
+        for name in ("mcp__grasshopper__get_status", "mcp__other__set_parameter", "mcp__revits__modify_element",
+                     "mcp__revit_extra__modify_element", "mcp__revit__", "mcp_revit_x"):
+            assert not revit_tool_allowed(name), name
+            assert not tool_name_allowed(name), name
+        assert revit_tool_allowed("mcp__revit__x") is True  # control: the prefix itself is the whole rule
+
+    def test_the_eight_read_tools_stay_the_documented_subset(self):
+        assert REVIT_TOOL_NAMES == REVIT_TOOL_READ_NAMES
+        assert REVIT_TOOL_READ_NAMES <= ALLOWED_TOOL_NAMES
+        assert ALLOWED_MCP_SERVERS == frozenset({"revit"})
+
     def test_forbidden_names_are_not_allowlisted(self):
         assert FORBIDDEN_TOOL_NAMES.isdisjoint(ALLOWED_TOOL_NAMES)
         assert not any(n.startswith(("browser_", "kanban_", "desktop_", "cron")) for n in ALLOWED_TOOL_NAMES)
+        for name in FORBIDDEN_TOOL_NAMES:  # the Revit prefix opens Revit only, never a stock tool
+            assert revit_tool_allowed(name) is False, name
 
 
 # ── registry ─────────────────────────────────────────────────────────────────────────────────
@@ -112,9 +140,10 @@ class TestRegistry:
         names = set(run_py(REGISTRY_SCRIPT, tmp_path, degram=False))
         assert {"terminal", "read_file", "web_search", "execute_code"} <= names
 
-    def test_degram_registry_holds_only_the_allowlist(self, tmp_path):
+    def test_degram_registry_holds_only_allowlisted_names(self, tmp_path):
         names = set(run_py(REGISTRY_SCRIPT, tmp_path, degram=True))
-        assert names <= ALLOWED_TOOL_NAMES, f"registered outside the allowlist: {sorted(names - ALLOWED_TOOL_NAMES)}"
+        outside = sorted(n for n in names if not (n in ALLOWED_TOOL_NAMES or revit_tool_allowed(n)))
+        assert not outside, f"registered outside the allowlist and the Revit prefix rule: {outside}"
         assert {"clarify", "todo_list"} <= names
         assert DEGRAM_TOOL_NAMES <= names, "plan 1301-11 registers the degram toolset"
         assert FORBIDDEN_TOOL_NAMES.isdisjoint(names)
@@ -123,12 +152,17 @@ class TestRegistry:
         from tools.registry import ToolRegistry
         reg = ToolRegistry()
         schema = {"name": "x", "description": "d", "parameters": {"type": "object", "properties": {}}}
-        for name in ("terminal", "mcp__revit__not_allowlisted", "mcp_other_get_status", "send_message"):
+        for name in ("terminal", "mcp__grasshopper__get_status", "mcp_other_get_status", "send_message"):
             reg.register(name=name, toolset="t", schema=schema, handler=lambda a, **k: "{}")
         assert reg.get_all_tool_names() == []
-        reg.register(name="mcp__revit__get_revit_status", toolset="mcp-revit", schema=schema, handler=lambda a, **k: "{}")
+        # D-45: the Revit connector's tools register by prefix, write tools included.
+        for name in ("mcp__revit__get_revit_status", "mcp__revit__modify_element", "mcp__revit__delete_elements",
+                     "mcp__revit__execute_revit_code"):
+            reg.register(name=name, toolset="mcp-revit", schema=schema, handler=lambda a, **k: "{}")
         reg.register(name="clarify", toolset="clarify", schema=schema, handler=lambda a, **k: "{}")
-        assert sorted(reg.get_all_tool_names()) == ["clarify", "mcp__revit__get_revit_status"]
+        assert sorted(reg.get_all_tool_names()) == [
+            "clarify", "mcp__revit__delete_elements", "mcp__revit__execute_revit_code",
+            "mcp__revit__get_revit_status", "mcp__revit__modify_element"]
 
     def test_register_is_unchanged_outside_degram(self, monkeypatch):
         monkeypatch.delenv("HERMES_DEGRAM", raising=False)

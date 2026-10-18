@@ -144,6 +144,16 @@ export interface DegramCopy {
     focus: (name: string) => string
     noComponent: string
     notFound: (name: string) => string
+    /** Revit (1303-13): the DG Revit connector's sign-in state, its start and the rows it can show. */
+    revitSignedIn: string
+    revitSignInFirst: string
+    /** The Revit start over an existing session: the connector reads the model again into a new session. */
+    startAgain: string
+    notStartedRevit: string
+    /** Accessible name of a Revit element-group chip: a click selects its elements in Revit and zooms to them. */
+    focusRevit: (name: string) => string
+    notShowableRevit: string
+    notFoundRevit: (name: string) => string
     /** A request DG refused for what it is (data.code of the JSON-RPC error). */
     refused: {
       sessionApplied: string
@@ -358,6 +368,13 @@ export const degramEn: DegramCopy = {
     focus: name => `Show ${name} on the Grasshopper canvas`,
     noComponent: 'No canvas component is known for this item',
     notFound: name => `${name} wasn't found on the Grasshopper canvas.`,
+    revitSignedIn: 'Signed in to DG in Revit.',
+    revitSignInFirst: 'Sign in to DG on the Revit ribbon: DG → Sign in',
+    startAgain: 'Read the model again',
+    notStartedRevit: "The DG connector in Revit didn't start the mapping.",
+    focusRevit: name => `Show ${name} in Revit`,
+    notShowableRevit: 'Only element groups can be shown in Revit',
+    notFoundRevit: name => `No element of ${name} was found in the Revit model.`,
     refused: {
       sessionApplied: 'The session is already applied; nothing was changed.',
       answerGone: 'This decision was already undone. The list is refreshed.',
@@ -587,6 +604,13 @@ export const degramRu: DegramCopy = {
     focus: name => `Показать ${name} на холсте Grasshopper`,
     noComponent: 'Компонент на холсте для этого элемента неизвестен',
     notFound: name => `${name} не найден на холсте Grasshopper.`,
+    revitSignedIn: 'Вход в DG в Revit выполнен.',
+    revitSignInFirst: 'Войдите в DG на ленте Revit: DG → Вход',
+    startAgain: 'Прочитать модель заново',
+    notStartedRevit: 'Коннектор DG в Revit не запустил меппинг.',
+    focusRevit: name => `Показать ${name} в Revit`,
+    notShowableRevit: 'В Revit можно показать только группы элементов',
+    notFoundRevit: name => `Ни один элемент ${name} не найден в модели Revit.`,
     refused: {
       sessionApplied: 'Сессия уже применена — ничего не изменено.',
       answerGone: 'Это решение уже отменено. Список обновлён.',

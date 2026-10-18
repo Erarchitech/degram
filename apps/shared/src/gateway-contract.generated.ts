@@ -1383,6 +1383,9 @@ export interface DegramMappingUndoParams {
   sessionId: string
   answerId: string
 }
+export interface DegramMappingStartParams {
+  app?: string | null
+}
 export interface DegramMappingStartResult {
   status: string
   code?: string | null
@@ -1390,9 +1393,13 @@ export interface DegramMappingStartResult {
   message?: string | null
   bridgeState?: string | null
   started?: boolean | null
+  sessionId?: string | null
 }
 export interface DegramMappingFocusParams {
-  componentId: string
+  app?: string | null
+  componentId?: string | null
+  sessionId?: string | null
+  itemId?: string | null
 }
 export interface DegramMappingFocusResult {
   status: string
@@ -1403,6 +1410,9 @@ export interface DegramMappingFocusResult {
   found?: boolean | null
   componentId?: string | null
   name?: string | null
+  itemId?: string | null
+  shown?: number | null
+  missing?: string[] | null
 }
 /** ``tools/bot_desktop/runtime.py::DesktopStatus`` plus the lease and the profile it speaks for. */
 export interface DisplayStatus {
@@ -5152,14 +5162,14 @@ export interface RpcMethods {
   'degram.documents.unpin': { params: DegramDocumentsUnpinParams; result: DegramDocumentsUnpinResult }
   /** Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID. */
   'degram.mapping.answer': { params: DegramMappingAnswerParams; result: DegramMappingSessionResult }
-  /** Bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component). */
+  /** Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements). */
   'degram.mapping.focus': { params: DegramMappingFocusParams; result: DegramMappingFocusResult }
   /** One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND. */
   'degram.mapping.session': { params: DegramMappingSessionParams; result: DegramMappingSessionResult }
   /** Mapping sessions of the bound project, newest first; only those of one document when document is given. Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING. */
   'degram.mapping.sessions': { params: DegramMappingSessionsParams; result: DegramMappingSessionsResult }
-  /** CONNECTOR reads the Grasshopper canvas and creates a mapping session now (bridge start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED. */
-  'degram.mapping.start': { params: Params; result: DegramMappingStartResult }
+  /** Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE. */
+  'degram.mapping.start': { params: DegramMappingStartParams; result: DegramMappingStartResult }
   /** Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND. */
   'degram.mapping.undo': { params: DegramMappingUndoParams; result: DegramMappingSessionResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */

@@ -12,11 +12,14 @@ platform_toolsets:
   cli: [clarify, todo, degram, mcp-revit]
   desktop: [clarify, todo, degram, mcp-revit]
   tui: [clarify, todo, degram, mcp-revit]
-# The pinned read-only Revit bridge (plan 1301-11, D-11): an MCP stdio child started with the bundled Python.
-# Electron main sets DEGRAM_PYTHON (bundled interpreter) and DEGRAM_REVIT_MCP_DIR (apps/revit-mcp) for the backend;
-# an unset variable keeps the literal placeholder, the spawn fails and the Revit group reports setup-incomplete.
-# DEGRAM_MODE=1 makes the adapter refuse HTTP/SSE (no MCP port is ever opened). Only the eight allowlisted read
-# tools register; resources, prompts, sampling and elicitation are off. No retry: a slow read is BUSY after 40 s.
+# The DG Revit connector as an MCP stdio child (D-44..D-46): started with the bundled Python from the connector
+# directory Electron main supplies. Electron main sets DEGRAM_PYTHON (bundled interpreter) and
+# DEGRAM_REVIT_MCP_DIR (apps/dg-revit-connector, overridable per launch) for the backend; an unset variable keeps
+# the literal placeholder, the spawn fails and the Revit group reports setup-incomplete.
+# DEGRAM_MODE=1 makes the connector refuse HTTP/SSE (no MCP port is ever opened). No tools.include: every tool of
+# the connector registers, write tools included — the owner decision of 2026-10-18 lifted every Revit restriction
+# (D-45), which is why the 1301 read allowlist is gone. resources, prompts, sampling and elicitation stay off and
+# the child stays stdio; no retry: a slow call is BUSY after 40 s.
 mcp_servers:
   revit:
     command: ${DEGRAM_PYTHON}
@@ -28,15 +31,6 @@ mcp_servers:
     connect_timeout: 20
     timeout: 40
     tools:
-      include:
-        - get_revit_status
-        - get_revit_model_info
-        - list_open_documents
-        - get_selection_snapshot
-        - get_element_properties
-        - list_levels
-        - get_current_view_info
-        - list_category_parameters
       resources: false
       prompts: false
     sampling:

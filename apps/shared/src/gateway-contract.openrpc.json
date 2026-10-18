@@ -944,7 +944,7 @@
     },
     {
       "name": "degram.mapping.focus",
-      "summary": "Bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component).",
+      "summary": "Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements).",
       "params": [
         {
           "name": "params",
@@ -998,12 +998,12 @@
     },
     {
       "name": "degram.mapping.start",
-      "summary": "CONNECTOR reads the Grasshopper canvas and creates a mapping session now (bridge start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED.",
+      "summary": "Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.",
       "params": [
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/Params"
+            "$ref": "#/components/schemas/DegramMappingStartParams"
           }
         }
       ],
@@ -13266,14 +13266,55 @@
       "DegramMappingFocusParams": {
         "additionalProperties": false,
         "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          },
           "componentId": {
-            "title": "Componentid",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Componentid"
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sessionid"
+          },
+          "itemId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Itemid"
           }
         },
-        "required": [
-          "componentId"
-        ],
         "title": "DegramMappingFocusParams",
         "type": "object"
       },
@@ -13367,6 +13408,45 @@
             ],
             "default": null,
             "title": "Name"
+          },
+          "itemId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Itemid"
+          },
+          "shown": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shown"
+          },
+          "missing": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Missing"
           }
         },
         "required": [
@@ -13612,6 +13692,25 @@
         "title": "DegramMappingSessionsResult",
         "type": "object"
       },
+      "DegramMappingStartParams": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          }
+        },
+        "title": "DegramMappingStartParams",
+        "type": "object"
+      },
       "DegramMappingStartResult": {
         "additionalProperties": false,
         "properties": {
@@ -13678,6 +13777,18 @@
             ],
             "default": null,
             "title": "Started"
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sessionid"
           }
         },
         "required": [

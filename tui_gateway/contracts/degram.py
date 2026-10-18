@@ -148,20 +148,25 @@ method("degram.context.cancel", params=DegramContextCancelParams, result=DegramC
 
 # -- Mapping sub-tab of «Модели» (Phase 1303-10, 1303-API-CONTRACT.md §2, §3, §7) ---------------------
 # Sessions, answers and undo go to DG with the delegated token of the bound project; start and focus go to the
-# Grasshopper canvas bridge. A request DG refuses for what it is (HTTP 400/404/409) is a JSON-RPC error whose
+# Grasshopper canvas bridge (app grasshopper, the default) or to the DG Revit connector's MCP tools (app revit,
+# 1303-API-CONTRACT.md §8.5). A request DG refuses for what it is (HTTP 400/404/409) is a JSON-RPC error whose
 # data.code is DG's code (MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND, ...) and data.status the HTTP status.
 
 
 class DegramMappingSessionsParams(Params):
     document: str | None = None  # a document name (file name); null lists every session of the project
-    app: str | None = None  # grasshopper: the canvas names the document key first (get_mapping_status)
+    # grasshopper: the canvas names the document key first (get_mapping_status); revit: the key of the document name,
+    # plus the connector status (dg_mapping_status)
+    app: str | None = None
 
 
 class DegramMappingSessionsResult(DegramOutcomeFields):
     document: str | None = None  # the document key the rows were matched by
     sessions: JsonValue = None  # [{sessionId, label, document, platform, createdAt, summary, appliedAt?}], newest first
-    connector: bool | None = None  # grasshopper only: a CONNECTOR is on the canvas
-    signedIn: bool | None = None  # grasshopper only: CONNECTOR is signed in (a start can work)
+    # with a document only, absent when the connector did not answer: CONNECTOR is on the canvas / the Revit connector
+    # answered, it is signed in (a start can work), its open session and its last message
+    connector: bool | None = None
+    signedIn: bool | None = None
     connectorSessionId: str | None = None
     connectorMessage: str | None = None
 
@@ -186,18 +191,29 @@ class DegramMappingUndoParams(Params):
     answerId: str
 
 
+class DegramMappingStartParams(Params):
+    app: str | None = None  # grasshopper (default): CONNECTOR start_mapping; revit: the connector's dg_start_mapping
+
+
 class DegramMappingStartResult(DegramOutcomeFields):
     started: bool | None = None
+    sessionId: str | None = None  # revit only: the session the connector just created
 
 
 class DegramMappingFocusParams(Params):
-    componentId: str  # the Grasshopper InstanceGuid of the item (32 hex)
+    app: str | None = None  # grasshopper (default) needs componentId; revit needs sessionId and itemId
+    componentId: str | None = None  # the Grasshopper InstanceGuid of the item (32 hex)
+    sessionId: str | None = None  # revit: the session the row belongs to
+    itemId: str | None = None  # revit: the row's group id; its elements' UniqueIds are selected and zoomed to
 
 
 class DegramMappingFocusResult(DegramOutcomeFields):
-    found: bool | None = None
+    found: bool | None = None  # revit: at least one element of the group is in the model
     componentId: str | None = None
     name: str | None = None
+    itemId: str | None = None  # revit only
+    shown: int | None = None  # revit only: elements selected and zoomed to
+    missing: list[str] | None = None  # revit only: UniqueIds the model does not hold
 
 
 method("degram.mapping.sessions", params=DegramMappingSessionsParams, result=DegramMappingSessionsResult,
@@ -211,8 +227,11 @@ method("degram.mapping.answer", params=DegramMappingAnswerParams, result=DegramM
 method("degram.mapping.undo", params=DegramMappingUndoParams, result=DegramMappingSessionResult,
        doc="Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, "
            "MAPPING_ANSWER_NOT_FOUND.")
-method("degram.mapping.start", params=Params, result=DegramMappingStartResult,
-       doc="CONNECTOR reads the Grasshopper canvas and creates a mapping session now (bridge start_mapping). "
-           "Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED.")
+method("degram.mapping.start", params=DegramMappingStartParams, result=DegramMappingStartResult,
+       doc="Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge "
+           "start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). "
+           "Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.")
 method("degram.mapping.focus", params=DegramMappingFocusParams, result=DegramMappingFocusResult,
-       doc="Bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component).")
+       doc="Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom "
+           "to it (bridge focus_component), or with app revit select the elements of one session group in Revit and "
+           "zoom the active view to them (dg_show_elements).")

@@ -367,7 +367,7 @@ describe('Mapping sub-tab on the Models page (1303-10)', () => {
     await waitFor(() => expect(gw.count('degram.mapping.sessions')).toBe(reads + 1))
   })
 
-  it('offers «Start mapping» only for a Grasshopper document without a session, then reads again', async () => {
+  it('offers «Start mapping» for a Grasshopper document only without a session, then reads again', async () => {
     await ready()
     let started = false
 
@@ -389,19 +389,17 @@ describe('Mapping sub-tab on the Models page (1303-10)', () => {
 
     render(withActions(<ModelsPage />))
     await screen.findByText(GH_ROW.name)
-    fireEvent.click(within(subtab('revit')).getByTestId('degram-mapping-toggle'))
     fireEvent.click(within(subtab('grasshopper')).getByTestId('degram-mapping-toggle'))
-
-    expect(await within(subtab('revit')).findByText('There are no mapping sessions for this model yet.')).toBeTruthy()
-    expect(within(subtab('revit')).queryByRole('button', { name: 'Start mapping' })).toBeNull()
 
     const start = await within(subtab('grasshopper')).findByRole('button', { name: 'Start mapping' })
 
     expect((start as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(start)
     await waitFor(() => expect(gw.count('degram.mapping.start')).toBe(1))
+    expect(gw.last('degram.mapping.start')).toEqual({}) // the canvas start keeps its parameterless call
     await within(subtab('grasshopper')).findByTestId('degram-mapping-progress')
     expect(within(subtab('grasshopper')).queryByRole('button', { name: 'Start mapping' })).toBeNull()
+    expect(within(subtab('grasshopper')).queryByTestId('degram-mapping-revit-connector')).toBeNull()
   })
 
   it('keeps Enter inside the sub-tab: a focused proposal button never pins the document', async () => {
@@ -454,5 +452,216 @@ describe('Mapping sub-tab on the Models page (1303-10)', () => {
     expect(batch!.textContent).toContain('→ Принять все')
     fireEvent.click(batch!.querySelector('button[aria-expanded]') as HTMLElement)
     expect(within(batch!).getByRole('button', { name: 'Отменить решение' })).toBeTruthy()
+  })
+})
+
+// -- Revit (1303-13; contract §8.5, D-47, D-51) ------------------------------------------------------------------
+
+const REVIT_SID = 'ms-rvt000000001'
+
+const revitSession = (sessionId = REVIT_SID, title = 'Accept 2 groups') => ({
+  ...SESSION,
+  sessionId,
+  label: 'tower · 11:00:00',
+  document: 'tower',
+  llm: { status: 'off' },
+  questions: [
+    {
+      questionId: 'Q-rvt',
+      type: 'batch-assign',
+      title,
+      titleRu: 'Принять 2 группы',
+      text: 'Two Revit groups.',
+      textRu: 'Две группы Revit.',
+      items: [
+        item({ itemId: 'G-r1', name: 'Curtain Panel : Glass', componentId: null, count: 120 }),
+        item({ itemId: 'G-r2', name: 'Generic Model : Hex', componentId: null, count: 4, alternatives: [] }),
+        item({ itemId: 'M-r1', kind: 'measure', name: 'Area', componentId: null, count: 4, state: 'suggested' })
+      ],
+      options: [{ optionId: 'accept-all', label: 'Accept all' }]
+    }
+  ],
+  answers: []
+})
+
+async function openRevit(locale?: string) {
+  const ui = withActions(<ModelsPage />)
+
+  render(locale ? <I18nProvider configClient={null} initialLocale={locale}>{ui}</I18nProvider> : ui)
+  await screen.findByText(REVIT_ROW.name)
+  fireEvent.click(within(subtab('revit')).getByTestId('degram-mapping-toggle'))
+  await within(subtab('revit')).findByTestId('degram-mapping-revit-connector')
+
+  return subtab('revit')
+}
+
+describe('Mapping sub-tab of a Revit model (1303-13)', () => {
+  it('shows the connector sign-in state and always offers a start; the start names Revit', async () => {
+    await ready()
+    let started = false
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.sessions': ({ app }) =>
+          app === 'revit'
+            ? { status: 'ok', document: 'tower', sessions: started ? [ROW(revitSession())] : [], signedIn: started }
+            : { status: 'ok', document: 'tower-facade', sessions: [], signedIn: true },
+        'degram.mapping.session': () => ({ status: 'ok', session: revitSession() }),
+        'degram.mapping.start': () => {
+          started = true
+
+          return { status: 'ok', started: true, sessionId: REVIT_SID, message: 'DG mapped 124 elements' }
+        }
+      })
+    )
+
+    const tab = await openRevit()
+
+    expect(await within(tab).findByText('Sign in to DG on the Revit ribbon: DG → Sign in')).toBeTruthy()
+    expect(within(tab).getByText('There are no mapping sessions for this model yet.')).toBeTruthy()
+    expect(gw.last('degram.mapping.sessions')).toEqual({ app: 'revit', document: 'Tower.rvt' })
+
+    fireEvent.click(within(tab).getByRole('button', { name: 'Start mapping' }))
+    await waitFor(() => expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit' }))
+    await within(tab).findByTestId('degram-mapping-progress')
+    expect(within(tab).getByText('Signed in to DG in Revit.')).toBeTruthy()
+    // With a session the start stays, as «Read the model again» (enabled once the new session ended the follow).
+    const again = (await within(tab).findByRole('button', { name: 'Read the model again' })) as HTMLButtonElement
+
+    expect(again.disabled).toBe(false)
+    expect(within(tab).queryByRole('button', { name: 'Start mapping' })).toBeNull()
+  })
+
+  it('a read-again over an existing session follows until the new session shows', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] })
+    await ready()
+    const second = 'ms-rvt000000002'
+    let rows = [ROW(revitSession())]
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.sessions': ({ app }) => ({
+          status: 'ok',
+          document: app === 'revit' ? 'tower' : 'tower-facade',
+          sessions: app === 'revit' ? rows : [],
+          signedIn: true
+        }),
+        'degram.mapping.session': ({ sessionId }) => ({
+          status: 'ok',
+          session: sessionId === second ? revitSession(second, 'Accept 3 groups') : revitSession()
+        }),
+        'degram.mapping.start': () => ({ status: 'ok', started: true, sessionId: second, message: null })
+      })
+    )
+
+    const tab = await openRevit()
+
+    await within(tab).findByText('Accept 2 groups')
+    const lists = gw.count('degram.mapping.sessions')
+
+    fireEvent.click(await within(tab).findByRole('button', { name: 'Read the model again' }))
+    await waitFor(() => expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit' }))
+    // The follow re-reads the list, which still names the old session first: that must not end the follow.
+    await waitFor(() => expect(gw.count('degram.mapping.sessions')).toBe(lists + 1))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(within(tab).getByRole('button', { name: 'Starting the mapping' })).toBeTruthy()
+    rows = [ROW(revitSession(second)), ...rows]
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4100)
+    })
+    await within(tab).findByText('Accept 3 groups')
+    expect(gw.last('degram.mapping.session')).toEqual({ sessionId: second })
+    await within(tab).findByRole('button', { name: 'Read the model again' })
+  })
+
+  it('stream rows are buttons that show their elements in Revit; other rows stay plain', async () => {
+    await ready()
+    let reply: Record<string, unknown> = { status: 'ok', found: true, shown: 120, missing: [] }
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.sessions': ({ app }) => ({
+          status: 'ok',
+          document: app === 'revit' ? 'tower' : 'tower-facade',
+          sessions: app === 'revit' ? [ROW(revitSession())] : [ROW()],
+          signedIn: true
+        }),
+        'degram.mapping.session': ({ sessionId }) => ({
+          status: 'ok',
+          session: sessionId === REVIT_SID ? revitSession() : SESSION
+        }),
+        'degram.mapping.focus': ({ itemId }) => ({ ...reply, itemId })
+      })
+    )
+
+    const tab = await openRevit()
+    const chips = (await within(tab).findAllByTestId('degram-mapping-chip')) as HTMLButtonElement[]
+
+    expect(chips.map(chip => chip.disabled)).toEqual([false, false, true])
+    expect(chips[0]!.getAttribute('aria-label')).toBe('Show Curtain Panel : Glass in Revit')
+    expect(chips[2]!.getAttribute('aria-label')).toBe('Area — Only element groups can be shown in Revit')
+
+    fireEvent.click(chips[0]!)
+    await waitFor(() =>
+      expect(gw.last('degram.mapping.focus')).toEqual({ app: 'revit', sessionId: REVIT_SID, itemId: 'G-r1' })
+    )
+    expect(within(tab).queryByRole('alert')).toBeNull()
+
+    reply = { status: 'ok', found: false, shown: 0, missing: [] }
+    fireEvent.click(chips[1]!)
+    expect(await within(tab).findByText('No element of Generic Model : Hex was found in the Revit model.')).toBeTruthy()
+
+    reply = { status: 'error', code: 'BUSY', message: 'Revit did not answer in time.', bridgeState: 'busy' }
+    fireEvent.click(chips[0]!)
+    expect(
+      await within(tab).findByText('Revit is busy (a command or dialog is open). Finish it in Revit, then retry the request.')
+    ).toBeTruthy()
+
+    fireEvent.click(chips[2]!)
+    expect(gw.count('degram.mapping.focus')).toBe(3)
+  })
+
+  it('Grasshopper rows keep the canvas focus and its labels', async () => {
+    await ready()
+    const gw = fakeGateway(backend())
+    const tab = await openGh()
+    const chips = within(within(tab).getAllByTestId('degram-mapping-proposal')[0]!).getAllByTestId('degram-mapping-chip')
+
+    expect(chips[0]!.getAttribute('aria-label')).toBe('Show Panels A on the Grasshopper canvas')
+    expect(chips[1]!.getAttribute('aria-label')).toBe('Panels C — No canvas component is known for this item')
+    fireEvent.click(chips[0]!)
+    await waitFor(() => expect(gw.last('degram.mapping.focus')).toEqual({ componentId: PANELS_A }))
+  })
+
+  it('reads in Russian: the sign-in hint and both start labels', async () => {
+    await ready()
+    let rows: unknown[] = []
+
+    fakeGateway(
+      backend({
+        'degram.mapping.sessions': ({ app }) => ({
+          status: 'ok',
+          document: app === 'revit' ? 'tower' : 'tower-facade',
+          sessions: app === 'revit' ? rows : [],
+          signedIn: false
+        }),
+        'degram.mapping.session': () => ({ status: 'ok', session: revitSession() })
+      })
+    )
+
+    const tab = await openRevit('ru')
+
+    expect(await within(tab).findByText('Войдите в DG на ленте Revit: DG → Вход')).toBeTruthy()
+    expect(within(tab).getByRole('button', { name: 'Запустить меппинг' })).toBeTruthy()
+
+    rows = [ROW(revitSession())]
+    fireEvent.click(within(tab).getByRole('button', { name: 'Обновить меппинг' }))
+    expect(await within(tab).findByRole('button', { name: 'Прочитать модель заново' })).toBeTruthy()
+    expect(within(tab).getAllByTestId('degram-mapping-chip')[0]!.getAttribute('aria-label')).toBe(
+      'Показать Curtain Panel : Glass в Revit'
+    )
   })
 })

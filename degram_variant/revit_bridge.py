@@ -1,8 +1,13 @@
-"""Revit as a read-only MCP stdio child, called programmatically (1301 D-11, D-13, D-14, D-23; plan 11).
+"""Revit as an MCP stdio child, called programmatically (1301 D-11, D-13, D-14, D-23; plan 11; D-45).
 
-The Revit adapter (``apps/revit-mcp``, plan 07) is launched by the Hermes MCP client as server ``revit`` (see
-``config_template.yaml``: bundled Python, ``DEGRAM_MODE=1``, the eight allowlisted tools, no resources/prompts,
-sampling off). It opens no HTTP/SSE port and exits with the gateway (``shutdown_mcp_servers``).
+The Revit adapter is the DG Revit connector (``apps/dg-revit-connector``, D-44, D-46), launched by the Hermes MCP
+client as server ``revit`` (see ``config_template.yaml``: bundled Python, ``DEGRAM_MODE=1``, every tool registers, no
+resources/prompts, sampling off). It opens no HTTP/SSE port and exits with the gateway (``shutdown_mcp_servers``).
+
+Owner decision 2026-10-18 (D-45) lifted every Revit restriction: the connector registers its whole tool set, write
+tools included, and ``call`` accepts every ``mcp__revit__*`` name (``lockdown.revit_tool_allowed`` is the one rule).
+Kept as transport hygiene, not as a Revit restriction: the connector stays a stdio child with no HTTP/SSE port and
+each call stays bounded and cancellable.
 
 This module calls the *registered* ``mcp__revit__*`` tool handlers, the same code path the agent's tool calls take, so
 the circuit breaker, stdio respawn and result rendering are not re-implemented. Each call runs on its own bounded
@@ -11,7 +16,7 @@ cancel token or the turn's interrupt fires (the worker's MCP wait is interrupted
 bit and unwinds within 0.1 s). No automatic retry.
 
 Identity (plan 07 residual): only ``get_selection_snapshot`` is addressed by document identity
-``{creationGuid, pathName}``; the other read tools read Revit's *active* document. DeGram's own reads (picker,
+``{creationGuid, pathName}``; the other tools read Revit's *active* document. DeGram's own reads (picker,
 preview, ``degram_document_snapshot``) use only ``list_open_documents`` and ``get_selection_snapshot``."""
 
 from __future__ import annotations
@@ -136,17 +141,17 @@ def _parse(output: Any, tool: str) -> dict[str, Any]:
 
 
 class RevitBridgeClient:
-    """Calls one allowlisted adapter tool through the registered MCP handler."""
+    """Calls one DG Revit connector tool through the registered MCP handler (every ``mcp__revit__*`` tool, D-45)."""
 
     def call(self, tool: str, arguments: dict[str, Any] | None = None, *,
              cancel: CancelToken | None = None, deadline_s: float | None = None) -> dict[str, Any]:
-        from degram_variant.lockdown import REVIT_TOOL_NAMES
+        from degram_variant.lockdown import revit_tool_allowed
         from tools.registry import registry
 
         name = f"{TOOL_PREFIX}{tool}"
-        if name not in REVIT_TOOL_NAMES:  # the adapter allowlist, mirrored: nothing else is ever called
+        if not revit_tool_allowed(name):  # the one Revit rule: the server prefix (D-45)
             from .outcomes import DEGRAM_LOCKED
-            raise BridgeError(DEGRAM_LOCKED, "REVIT_TOOL_NOT_ALLOWED", f"Revit tool {tool!r} is not an allowlisted read.")
+            raise BridgeError(DEGRAM_LOCKED, "REVIT_TOOL_NOT_ALLOWED", f"Revit tool {tool!r} is not a DG Revit connector tool.")
         check(cancel)
         entry = registry.get_entry(name)
         if entry is None:

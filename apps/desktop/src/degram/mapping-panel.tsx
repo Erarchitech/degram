@@ -1,13 +1,15 @@
-// mapping-panel.tsx — the «Mapping» sub-tab under each document of the «Модели» screen (Phase 1303-10, owner request
-// 2026-10-18; data contract 1303-API-CONTRACT.md §3 and §7).
+// mapping-panel.tsx — the «Mapping» sub-tab under each document of the «Модели» screen (Phase 1303-10, 1303-13; owner
+// requests 2026-10-18; data contract 1303-API-CONTRACT.md §3, §7 and §8).
 //
 // Collapsed by default: nothing is read until the user opens it. Open, it shows the newest mapping session of that
 // document: the five-segment progress bar, the LLM status while the background proposal runs, each open proposal as
 // its own collapsible section (the first one open) with ONE ROW PER ITEM, the option buttons and «Подробнее», then the
-// decisions made, each collapsible with its own «Отменить решение». Every item has a state-coloured chip; a click asks
-// the Grasshopper canvas to select and zoom to that component. A Grasshopper document without a session gets
-// «Запустить меппинг» (CONNECTOR reads the canvas); a Revit document only lists existing sessions. DG answers every
-// answer and undo with the recomputed session, which replaces the cached one; failures are named inline, never toasted.
+// decisions made, each collapsible with its own «Отменить решение». Every item has a state-coloured chip; a click shows
+// it in its CAD application: the Grasshopper canvas selects and zooms to the component, Revit selects the element
+// group's members and zooms the active view to them (D-51). A Grasshopper document without a session gets «Запустить
+// меппинг» (CONNECTOR reads the canvas). A Revit document always shows the DG Revit connector's sign-in state and a
+// start (D-47): «Запустить меппинг», or «Прочитать модель заново» over an existing session. DG answers every answer and
+// undo with the recomputed session, which replaces the cached one; failures are named inline, never toasted.
 
 import './mapping.css'
 
@@ -32,10 +34,13 @@ import {
   type MappingSession,
   type MappingSummary,
   type SessionResult,
+  showRevitItem,
   startMapping,
   undoMappingAnswer
 } from './mapping-api'
 import {
+  itemChipLabel,
+  itemShowable,
   kindLabel,
   mappingFailureText,
   optionText,
@@ -132,9 +137,16 @@ function MappingProgress({ copy, summary }: { copy: Copy; summary: MappingSummar
   )
 }
 
-/** One proposed canvas component on its own row: chip (click → canvas), kind, → proposal, count, alternatives. */
-function ItemRow({ copy, item, onFocus }: { copy: Copy; item: MappingItem; onFocus: (item: MappingItem) => void }) {
+/** How a row's chip shows it in the CAD application the document belongs to. */
+interface ShowTarget {
+  app: BridgeApp
+  onFocus: (item: MappingItem) => void
+}
+
+/** One proposed item on its own row: chip (click → CAD application), kind, → proposal, count, alternatives. */
+function ItemRow({ copy, item, target }: { copy: Copy; item: MappingItem; target: ShowTarget }) {
   const kind = kindLabel(copy.mapping, item.kind)
+  const showable = itemShowable(target.app, item)
 
   const amount =
     item.count === null
@@ -149,12 +161,12 @@ function ItemRow({ copy, item, onFocus }: { copy: Copy; item: MappingItem; onFoc
       data-mapping-item={item.itemId}
     >
       <button
-        aria-label={item.componentId ? copy.mapping.focus(item.name) : `${item.name} — ${copy.mapping.noComponent}`}
+        aria-label={itemChipLabel(copy.mapping, target.app, item)}
         className="degram-mapping-chip"
         data-mapping-state={item.state}
         data-testid="degram-mapping-chip"
-        disabled={!item.componentId}
-        onClick={() => onFocus(item)}
+        disabled={!showable}
+        onClick={() => target.onFocus(item)}
         type="button"
       >
         <span className="truncate">{item.name}</span>
@@ -178,11 +190,11 @@ function ItemRow({ copy, item, onFocus }: { copy: Copy; item: MappingItem; onFoc
   )
 }
 
-function Items({ copy, items, onFocus }: { copy: Copy; items: MappingItem[]; onFocus: (item: MappingItem) => void }) {
+function Items({ copy, items, target }: { copy: Copy; items: MappingItem[]; target: ShowTarget }) {
   return (
     <ul className="grid gap-1.5">
       {items.map(item => (
-        <ItemRow copy={copy} item={item} key={item.itemId} onFocus={onFocus} />
+        <ItemRow copy={copy} item={item} key={item.itemId} target={target} />
       ))}
     </ul>
   )
@@ -196,7 +208,7 @@ interface CardProps {
   onToggle: () => void
   busy: boolean
   error: null | string
-  onFocus: (item: MappingItem) => void
+  target: ShowTarget
 }
 
 function ProposalCard({
@@ -210,7 +222,7 @@ function ProposalCard({
   sending,
   error,
   onAnswer,
-  onFocus
+  target
 }: CardProps & {
   question: MappingQuestion
   sending: boolean
@@ -239,7 +251,7 @@ function ProposalCard({
       {expanded && (
         <div className="grid gap-2 pb-1 pl-5" id={bodyId}>
           {question.items.length > 0 ? (
-            <Items copy={copy} items={question.items} onFocus={onFocus} />
+            <Items copy={copy} items={question.items} target={target} />
           ) : (
             <Muted>{text}</Muted>
           )}
@@ -295,7 +307,7 @@ function AnswerCard({
   busy,
   error,
   onUndo,
-  onFocus
+  target
 }: CardProps & { answer: MappingAnswer; onUndo: (answer: MappingAnswer) => void }) {
   const bodyId = useId()
   const decided = optionText(copy.mapping, answer.type, { optionId: answer.optionId, label: '' }, labels)
@@ -313,7 +325,7 @@ function AnswerCard({
       </Disclosure>
       {expanded && (
         <div className="grid gap-2 pb-1 pl-5" id={bodyId}>
-          <Items copy={copy} items={answer.items} onFocus={onFocus} />
+          <Items copy={copy} items={answer.items} target={target} />
           {(answer.decidedBy || answer.decidedAt) && (
             <Muted>
               {[answer.decidedBy, answer.decidedAt.replace('T', ' ').slice(0, 16)].filter(Boolean).join(' · ')}
@@ -356,6 +368,7 @@ function SessionView({
   reload: () => void
   onFocus: (item: MappingItem) => void
 }) {
+  const target: ShowTarget = { app, onFocus }
   const [openCards, setOpenCards] = useState<Record<string, boolean>>({})
   const [pending, setPending] = useState<null | Pending>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -440,11 +453,11 @@ function SessionView({
               key={question.questionId}
               labels={labels}
               onAnswer={answer}
-              onFocus={onFocus}
               onToggle={() => toggle(question.questionId, index === 0)}
               question={question}
               ru={ru}
               sending={pending?.kind === 'answer' && pending.id === question.questionId}
+              target={target}
             />
           ))
         )}
@@ -464,14 +477,47 @@ function SessionView({
               expanded={openCards[entry.answerId] ?? false}
               key={entry.answerId}
               labels={labels}
-              onFocus={onFocus}
               onToggle={() => toggle(entry.answerId, false)}
               onUndo={undo}
               ru={ru}
+              target={target}
             />
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * The DG Revit connector's sign-in state and its start, always shown for a Revit model (D-47): the connector reads the
+ * active model's scope (the selection, else the visible model instances) into a new session.
+ */
+function RevitConnector({
+  copy,
+  signedIn,
+  message,
+  hasSession,
+  busy,
+  onStart
+}: {
+  copy: Copy
+  signedIn: boolean | null
+  message: null | string
+  hasSession: boolean
+  busy: boolean
+  onStart: () => void
+}) {
+  return (
+    <div className="grid gap-1.5" data-testid="degram-mapping-revit-connector">
+      {signedIn === false && <Muted>{copy.mapping.revitSignInFirst}</Muted>}
+      {signedIn === true && <Muted>{copy.mapping.revitSignedIn}</Muted>}
+      {signedIn !== null && message && <Muted>{message}</Muted>}
+      <div>
+        <Button disabled={busy} onClick={onStart} size="sm" variant={hasSession ? 'outline' : 'default'}>
+          {busy ? copy.mapping.starting : hasSession ? copy.mapping.startAgain : copy.mapping.start}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -486,8 +532,42 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
   const [startNote, setStartNote] = useState<null | { text: string; detail?: string; error?: boolean }>(null)
   const [focusError, setFocusError] = useState<null | string>(null)
   const ru = locale.toLowerCase().startsWith('ru')
+  const sessionId = state.session?.sessionId ?? null
 
+  const focusFailed = (error: unknown) =>
+    setFocusError(
+      mappingFailureText(
+        copy,
+        error instanceof MappingRefusal ? { code: error.code, message: error.message } : { code: 'DG_UNAVAILABLE' },
+        { app, project }
+      )
+    )
+
+  /** Show one row in its CAD application: a canvas component, or the elements of a Revit group of this session. */
   const focus = (item: MappingItem) => {
+    if (!itemShowable(app, item)) {
+      return
+    }
+
+    if (app === 'revit') {
+      if (!sessionId) {
+        return
+      }
+
+      setFocusError(null)
+      void showRevitItem(sessionId, item.itemId)
+        .then(result => {
+          if (result.outcome) {
+            setFocusError(mappingFailureText(copy, result.outcome, { app, project }))
+          } else if (!result.found) {
+            setFocusError(copy.mapping.notFoundRevit(item.name))
+          }
+        })
+        .catch(focusFailed)
+
+      return
+    }
+
     if (!item.componentId) {
       return
     }
@@ -496,20 +576,12 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
     void focusComponent(item.componentId)
       .then(result => {
         if (result.outcome) {
-          setFocusError(mappingFailureText(copy, result.outcome, { app: 'grasshopper', project }))
+          setFocusError(mappingFailureText(copy, result.outcome, { app, project }))
         } else if (!result.found) {
           setFocusError(copy.mapping.notFound(item.name))
         }
       })
-      .catch(error =>
-        setFocusError(
-          mappingFailureText(
-            copy,
-            error instanceof MappingRefusal ? { code: error.code, message: error.message } : { code: 'DG_UNAVAILABLE' },
-            { app: 'grasshopper', project }
-          )
-        )
-      )
+      .catch(focusFailed)
   }
 
   const start = async () => {
@@ -517,15 +589,20 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
     setStartNote(null)
 
     try {
-      const result = await startMapping()
+      const result = await startMapping(app)
 
       if (result.outcome) {
         setStartNote({ text: mappingFailureText(copy, result.outcome, { app, project }), error: true })
       } else if (result.started) {
         setStartNote({ text: copy.mapping.started })
-        follow()
+        // Revit reads the model again over an existing session: follow until a new one shows.
+        follow(sessionId)
       } else {
-        setStartNote({ text: copy.mapping.notStarted, detail: result.message ?? undefined, error: true })
+        setStartNote({
+          text: app === 'revit' ? copy.mapping.notStartedRevit : copy.mapping.notStarted,
+          detail: result.message ?? undefined,
+          error: true
+        })
       }
     } catch {
       setStartNote({ text: copy.errors.unknown, error: true })
@@ -558,6 +635,16 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
         </Button>
       </div>
       {state.outcome && <Failure text={mappingFailureText(copy, state.outcome, { app, project })} />}
+      {app === 'revit' && (
+        <RevitConnector
+          busy={starting || following}
+          copy={copy}
+          hasSession={Boolean(state.session)}
+          message={state.connectorMessage}
+          onStart={() => void start()}
+          signedIn={state.signedIn}
+        />
+      )}
       {focusError && <Failure text={focusError} />}
       {state.session ? (
         <SessionView

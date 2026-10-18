@@ -1,11 +1,12 @@
-// mapping-api.ts — the renderer side of `degram.mapping.*` (Phase 1303-10, tui_gateway/contracts/degram.py; DG shapes:
-// 1303-API-CONTRACT.md §3 and §7). DG owns the sessions, proposals and answers; Grasshopper's CONNECTOR owns starting a
-// session and the canvas owns focusing a component. Every answer is normalized here once, so the panel works with the
-// narrow shapes below. A bridge or DG failure comes back as an outcome (`status: error` + `code`); a request DG refuses
-// for what it is (applied session, answer already undone, stale question) is a JSON-RPC error whose `data.code` is DG's
-// code, surfaced as `MappingRefusal`.
+// mapping-api.ts — the renderer side of `degram.mapping.*` (Phase 1303-10, 1303-13; tui_gateway/contracts/degram.py; DG
+// shapes: 1303-API-CONTRACT.md §3, §7 and §8). DG owns the sessions, proposals and answers. Starting a session and
+// showing an item belong to the CAD side: Grasshopper's CONNECTOR and canvas, or the DG Revit connector (`app: 'revit'`:
+// it reads the active model, and selects and zooms a group's elements). Every answer is normalized here once, so the
+// panel works with the narrow shapes below. A bridge or DG failure comes back as an outcome (`status: error` + `code`);
+// a request DG refuses for what it is (applied session, answer already undone, stale question) is a JSON-RPC error whose
+// `data.code` is DG's code, surfaced as `MappingRefusal`.
 
-import { type OutcomeInfo, outcomeOf, request } from './use-degram-gateway'
+import { type BridgeApp, type OutcomeInfo, outcomeOf, request } from './use-degram-gateway'
 
 export const MAPPING_STATES = ['confirmed', 'auto', 'suggested', 'ambiguous', 'unmapped'] as const
 
@@ -96,7 +97,7 @@ export interface MappingSessionsResult {
   document: null | string
   /** Newest first. */
   sessions: MappingSessionRow[]
-  /** Grasshopper only: CONNECTOR is on the canvas and signed in (null when the canvas did not answer). */
+  /** CONNECTOR on the canvas / the DG Revit connector is signed in (null when the connector did not answer). */
   signedIn: boolean | null
   connectorMessage: null | string
 }
@@ -296,7 +297,10 @@ function sessionResult(raw: unknown): SessionResult {
   return { outcome: null, session }
 }
 
-/** The sessions of one document, newest first. For Grasshopper the canvas names the document key first. */
+/**
+ * The sessions of one document, newest first, with the connector's sign-in state. For Grasshopper the canvas names
+ * the document key first; for Revit it is the key of the `.rvt` name.
+ */
 export async function listMappingSessions(app: string, document: string): Promise<MappingSessionsResult> {
   const raw = asRecord(await call('degram.mapping.sessions', { app, document }))
 
@@ -325,18 +329,31 @@ export async function undoMappingAnswer(sessionId: string, answerId: string): Pr
   return sessionResult(await call('degram.mapping.undo', { sessionId, answerId }))
 }
 
-/** `start_mapping` reads the whole canvas and posts it to DG: give it longer than the stock 30 s. */
+/**
+ * A start reads the whole canvas or Revit scope (up to 5000 elements) and posts it to DG, and a Revit show selects up
+ * to 5000 elements: give both longer than the stock 30 s (the backend answers BUSY after 40 s).
+ */
 export const START_RPC_TIMEOUT_MS = 45_000
 
-export async function startMapping(): Promise<{
+export interface StartResult {
   outcome: null | OutcomeInfo
   started: boolean
+  /** Revit only: the session the connector just created. */
+  sessionId: null | string
   message: null | string
-}> {
-  const raw = asRecord(await call('degram.mapping.start', {}, START_RPC_TIMEOUT_MS))
+}
+
+/** Grasshopper keeps its parameterless call; Revit names itself (the connector's `dg_start_mapping`). */
+export async function startMapping(app: BridgeApp = 'grasshopper'): Promise<StartResult> {
+  const raw = asRecord(await call('degram.mapping.start', app === 'revit' ? { app } : {}, START_RPC_TIMEOUT_MS))
   const outcome = outcomeOf(raw)
 
-  return { outcome, started: !outcome && raw?.started === true, message: asString(raw?.message) || null }
+  return {
+    outcome,
+    started: !outcome && raw?.started === true,
+    sessionId: asString(raw?.sessionId) || null,
+    message: asString(raw?.message) || null
+  }
 }
 
 export async function focusComponent(
@@ -346,4 +363,26 @@ export async function focusComponent(
   const outcome = outcomeOf(raw)
 
   return { outcome, found: !outcome && raw?.found === true, name: asString(raw?.name) || null }
+}
+
+export interface RevitShowResult {
+  outcome: null | OutcomeInfo
+  /** At least one element of the group is in the model. */
+  found: boolean
+  shown: number
+  /** UniqueIds the model no longer holds. */
+  missing: string[]
+}
+
+/** Select the elements of one session group in Revit and zoom the active view to them (D-51). */
+export async function showRevitItem(sessionId: string, itemId: string): Promise<RevitShowResult> {
+  const raw = asRecord(await call('degram.mapping.focus', { app: 'revit', sessionId, itemId }, START_RPC_TIMEOUT_MS))
+  const outcome = outcomeOf(raw)
+
+  return {
+    outcome,
+    found: !outcome && raw?.found === true,
+    shown: asCount(raw?.shown),
+    missing: asList(raw?.missing).filter((id): id is string => typeof id === 'string')
+  }
 }

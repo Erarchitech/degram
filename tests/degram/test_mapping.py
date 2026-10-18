@@ -1,17 +1,21 @@
-"""Mapping sub-tab of «Модели» (Phase 1303-10; 1303-API-CONTRACT.md §2, §3, §7).
+"""Mapping sub-tab of «Модели» (Phase 1303-10, 1303-13; 1303-API-CONTRACT.md §2, §3, §7, §8).
 
 The DG mapping routes go to a fake DG backend on loopback HTTP with the delegated token of the bound project; the
-Grasshopper commands go to a fake DG Canvas bridge listener. No Rhino, no DG stack."""
+Grasshopper commands go to a fake DG Canvas bridge listener; the DG Revit connector's tools go to a fake Revit client
+in place of the MCP child. No Rhino, no Revit, no DG stack."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
 import tui_gateway.server as server
 from degram_variant import gh_bridge
 from degram_variant.dg_client import DgRefused
-from degram_variant.mapping import document_key, session_document
+from degram_variant.mapping import MAX_SHOW_ELEMENTS, REVIT_STATUS_DEADLINE_S, document_key, session_document
 from degram_variant.outcomes import BridgeError
+from degram_variant.revit_bridge import RevitBridgeClient
 
 from .conftest import PROJECT, TOKEN
 from .fakes import free_port, gh_error
@@ -242,3 +246,208 @@ class TestRpc:
         for method in ("degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer",
                        "degram.mapping.undo", "degram.mapping.start", "degram.mapping.focus"):
             assert rpc(method, {})["error"]["data"]["code"] == "NOT_DEGRAM", method
+
+    def test_the_mapping_service_calls_the_revit_mcp_child_by_default(self, rt, dg):
+        """Without an injected client the Revit side is the registered MCP tool path; no adapter connected reads as
+        SETUP_INCOMPLETE for a start, and the session list still answers without the connector status."""
+        assert isinstance(rt.mapping._revit, RevitBridgeClient)
+        reply = rpc("degram.mapping.start", {"app": "revit"})["result"]
+        assert (reply["status"], reply["code"], reply["reason"]) == ("error", "SETUP_INCOMPLETE",
+                                                                    "REVIT_ADAPTER_NOT_CONNECTED")
+        dg.routes[BASE] = (200, {"sessions": ROWS})
+        listing = rpc("degram.mapping.sessions", {"document": "Tower Facade.rvt", "app": "revit"})["result"]
+        assert [s["sessionId"] for s in listing["sessions"]] == ["ms-new", "ms-old"]
+        assert not {"connector", "signedIn", "connectorSessionId", "connectorMessage"} & set(listing)
+
+
+# -- Revit (1303-13; contract §8.5, D-47, D-51) ------------------------------------------------------------------
+
+RSID = "ms-rvt000000001"
+REVIT_ROWS = [
+    {"sessionId": "ms-rvt-new", "label": "tower · 11:00:00", "document": "tower", "platform": "revit",
+     "createdAt": "2026-10-18T11:00:00Z", "summary": {"total": 4}},
+    {"sessionId": "ms-annex", "label": "annex · 10:30:00", "document": "annex", "platform": "revit",
+     "createdAt": "2026-10-18T10:30:00Z", "summary": {"total": 1}},
+    *ROWS,
+    {"sessionId": "ms-rvt-old", "label": "tower · 07:00:00", "platform": "revit",  # older row: no document
+     "createdAt": "2026-10-18T07:00:00Z", "summary": {"total": 2}},
+]
+STATUS = {"signedIn": True, "project": PROJECT, "document": "tower", "sessionId": "ms-rvt-new",
+          "connectorMessage": "DG: 2 open questions", "elements": 4}
+REVIT_SESSION = {
+    **SESSION, "sessionId": RSID, "platform": "revit", "label": "tower · 11:00:00", "document": "tower",
+    "elements": [
+        {"nativeId": "uid-1", "groupId": "G-r1", "state": "ambiguous", "roles": []},
+        {"nativeId": "uid-2", "groupId": "G-r1", "state": "ambiguous", "roles": []},
+        {"nativeId": "uid-3", "groupId": "G-r2", "state": "confirmed", "roles": ["ex:GlassPanel"]},
+        {"nativeId": "uid-1", "groupId": "G-r1", "state": "ambiguous", "roles": []},  # repeated row
+        {"groupId": "G-r1", "state": "unmapped", "roles": []},  # no nativeId: nothing to show
+        {"nativeId": "uid-9", "groupId": None, "state": "unmapped", "roles": []},  # in no group
+    ],
+}
+
+
+class FakeRevit:
+    """Stands in for ``RevitBridgeClient``: one handler per connector tool (a dict, a callable or a BridgeError);
+    a tool without a handler is an adapter that is not connected."""
+
+    def __init__(self) -> None:
+        self.handlers: dict[str, Any] = {}
+        self.calls: list[dict[str, Any]] = []
+
+    def call(self, tool: str, arguments: dict[str, Any] | None = None, *, cancel=None,
+             deadline_s: float | None = None) -> dict[str, Any]:
+        self.calls.append({"tool": tool, "arguments": dict(arguments or {}), "deadline_s": deadline_s})
+        handler = self.handlers.get(tool)
+        if handler is None:
+            raise BridgeError("SETUP_INCOMPLETE", "REVIT_ADAPTER_NOT_CONNECTED", "The Revit adapter is not connected.")
+        if isinstance(handler, BridgeError):
+            raise handler
+        return handler(arguments or {}) if callable(handler) else handler
+
+    def tools(self) -> list[str]:
+        return [c["tool"] for c in self.calls]
+
+
+@pytest.fixture
+def revit(rt, monkeypatch):
+    fake = FakeRevit()
+    monkeypatch.setattr(rt.mapping, "_revit", fake)
+    return fake
+
+
+class TestRevitSessions:
+    def test_rows_are_matched_by_the_rvt_document_key_and_carry_the_connector_status(self, rt, dg, gh, revit):
+        dg.routes[BASE] = (200, {"sessions": REVIT_ROWS})
+        revit.handlers["dg_mapping_status"] = STATUS
+        reply = rpc("degram.mapping.sessions", {"document": "Tower.rvt", "app": "revit"})["result"]
+        assert reply["status"] == "ok" and reply["document"] == "tower"
+        assert [s["sessionId"] for s in reply["sessions"]] == ["ms-rvt-new", "ms-rvt-old"], "newest first, old by label"
+        assert (reply["connector"], reply["signedIn"], reply["connectorSessionId"], reply["connectorMessage"]) == (
+            True, True, "ms-rvt-new", "DG: 2 open questions")
+        assert revit.calls == [{"tool": "dg_mapping_status", "arguments": {}, "deadline_s": REVIT_STATUS_DEADLINE_S}]
+        assert gh.commands() == [], "a Revit document never asks the Grasshopper canvas"
+
+    def test_a_connector_that_is_not_signed_in_says_so(self, rt, dg, revit):
+        dg.routes[BASE] = (200, {"sessions": REVIT_ROWS})
+        revit.handlers["dg_mapping_status"] = {"signedIn": False, "document": "tower", "sessionId": "",
+                                               "connectorMessage": ""}
+        reply = rpc("degram.mapping.sessions", {"document": "Tower.rvt", "app": "revit"})["result"]
+        assert (reply["connector"], reply["signedIn"], reply["connectorSessionId"], reply["connectorMessage"]) == (
+            True, False, None, None)
+
+    @pytest.mark.parametrize("code", ["BUSY", "BRIDGE_OFF", "SETUP_INCOMPLETE", "EXTENSION_NOT_LOADED"])
+    def test_a_failing_status_leaves_it_out_and_still_lists_the_sessions(self, rt, dg, revit, code):
+        dg.routes[BASE] = (200, {"sessions": REVIT_ROWS})
+        revit.handlers["dg_mapping_status"] = BridgeError(code, None, "no answer")
+        reply = rpc("degram.mapping.sessions", {"document": "Tower.rvt", "app": "revit"})["result"]
+        assert reply["status"] == "ok"
+        assert [s["sessionId"] for s in reply["sessions"]] == ["ms-rvt-new", "ms-rvt-old"]
+        assert not {"connector", "signedIn", "connectorSessionId", "connectorMessage"} & set(reply)
+
+    def test_a_cancel_during_the_status_ends_the_request(self, rt, dg, revit):
+        dg.routes[BASE] = (200, {"sessions": REVIT_ROWS})
+        revit.handlers["dg_mapping_status"] = BridgeError("CANCELLED", "CANCELLED_BY_USER", "The read was cancelled.")
+        assert rpc("degram.mapping.sessions", {"document": "Tower.rvt", "app": "revit"})["result"]["code"] == "CANCELLED"
+        assert dg.requests == []
+
+    def test_without_a_document_nothing_asks_the_connector(self, rt, dg, revit):
+        dg.routes[BASE] = (200, {"sessions": REVIT_ROWS})
+        assert len(rpc("degram.mapping.sessions", {"app": "revit"})["result"]["sessions"]) == len(REVIT_ROWS)
+        assert revit.calls == []
+
+
+class TestRevitStart:
+    def test_start_calls_dg_start_mapping_and_names_the_new_session(self, rt, gh, revit):
+        revit.handlers["dg_start_mapping"] = {"started": True, "sessionId": "ms-rvt-new",
+                                              "message": "DG mapped 4 elements"}
+        reply = rpc("degram.mapping.start", {"app": "revit"})["result"]
+        assert reply == {"status": "ok", "started": True, "sessionId": "ms-rvt-new", "message": "DG mapped 4 elements"}
+        assert revit.tools() == ["dg_start_mapping"] and revit.calls[0]["arguments"] == {}
+        assert gh.commands() == [], "the canvas is not asked to start"
+
+    def test_a_start_the_connector_declines_carries_its_message(self, rt, revit):
+        revit.handlers["dg_start_mapping"] = {"started": False, "sessionId": None, "message": "DG: sign in first"}
+        assert rpc("degram.mapping.start", {"app": "revit"})["result"] == {
+            "status": "ok", "started": False, "sessionId": None, "message": "DG: sign in first"}
+
+    def test_connector_outcomes_are_named(self, rt, revit):
+        revit.handlers["dg_start_mapping"] = BridgeError("BUSY", "NO_RESPONSE", "Revit did not answer in time.")
+        reply = rpc("degram.mapping.start", {"app": "revit"})["result"]
+        assert (reply["status"], reply["code"], reply["bridgeState"]) == ("error", "BUSY", "busy")
+
+    def test_grasshopper_stays_the_default_and_never_reaches_revit(self, rt, gh, revit):
+        gh.handlers["start_mapping"] = {"started": True, "message": "Reading the canvas"}
+        for params in ({}, {"app": "grasshopper"}):
+            assert rpc("degram.mapping.start", params)["result"] == {
+                "status": "ok", "started": True, "message": "Reading the canvas"}
+        assert revit.calls == [] and gh.commands().count("start_mapping") == 2
+
+
+class TestRevitFocus:
+    def test_a_group_resolves_to_the_unique_ids_of_its_elements_from_the_full_session(self, rt, dg, revit):
+        dg.routes[f"{BASE}/{RSID}"] = (200, REVIT_SESSION)
+        revit.handlers["dg_show_elements"] = lambda a: {"found": len(a["unique_ids"]), "shown": len(a["unique_ids"]),
+                                                        "missing": []}
+        reply = rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-r1"})["result"]
+        assert reply == {"status": "ok", "found": True, "shown": 2, "missing": [], "itemId": "G-r1"}
+        assert revit.calls[0]["tool"] == "dg_show_elements"
+        assert revit.calls[0]["arguments"] == {"unique_ids": ["uid-1", "uid-2"]}, "group members, in order, no repeats"
+        (req,) = dg.requests
+        assert req["path"] == f"{BASE}/{RSID}?project={PROJECT}" and req["headers"]["Authorization"] == f"Bearer {TOKEN}"
+
+    def test_elements_the_model_no_longer_holds_are_reported(self, rt, dg, revit):
+        dg.routes[f"{BASE}/{RSID}"] = (200, REVIT_SESSION)
+        revit.handlers["dg_show_elements"] = {"found": 1, "shown": 1, "missing": ["uid-2"]}
+        reply = rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-r1"})["result"]
+        assert (reply["found"], reply["shown"], reply["missing"]) == (True, 1, ["uid-2"])
+        revit.handlers["dg_show_elements"] = {"found": 0, "shown": 0, "missing": ["uid-1", "uid-2"]}
+        reply = rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-r1"})["result"]
+        assert (reply["found"], reply["shown"], reply["missing"]) == (False, 0, ["uid-1", "uid-2"])
+
+    def test_a_group_without_elements_is_not_found_and_revit_is_not_asked(self, rt, dg, revit):
+        dg.routes[f"{BASE}/{RSID}"] = (200, REVIT_SESSION)
+        reply = rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-none"})["result"]
+        assert reply == {"status": "ok", "found": False, "shown": 0, "missing": [], "itemId": "G-none"}
+        assert revit.calls == []
+
+    def test_a_group_larger_than_the_connector_limit_is_capped(self, rt, dg, revit):
+        big = [{"nativeId": f"uid-{i:05d}", "groupId": "G-big"} for i in range(MAX_SHOW_ELEMENTS + 3)]
+        dg.routes[f"{BASE}/{RSID}"] = (200, {**REVIT_SESSION, "elements": big})
+        revit.handlers["dg_show_elements"] = {"found": MAX_SHOW_ELEMENTS, "shown": MAX_SHOW_ELEMENTS, "missing": []}
+        rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-big"})
+        sent = revit.calls[0]["arguments"]["unique_ids"]
+        assert sent == [e["nativeId"] for e in big[:MAX_SHOW_ELEMENTS]]
+
+    def test_an_unknown_session_is_dg_s_refusal_and_revit_is_not_asked(self, rt, dg, revit):
+        dg.routes[f"{BASE}/{RSID}"] = (404, refusal("MAPPING_SESSION_NOT_FOUND", "no such session"))
+        reply = rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-r1"})
+        assert reply["error"]["code"] == 4404 and reply["error"]["data"]["code"] == "MAPPING_SESSION_NOT_FOUND"
+        assert revit.calls == []
+
+    def test_connector_outcomes_are_named(self, rt, dg, revit):
+        dg.routes[f"{BASE}/{RSID}"] = (200, REVIT_SESSION)
+        revit.handlers["dg_show_elements"] = BridgeError("BRIDGE_OFF", None, "Revit is not running.")
+        reply = rpc("degram.mapping.focus", {"app": "revit", "sessionId": RSID, "itemId": "G-r1"})["result"]
+        assert (reply["status"], reply["code"], reply["bridgeState"]) == ("error", "BRIDGE_OFF", "off")
+
+    @pytest.mark.parametrize("params", [{"app": "revit"}, {"app": "revit", "sessionId": RSID},
+                                        {"app": "revit", "itemId": "G-r1"}, {"app": "revit", "componentId": COMPONENT},
+                                        {"app": "revit", "sessionId": "", "itemId": "G-r1"},
+                                        {"app": "revit", "sessionId": RSID, "itemId": 7}])
+    def test_revit_needs_a_session_and_an_item_before_dg_or_revit(self, rt, dg, revit, params):
+        assert rpc("degram.mapping.focus", params)["error"]["data"]["code"] == "BAD_REQUEST"
+        assert dg.requests == [] and revit.calls == []
+
+    def test_grasshopper_focus_is_unchanged_and_never_reaches_revit(self, rt, gh, revit):
+        gh.handlers["focus_component"] = lambda p: {"found": True, "name": "Panels A"}
+        reply = rpc("degram.mapping.focus", {"app": "grasshopper", "componentId": COMPONENT})["result"]
+        assert reply == {"status": "ok", "found": True, "componentId": COMPONENT, "name": "Panels A"}
+        bad = rpc("degram.mapping.focus", {"app": "grasshopper", "sessionId": RSID, "itemId": "G-r1"})
+        assert bad["error"]["data"]["code"] == "BAD_REQUEST", "grasshopper still needs a component id"
+        assert revit.calls == []
+
+    @pytest.mark.parametrize("method", ["degram.mapping.start", "degram.mapping.focus"])
+    def test_an_unknown_application_is_a_bad_request(self, rt, gh, revit, method):
+        assert rpc(method, {"app": "autocad"})["error"]["data"]["code"] == "BAD_REQUEST"
+        assert revit.calls == [] and gh.commands() == []

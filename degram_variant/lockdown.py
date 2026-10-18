@@ -35,24 +35,38 @@ class DegramLockedError(Exception):
 
 # ── tools (D-22) ─────────────────────────────────────────────────────────────────────────────
 
-# The degram toolset names are reserved here and registered by plan 11; the eight read tools of the
-# pinned revit-mcp server come from plan 07. ``todo_list`` is the registered name of the ``todo`` toolset.
+# The degram toolset names are reserved here and registered by plan 11. ``todo_list`` is the registered
+# name of the ``todo`` toolset.
 DEGRAM_TOOL_NAMES = frozenset({
     "degram_project_graph", "degram_document_snapshot", "degram_list_documents", "degram_bridge_status"})
-REVIT_TOOL_NAMES = frozenset({
+# Revit is not an allowlist any more (D-45, owner decision 2026-10-18): DeGram runs the DG Revit connector,
+# which registers every upstream tool, writes included (parameter edits, element creation and deletion,
+# colour overrides, code execution). The rule is the server prefix; the 1301 read list below stays as the
+# documented subset DeGram's own reads were built and tested against, and as the historic name other modules
+# import.
+REVIT_SERVER = "revit"
+REVIT_TOOL_PREFIX = f"mcp__{REVIT_SERVER}__"
+REVIT_TOOL_READ_NAMES = frozenset({
     "mcp__revit__get_revit_status", "mcp__revit__get_revit_model_info", "mcp__revit__list_open_documents",
     "mcp__revit__get_selection_snapshot", "mcp__revit__get_element_properties", "mcp__revit__list_levels",
     "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})
+REVIT_TOOL_NAMES = REVIT_TOOL_READ_NAMES
 ALLOWED_TOOL_NAMES = frozenset({"clarify", "todo_list"}) | DEGRAM_TOOL_NAMES | REVIT_TOOL_NAMES
 ALLOWED_TOOLSETS = ("clarify", "todo", "degram", "mcp-revit")
-ALLOWED_MCP_SERVERS = frozenset({"revit"})
+ALLOWED_MCP_SERVERS = frozenset({REVIT_SERVER})
 # Built-in tool modules that may be imported at all in variant degram (``tools.degram*`` is plan 11's).
 ALLOWED_TOOL_MODULES = frozenset({"tools.clarify_tool", "tools.todo_tool"})
 
 
+def revit_tool_allowed(name: str) -> bool:
+    """D-45: every tool of the configured DG Revit connector, writes included. The prefix is the whole rule —
+    the connector registers its own tool set, so a new upstream tool needs no change here."""
+    return isinstance(name, str) and name.startswith(REVIT_TOOL_PREFIX) and len(name) > len(REVIT_TOOL_PREFIX)
+
+
 def tool_name_allowed(name: str) -> bool:
     """Registry gate (``ToolRegistry.register``): outside variant degram everything registers."""
-    return not is_degram() or name in ALLOWED_TOOL_NAMES
+    return not is_degram() or name in ALLOWED_TOOL_NAMES or revit_tool_allowed(name)
 
 
 def tool_module_allowed(module_name: str) -> bool:
