@@ -1,4 +1,5 @@
-"""Contracts: variant degram credential handoff (Phase 1301 plan 10, D-06).
+"""Contracts: variant degram credential handoff (Phase 1301 plan 10, D-06), CAD reads (plan 11) and the Mapping
+sub-tab (Phase 1303-10).
 
 Handlers: ``tui_gateway/methods_degram.py``. The delegated token travels only in
 ``degram.credentials.set`` (Electron main -> loopback gateway), is held in process memory and is
@@ -143,3 +144,75 @@ method("degram.context.send", params=DegramContextSendParams, result=DegramConte
        doc="Submit a turn whose message embeds the previewed payload byte for byte. Whole-definition needs consent true.")
 method("degram.context.cancel", params=DegramContextCancelParams, result=DegramContextCancelResult,
        doc="Abort the in-flight bridge read of a preview (or every read); the preview resolves with CANCELLED.")
+
+
+# -- Mapping sub-tab of «Модели» (Phase 1303-10, 1303-API-CONTRACT.md §2, §3, §7) ---------------------
+# Sessions, answers and undo go to DG with the delegated token of the bound project; start and focus go to the
+# Grasshopper canvas bridge. A request DG refuses for what it is (HTTP 400/404/409) is a JSON-RPC error whose
+# data.code is DG's code (MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND, ...) and data.status the HTTP status.
+
+
+class DegramMappingSessionsParams(Params):
+    document: str | None = None  # a document name (file name); null lists every session of the project
+    app: str | None = None  # grasshopper: the canvas names the document key first (get_mapping_status)
+
+
+class DegramMappingSessionsResult(DegramOutcomeFields):
+    document: str | None = None  # the document key the rows were matched by
+    sessions: JsonValue = None  # [{sessionId, label, document, platform, createdAt, summary, appliedAt?}], newest first
+    connector: bool | None = None  # grasshopper only: a CONNECTOR is on the canvas
+    signedIn: bool | None = None  # grasshopper only: CONNECTOR is signed in (a start can work)
+    connectorSessionId: str | None = None
+    connectorMessage: str | None = None
+
+
+class DegramMappingSessionParams(Params):
+    sessionId: str
+
+
+class DegramMappingSessionResult(DegramOutcomeFields):
+    session: JsonValue = None  # the MappingSession without elements, groups, parameters and measures
+
+
+class DegramMappingAnswerParams(Params):
+    sessionId: str
+    questionId: str
+    optionId: str
+    groupIds: list[str] | None = None  # batch-assign: the subset of groups to accept
+
+
+class DegramMappingUndoParams(Params):
+    sessionId: str
+    answerId: str
+
+
+class DegramMappingStartResult(DegramOutcomeFields):
+    started: bool | None = None
+
+
+class DegramMappingFocusParams(Params):
+    componentId: str  # the Grasshopper InstanceGuid of the item (32 hex)
+
+
+class DegramMappingFocusResult(DegramOutcomeFields):
+    found: bool | None = None
+    componentId: str | None = None
+    name: str | None = None
+
+
+method("degram.mapping.sessions", params=DegramMappingSessionsParams, result=DegramMappingSessionsResult,
+       doc="Mapping sessions of the bound project, newest first; only those of one document when document is given. "
+           "Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING.")
+method("degram.mapping.session", params=DegramMappingSessionParams, result=DegramMappingSessionResult,
+       doc="One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND.")
+method("degram.mapping.answer", params=DegramMappingAnswerParams, result=DegramMappingSessionResult,
+       doc="Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, "
+           "MAPPING_OPTION_INVALID.")
+method("degram.mapping.undo", params=DegramMappingUndoParams, result=DegramMappingSessionResult,
+       doc="Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, "
+           "MAPPING_ANSWER_NOT_FOUND.")
+method("degram.mapping.start", params=Params, result=DegramMappingStartResult,
+       doc="CONNECTOR reads the Grasshopper canvas and creates a mapping session now (bridge start_mapping). "
+           "Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED.")
+method("degram.mapping.focus", params=DegramMappingFocusParams, result=DegramMappingFocusResult,
+       doc="Bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component).")

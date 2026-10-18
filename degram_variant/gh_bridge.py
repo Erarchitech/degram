@@ -1,14 +1,19 @@
-"""Loopback client for the DG Canvas bridge (Grasshopper), limited to read commands (1301 D-13..D-15, plan 11).
+"""Loopback client for the DG Canvas bridge (Grasshopper) (1301 D-13..D-15, plan 11; 1303-10).
 
 Wire contract (``DG/src/DG.Core/Bridge/CanvasBridgeProtocol.cs``): one newline-terminated UTF-8 JSON request
 ``{"type": ..., "parameters": {...}}``, one newline-terminated JSON envelope
 ``{"bridge": "dg", "version": 1, "status": "ok" | "error", "result" | "error": {...}}``.
 
 This is the DeGram twin of ``data-service/gh_bridge.py`` and shares nothing with it: the host is the constant
-``127.0.0.1`` (D-15, T-1301-11-06: no environment variable, no parameter, no ``host.docker.internal``), only the four
-commands of ``CanvasBridgeCommands.ReadCommands`` can be sent (T-1301-11-01), the response is capped by a *byte*
-count, and every wait polls a cancel token so a read can be abandoned within a second (D-18). A failed read is
-reported once with its named outcome and is never retried.
+``127.0.0.1`` (D-15, T-1301-11-06: no environment variable, no parameter, no ``host.docker.internal``), only the
+commands of ``CanvasBridgeCommands.All`` can be sent (T-1301-11-01), the response is capped by a *byte* count, and
+every wait polls a cancel token so a call can be abandoned within a second (D-18). A failed call is reported once
+with its named outcome and is never retried.
+
+Owner decision 2026-10-18 (Phase 1303-10) gives DeGram full access to the Grasshopper canvas bridge: every command
+of ``CanvasBridgeCommands.All``, including the mutating preview commands and the mapping commands
+(``focus_component``, ``start_mapping``, ``get_mapping_status``). It replaces the read-only allowlist of 1301 D-15.
+The context composer still sends only ``GH_READ_COMMANDS``: a context read never changes the canvas.
 """
 
 from __future__ import annotations
@@ -34,8 +39,12 @@ from .snapshot import Snapshot
 GH_HOST = "127.0.0.1"  # constant on purpose
 GH_PORT = 8720
 GH_APP = "grasshopper"
-# Mirror of CanvasBridgeCommands.ReadCommands (the Python side cannot import the C# constant).
+# Mirrors of CanvasBridgeCommands.ReadCommands and CanvasBridgeCommands.All (the Python side cannot import the C#
+# constants). GH_COMMANDS is the client allowlist (owner decision 2026-10-18, Phase 1303-10); GH_READ_COMMANDS is what
+# the context reads use.
 GH_READ_COMMANDS = frozenset({"get_canvas_context", "get_selection", "get_preview_status", "get_document_identity"})
+GH_COMMANDS = GH_READ_COMMANDS | frozenset({
+    "preview_structure", "clear_preview", "focus_component", "start_mapping", "get_mapping_status"})
 CONNECT_TIMEOUT_S = 2.0
 READ_TIMEOUT_S = 30.0  # agent/tool reads
 # The context PREVIEW read (1301-19, G-14): one budget for the whole snapshot (identity + selection + canvas context),
@@ -48,7 +57,7 @@ _monotonic = time.monotonic  # patched by tests to simulate a listener that neve
 
 
 class GhBridgeClient:
-    """One request per connection, read commands only."""
+    """One request per connection, ``GH_COMMANDS`` only."""
 
     def __init__(self, port: int | None = None) -> None:
         self._port = port
@@ -58,9 +67,9 @@ class GhBridgeClient:
 
     def call(self, command: str, parameters: dict | None = None, *, cancel: CancelToken | None = None,
              read_timeout_s: float | None = None) -> Any:
-        if command not in GH_READ_COMMANDS:  # raises before any connection is opened
+        if command not in GH_COMMANDS:  # raises before any connection is opened
             raise BridgeError(DEGRAM_LOCKED, "GH_COMMAND_NOT_ALLOWED",
-                              f"Grasshopper bridge command {command!r} is not a read command.")
+                              f"Grasshopper bridge command {command!r} is not a DG canvas bridge command.")
         check(cancel)
         sock = self._connect()
         try:

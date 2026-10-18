@@ -1,4 +1,5 @@
-"""The process-wide read-capability state of variant degram: bridges, pinned document, previews, in-flight reads.
+"""The process-wide capability state of variant degram: bridges, pinned document, previews, in-flight reads and the
+mapping sessions of the bound project (Phase 1303-10).
 
 One DeGram gateway process serves one user, company and project at a time (D-19), so one runtime is enough. Tests
 build a fresh one with :func:`reset`; a scope change or sign-out clears it in place with :func:`reset_scope`."""
@@ -17,8 +18,10 @@ from .documents import DocumentsService
 class Runtime:
     def __init__(self) -> None:
         from .gh_bridge import GhDocumentSource
+        from .mapping import MappingService
 
-        sources = {"grasshopper": GhDocumentSource()}
+        gh = GhDocumentSource()
+        sources = {"grasshopper": gh}
         try:  # the Revit adapter is an MCP stdio child; its client is optional in a stripped component
             from .revit_bridge import RevitDocumentSource
             sources["revit"] = RevitDocumentSource()
@@ -28,6 +31,7 @@ class Runtime:
         self.documents = DocumentsService(sources)
         self.dg = DgClient()
         self.composer = ContextComposer(self.documents, self.dg, self.cancels)
+        self.mapping = MappingService(self.dg, gh.client)
 
 
 _lock = threading.Lock()

@@ -925,6 +925,114 @@
       }
     },
     {
+      "name": "degram.mapping.answer",
+      "summary": "Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAnswerParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.focus",
+      "summary": "Bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component).",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingFocusParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingFocusResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.session",
+      "summary": "One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingSessionParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.sessions",
+      "summary": "Mapping sessions of the bound project, newest first; only those of one document when document is given. Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingSessionsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionsResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.start",
+      "summary": "CONNECTOR reads the Grasshopper canvas and creates a mapping session now (bridge start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/Params"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingStartResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.undo",
+      "summary": "Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingUndoParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionResult"
+        }
+      }
+    },
+    {
       "name": "delegation.pause",
       "summary": "Block/unblock NEW spawns globally (active children keep running); returns the new state.",
       "params": [
@@ -13114,6 +13222,487 @@
           "status"
         ],
         "title": "DegramDocumentsUnpinResult",
+        "type": "object"
+      },
+      "DegramMappingAnswerParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "questionId": {
+            "title": "Questionid",
+            "type": "string"
+          },
+          "optionId": {
+            "title": "Optionid",
+            "type": "string"
+          },
+          "groupIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Groupids"
+          }
+        },
+        "required": [
+          "sessionId",
+          "questionId",
+          "optionId"
+        ],
+        "title": "DegramMappingAnswerParams",
+        "type": "object"
+      },
+      "DegramMappingFocusParams": {
+        "additionalProperties": false,
+        "properties": {
+          "componentId": {
+            "title": "Componentid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "componentId"
+        ],
+        "title": "DegramMappingFocusParams",
+        "type": "object"
+      },
+      "DegramMappingFocusResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "found": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Found"
+          },
+          "componentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Componentid"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingFocusResult",
+        "type": "object"
+      },
+      "DegramMappingSessionParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "title": "DegramMappingSessionParams",
+        "type": "object"
+      },
+      "DegramMappingSessionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "session": {
+            "default": null,
+            "title": "Session"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingSessionResult",
+        "type": "object"
+      },
+      "DegramMappingSessionsParams": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document"
+          },
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          }
+        },
+        "title": "DegramMappingSessionsParams",
+        "type": "object"
+      },
+      "DegramMappingSessionsResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document"
+          },
+          "sessions": {
+            "default": null,
+            "title": "Sessions"
+          },
+          "connector": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Connector"
+          },
+          "signedIn": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Signedin"
+          },
+          "connectorSessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Connectorsessionid"
+          },
+          "connectorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Connectormessage"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingSessionsResult",
+        "type": "object"
+      },
+      "DegramMappingStartResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Started"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingStartResult",
+        "type": "object"
+      },
+      "DegramMappingUndoParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "answerId": {
+            "title": "Answerid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "answerId"
+        ],
+        "title": "DegramMappingUndoParams",
         "type": "object"
       },
       "DelegationPauseParams": {

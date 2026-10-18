@@ -1,5 +1,7 @@
 """GH bridge client and GH documents (plan 1301-11 task 1; D-13, D-15, T-1301-11-01/-02/-06).
 
+The client allowlist is every command of ``CanvasBridgeCommands.All`` since the owner decision of 2026-10-18 (Phase
+1303-10: DeGram has full access to the Grasshopper canvas bridge); before it the client was limited to the four reads.
 Everything runs against a fake newline-JSON listener on loopback. No Rhino, no Grasshopper."""
 
 from __future__ import annotations
@@ -10,20 +12,28 @@ from pathlib import Path
 import pytest
 
 from degram_variant import gh_bridge
-from degram_variant.gh_bridge import GH_READ_COMMANDS, GhBridgeClient
+from degram_variant.gh_bridge import GH_COMMANDS, GH_READ_COMMANDS, GhBridgeClient
 from degram_variant.outcomes import BridgeError
 
 from .conftest import GH_PIN
 from .fakes import FakeGh, Raw, gh_error, gh_identity, free_port
 
 
-class TestReadOnlyClient:
-    def test_read_commands_are_exactly_the_four_reads(self):
-        assert GH_READ_COMMANDS == frozenset(
-            {"get_canvas_context", "get_selection", "get_preview_status", "get_document_identity"})
+class TestClientAllowlist:
+    def test_the_allowlist_is_every_canvas_bridge_command_and_the_reads_are_a_subset(self):
+        """Owner decision 2026-10-18, Phase 1303-10: CanvasBridgeCommands.All, the mapping commands included."""
+        assert GH_READ_COMMANDS < GH_COMMANDS
+        assert {"preview_structure", "clear_preview", "focus_component", "start_mapping",
+                "get_mapping_status"} <= GH_COMMANDS
 
-    @pytest.mark.parametrize("command", ["preview_structure", "clear_preview", "add_component", "connect_components",
-                                         "", "GET_SELECTION", "get_selection ", "set_parameter"])
+    @pytest.mark.parametrize("command", ["focus_component", "start_mapping", "get_mapping_status", "clear_preview"])
+    def test_the_mapping_and_preview_commands_reach_the_bridge(self, gh, command):
+        gh.handlers[command] = {"ok": command}
+        assert GhBridgeClient(port=gh.port).call(command, {}) == {"ok": command}
+        assert gh.commands() == [command]
+
+    @pytest.mark.parametrize("command", ["add_component", "connect_components", "", "GET_SELECTION",
+                                         "get_selection ", "set_parameter", "Start_Mapping"])
     def test_any_other_command_raises_before_connecting(self, gh, command):
         client = GhBridgeClient(port=gh.port)
         with pytest.raises(BridgeError) as exc:

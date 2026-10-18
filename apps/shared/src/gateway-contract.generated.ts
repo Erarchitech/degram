@@ -1345,6 +1345,65 @@ export interface DegramContextCancelResult {
   bridgeState?: string | null
   cancelled?: number
 }
+export interface DegramMappingSessionsParams {
+  document?: string | null
+  app?: string | null
+}
+export interface DegramMappingSessionsResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  document?: string | null
+  sessions?: unknown
+  connector?: boolean | null
+  signedIn?: boolean | null
+  connectorSessionId?: string | null
+  connectorMessage?: string | null
+}
+export interface DegramMappingSessionParams {
+  sessionId: string
+}
+export interface DegramMappingSessionResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  session?: unknown
+}
+export interface DegramMappingAnswerParams {
+  sessionId: string
+  questionId: string
+  optionId: string
+  groupIds?: string[] | null
+}
+export interface DegramMappingUndoParams {
+  sessionId: string
+  answerId: string
+}
+export interface DegramMappingStartResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  started?: boolean | null
+}
+export interface DegramMappingFocusParams {
+  componentId: string
+}
+export interface DegramMappingFocusResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  found?: boolean | null
+  componentId?: string | null
+  name?: string | null
+}
 /** ``tools/bot_desktop/runtime.py::DesktopStatus`` plus the lease and the profile it speaks for. */
 export interface DisplayStatus {
   profile: string
@@ -5091,6 +5150,18 @@ export interface RpcMethods {
   'degram.documents.pin': { params: DegramDocumentsPinParams; result: DegramDocumentsPinResult }
   /** Forget the pinned document of one bridge (app) or of every bridge (app null); nothing else changes. */
   'degram.documents.unpin': { params: DegramDocumentsUnpinParams; result: DegramDocumentsUnpinResult }
+  /** Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID. */
+  'degram.mapping.answer': { params: DegramMappingAnswerParams; result: DegramMappingSessionResult }
+  /** Bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component). */
+  'degram.mapping.focus': { params: DegramMappingFocusParams; result: DegramMappingFocusResult }
+  /** One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND. */
+  'degram.mapping.session': { params: DegramMappingSessionParams; result: DegramMappingSessionResult }
+  /** Mapping sessions of the bound project, newest first; only those of one document when document is given. Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING. */
+  'degram.mapping.sessions': { params: DegramMappingSessionsParams; result: DegramMappingSessionsResult }
+  /** CONNECTOR reads the Grasshopper canvas and creates a mapping session now (bridge start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED. */
+  'degram.mapping.start': { params: Params; result: DegramMappingStartResult }
+  /** Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND. */
+  'degram.mapping.undo': { params: DegramMappingUndoParams; result: DegramMappingSessionResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */
   'delegation.pause': { params: DelegationPauseParams; result: DelegationPauseResult }
   /** Running subagent tree plus the spawn pause flag and limits. */
@@ -5563,6 +5634,12 @@ export const RPC_METHODS = [
   'degram.documents.list',
   'degram.documents.pin',
   'degram.documents.unpin',
+  'degram.mapping.answer',
+  'degram.mapping.focus',
+  'degram.mapping.session',
+  'degram.mapping.sessions',
+  'degram.mapping.start',
+  'degram.mapping.undo',
   'delegation.pause',
   'delegation.status',
   'diagnostics.share_nous',

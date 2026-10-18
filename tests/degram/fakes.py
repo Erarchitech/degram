@@ -138,11 +138,12 @@ class FakeGh:
 
 
 class FakeDg:
-    """A loopback DG backend. ``routes`` maps a path (query string ignored) to ``(status, body)``; records every
-    request with its full path, query included."""
+    """A loopback DG backend. ``routes`` maps a path (query string ignored), or ``"POST <path>"`` for a POST only, to
+    ``(status, body)`` or to a callable ``(request) -> (status, body)``; records every request with its full path,
+    query included, and the parsed JSON body of a POST."""
 
-    def __init__(self, routes: dict[str, tuple[int, Any]] | None = None):
-        self.routes: dict[str, tuple[int, Any]] = dict(routes or {})
+    def __init__(self, routes: dict[str, Any] | None = None):
+        self.routes: dict[str, Any] = dict(routes or {})
         self.requests: list[dict] = []
         dg = self
 
@@ -150,9 +151,22 @@ class FakeDg:
             def log_message(self, *_a):
                 pass
 
+            def do_POST(self):
+                n = int(self.headers.get("content-length", 0))
+                raw = self.rfile.read(n) if n else b""
+                self._answer({"method": "POST", "path": self.path, "headers": dict(self.headers),
+                              "body": json.loads(raw) if raw else None})
+
             def do_GET(self):
-                dg.requests.append({"method": "GET", "path": self.path, "headers": dict(self.headers)})
-                status, body = dg.routes.get(self.path.split("?", 1)[0], (404, {"detail": {"code": "NOT_FOUND"}}))
+                self._answer({"method": "GET", "path": self.path, "headers": dict(self.headers)})
+
+            def _answer(self, request):
+                dg.requests.append(request)
+                path = self.path.split("?", 1)[0]
+                route = dg.routes.get(f"{request['method']} {path}", dg.routes.get(path))
+                if callable(route):
+                    route = route(request)
+                status, body = route or (404, {"detail": {"code": "NOT_FOUND"}})
                 payload = json.dumps(body).encode()
                 self.send_response(status)
                 self.send_header("content-type", "application/json")

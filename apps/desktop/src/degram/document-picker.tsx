@@ -8,8 +8,9 @@
 // spinner and «Проверка» while the other groups stay selectable; an off, busy or setup-incomplete bridge is one
 // neutral notice row with its diagnostic. Nothing is pinned implicitly: a single open document still needs a click.
 // An unsaved document reads «Не сохранён» in place of its path, and one without an identity is listed disabled.
+// Under each document row sits its «Mapping» sub-tab (mapping-panel.tsx, Phase 1303-10), collapsed by default.
 
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 
 import { StatusDot } from '@/components/status-dot'
 import { Button } from '@/components/ui/button'
@@ -21,6 +22,7 @@ import { useI18n } from '@/i18n'
 
 import { bridgeView } from './bridge-status'
 import { type AppEntry, pinRow, refreshDocuments, unpin, useDocuments } from './documents-store'
+import { MappingSubtab } from './mapping-panel'
 import { BRIDGE_APPS, type BridgeApp, type DocumentRow } from './use-degram-gateway'
 
 /** Above this many rows the list gets a search field (UI-SPEC zero-one-many). */
@@ -69,6 +71,10 @@ const identityValue = (row: Pick<DocumentRow, 'app' | 'identity'>): string | und
 
 /** A row can be pinned only with the identity its bridge pins by (GH documentId, Revit creationGuid). */
 export const hasIdentity = (row: Pick<DocumentRow, 'app' | 'identity'>): boolean => identityValue(row) !== undefined
+
+/** The file name a mapping session is keyed by: the path's last segment, else the document's display name. */
+export const mappingDocumentName = (row: Pick<DocumentRow, 'name' | 'path'>): string =>
+  row.path?.split(/[\\/]/).filter(Boolean).pop() ?? row.name
 
 function Notice({ children }: { children: ReactNode }) {
   return (
@@ -124,32 +130,36 @@ export function GroupBody({ app, entry }: { app: BridgeApp; entry: AppEntry }) {
             ? copy.document.unsaved
             : middleEllipsize(row.path)
 
+        const key = `${row.app}:${id ?? row.name}:${row.path ?? ''}`
+
         return (
-          <CommandItem
-            className="items-start"
-            data-pinned={row.pinned ? 'true' : undefined}
-            disabled={!identified}
-            key={`${row.app}:${id ?? row.name}:${row.path ?? ''}`}
-            onSelect={() => void pinRow(row)}
-            value={`${row.app} ${row.name} ${row.path ?? ''}`}
-          >
-            <span
-              aria-current={row.pinned ? 'true' : undefined}
-              aria-hidden
-              className={`mt-1.5 size-1.5 shrink-0 rounded-full ${row.pinned ? 'bg-ring' : 'bg-transparent'}`}
-            />
-            <span className="grid min-w-0 flex-1 gap-0.5">
-              <OverflowTip label={row.name}>
-                <span className="min-w-0 truncate text-[0.8125rem] leading-[1.4]">{row.name}</span>
-              </OverflowTip>
-              <OverflowTip label={row.path ?? second}>
-                <span className="min-w-0 truncate font-mono text-[0.6875rem] leading-[1.45] text-muted-foreground">
-                  {second}
-                  {identified && id && !row.unsaved && row.path ? ` · ${id.slice(0, 8)}` : ''}
-                </span>
-              </OverflowTip>
-            </span>
-          </CommandItem>
+          <Fragment key={key}>
+            <CommandItem
+              className="items-start"
+              data-pinned={row.pinned ? 'true' : undefined}
+              disabled={!identified}
+              onSelect={() => void pinRow(row)}
+              value={`${row.app} ${row.name} ${row.path ?? ''}`}
+            >
+              <span
+                aria-current={row.pinned ? 'true' : undefined}
+                aria-hidden
+                className={`mt-1.5 size-1.5 shrink-0 rounded-full ${row.pinned ? 'bg-ring' : 'bg-transparent'}`}
+              />
+              <span className="grid min-w-0 flex-1 gap-0.5">
+                <OverflowTip label={row.name}>
+                  <span className="min-w-0 truncate text-[0.8125rem] leading-[1.4]">{row.name}</span>
+                </OverflowTip>
+                <OverflowTip label={row.path ?? second}>
+                  <span className="min-w-0 truncate font-mono text-[0.6875rem] leading-[1.45] text-muted-foreground">
+                    {second}
+                    {identified && id && !row.unsaved && row.path ? ` · ${id.slice(0, 8)}` : ''}
+                  </span>
+                </OverflowTip>
+              </span>
+            </CommandItem>
+            <MappingSubtab app={row.app} document={mappingDocumentName(row)} />
+          </Fragment>
         )
       })}
     </>

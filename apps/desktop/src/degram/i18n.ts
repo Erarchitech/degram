@@ -89,6 +89,71 @@ export interface DegramCopy {
   }
   /** The «Модели» screen (D-43). */
   models: { title: string }
+  /** The Mapping sub-tab under each document of «Модели» (Phase 1303-10). Class and property names stay data. */
+  mapping: {
+    tab: string
+    reading: string
+    refresh: string
+    progressLabel: string
+    states: { confirmed: string; auto: string; suggested: string; ambiguous: string; unmapped: string }
+    total: (count: Count) => string
+    openQuestions: (count: Count) => string
+    llmPending: string
+    proposals: string
+    noProposals: string
+    waitingApply: string
+    applied: string
+    answers: string
+    /** Item rows in a proposal header (ru: 1 компонент / 2 компонента / 5 компонентов). */
+    components: (count: number) => string
+    /** The question types of the contract (§3, §7). */
+    types: {
+      batchAssign: string
+      assign: string
+      disambiguate: string
+      mappingOrDesign: string
+      batchParameters: string
+      batchMeasures: string
+      mapMeasure: string
+    }
+    kinds: { stream: string; measure: string; parameter: string }
+    noProposal: string
+    alternatives: (labels: string) => string
+    elements: (count: number) => string
+    values: (count: number) => string
+    options: {
+      acceptAll: string
+      none: string
+      notProperty: string
+      both: string
+      designError: (label: string) => string
+    }
+    details: string
+    undo: string
+    undoUnavailable: string
+    sending: string
+    undone: string
+    noSession: string
+    noSessionRevit: string
+    start: string
+    starting: string
+    started: string
+    notStarted: string
+    signInFirst: string
+    /** Accessible name of an item chip: a click shows the component on the canvas. */
+    focus: (name: string) => string
+    noComponent: string
+    notFound: (name: string) => string
+    /** A request DG refused for what it is (data.code of the JSON-RPC error). */
+    refused: {
+      sessionApplied: string
+      answerGone: string
+      questionGone: string
+      optionInvalid: string
+      sessionGone: string
+      generic: (message: string) => string
+    }
+  }
   sessions: { empty: string }
   errors: {
     dgUnreachable: string
@@ -235,6 +300,73 @@ export const degramEn: DegramCopy = {
     excluded: (document, reason) => `${document}: not included — ${reason}`
   },
   models: { title: 'Models' },
+  mapping: {
+    tab: 'Mapping',
+    reading: 'Reading the mapping',
+    refresh: 'Refresh the mapping',
+    progressLabel: 'Mapping progress',
+    states: {
+      confirmed: 'Confirmed',
+      auto: 'Auto by profile',
+      suggested: 'Suggested',
+      ambiguous: 'Ambiguous',
+      unmapped: 'Unmapped'
+    },
+    total: n => `Total: ${n}`,
+    openQuestions: n => `Open proposals: ${n}`,
+    llmPending: 'The LLM proposal is still being prepared; this view updates on its own.',
+    proposals: 'Proposals',
+    noProposals: 'No open proposals.',
+    waitingApply:
+      'All proposals are answered. CONNECTOR applies the mapping in about 10 s; until then a decision can be undone.',
+    applied: 'The session is applied.',
+    answers: 'Decisions made',
+    components: n => `${n} ${n === 1 ? 'component' : 'components'}`,
+    types: {
+      batchAssign: 'Accept proposed classes',
+      assign: 'Assign a class',
+      disambiguate: 'Choose roles',
+      mappingOrDesign: 'Mapping or design error',
+      batchParameters: 'Sliders as DG parameters',
+      batchMeasures: 'Accept proposed properties',
+      mapMeasure: 'Map an output to a property'
+    },
+    kinds: { stream: 'Element stream', measure: 'Calculation output', parameter: 'Slider' },
+    noProposal: 'no proposal',
+    alternatives: labels => `or ${labels}`,
+    elements: n => `${n} ${n === 1 ? 'element' : 'elements'}`,
+    values: n => `${n} ${n === 1 ? 'value' : 'values'}`,
+    options: {
+      acceptAll: 'Accept all',
+      none: 'None of these',
+      notProperty: 'Not a DG property',
+      both: 'Both roles',
+      designError: label => `${label} — rule violations are design errors`
+    },
+    details: 'Details',
+    undo: 'Undo decision',
+    undoUnavailable: 'The session is applied — undo is not available',
+    sending: 'Sending the answer',
+    undone: 'Decision undone',
+    noSession: 'Mapping has not been run for this model yet.',
+    noSessionRevit: 'There are no mapping sessions for this model yet.',
+    start: 'Start mapping',
+    starting: 'Starting the mapping',
+    started: 'Mapping started — the session appears here in a few seconds.',
+    notStarted: "CONNECTOR didn't start the mapping.",
+    signInFirst: 'Sign in on CONNECTOR on the Grasshopper canvas to start the mapping.',
+    focus: name => `Show ${name} on the Grasshopper canvas`,
+    noComponent: 'No canvas component is known for this item',
+    notFound: name => `${name} wasn't found on the Grasshopper canvas.`,
+    refused: {
+      sessionApplied: 'The session is already applied; nothing was changed.',
+      answerGone: 'This decision was already undone. The list is refreshed.',
+      questionGone: 'The proposal changed. The list is refreshed — answer again.',
+      optionInvalid: "This option isn't offered any more. The list is refreshed.",
+      sessionGone: 'The mapping session was not found. The list is refreshed.',
+      generic: message => `DG refused the request: ${message}`
+    }
+  },
   sessions: { empty: "There are no sessions in this project yet." },
   errors: {
     dgUnreachable: "The DG server can't be reached. Check your network or VPN, then retry the request.",
@@ -397,6 +529,73 @@ export const degramRu: DegramCopy = {
     excluded: (document, reason) => `${document}: не включён — ${reason}`
   },
   models: { title: 'Модели' },
+  mapping: {
+    tab: 'Меппинг',
+    reading: 'Чтение меппинга',
+    refresh: 'Обновить меппинг',
+    progressLabel: 'Прогресс меппинга',
+    states: {
+      confirmed: 'Подтверждено',
+      auto: 'Авто по профилю',
+      suggested: 'Предложено',
+      ambiguous: 'Неоднозначно',
+      unmapped: 'Не сопоставлено'
+    },
+    total: n => `Всего: ${n}`,
+    openQuestions: n => `Открытых предложений: ${n}`,
+    llmPending: 'LLM ещё готовит предложение; этот вид обновится сам.',
+    proposals: 'Предложения',
+    noProposals: 'Открытых предложений нет.',
+    waitingApply:
+      'Все предложения отвечены. CONNECTOR применит меппинг примерно через 10 с; до этого решение можно отменить.',
+    applied: 'Сессия применена.',
+    answers: 'Принятые решения',
+    components: n => `${n} ${ruPlural(n, 'компонент', 'компонента', 'компонентов')}`,
+    types: {
+      batchAssign: 'Принять предложенные классы',
+      assign: 'Назначить класс',
+      disambiguate: 'Выбрать роли',
+      mappingOrDesign: 'Меппинг или ошибка проекта',
+      batchParameters: 'Слайдеры как параметры DG',
+      batchMeasures: 'Принять предложенные свойства',
+      mapMeasure: 'Выход → свойство DG'
+    },
+    kinds: { stream: 'Поток элементов', measure: 'Расчётный выход', parameter: 'Слайдер' },
+    noProposal: 'нет предложения',
+    alternatives: labels => `или ${labels}`,
+    elements: n => `${n} ${ruPlural(n, 'элемент', 'элемента', 'элементов')}`,
+    values: n => `${n} ${ruPlural(n, 'значение', 'значения', 'значений')}`,
+    options: {
+      acceptAll: 'Принять все',
+      none: 'Ни один из вариантов',
+      notProperty: 'Не свойство DG',
+      both: 'Обе роли',
+      designError: label => `${label} — нарушения правил — ошибки проекта`
+    },
+    details: 'Подробнее',
+    undo: 'Отменить решение',
+    undoUnavailable: 'Сессия применена — отмена недоступна',
+    sending: 'Отправка ответа',
+    undone: 'Решение отменено',
+    noSession: 'Меппинг для этой модели ещё не запускался.',
+    noSessionRevit: 'Для этой модели ещё нет сессий меппинга.',
+    start: 'Запустить меппинг',
+    starting: 'Запуск меппинга',
+    started: 'Меппинг запущен — сессия появится здесь через несколько секунд.',
+    notStarted: 'CONNECTOR не запустил меппинг.',
+    signInFirst: 'Войдите в CONNECTOR на холсте Grasshopper, чтобы запустить меппинг.',
+    focus: name => `Показать ${name} на холсте Grasshopper`,
+    noComponent: 'Компонент на холсте для этого элемента неизвестен',
+    notFound: name => `${name} не найден на холсте Grasshopper.`,
+    refused: {
+      sessionApplied: 'Сессия уже применена — ничего не изменено.',
+      answerGone: 'Это решение уже отменено. Список обновлён.',
+      questionGone: 'Предложение изменилось. Список обновлён — ответьте ещё раз.',
+      optionInvalid: 'Этот вариант больше не предлагается. Список обновлён.',
+      sessionGone: 'Сессия меппинга не найдена. Список обновлён.',
+      generic: message => `DG отклонил запрос: ${message}`
+    }
+  },
   sessions: { empty: "В этом проекте пока нет сеансов." },
   errors: {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',

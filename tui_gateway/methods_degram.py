@@ -1,5 +1,5 @@
-"""Variant degram JSON-RPC handlers: the delegated-credential handoff (plan 10, D-06) and the CAD read
-capabilities (plan 11, D-13..D-18).
+"""Variant degram JSON-RPC handlers: the delegated-credential handoff (plan 10, D-06), the CAD read
+capabilities (plan 11, D-13..D-18) and the Mapping sub-tab of «Модели» (``degram.mapping.*``, Phase 1303-10).
 
 ``degram.credentials.set`` keeps the token in process memory only; ``clear`` wipes it;
 ``status`` reports presence/scope/expiry and NEVER the token. All three refuse outside variant
@@ -190,6 +190,70 @@ def _(rid, params: dict) -> dict:
         return refused
     from degram_variant import runtime
     return _ok(rid, {"status": "ok", "cancelled": runtime.get().composer.cancel(params.get("previewId"))})
+
+
+# -- Mapping sub-tab of «Модели» (Phase 1303-10) -----------------------------------------------------
+# DG sessions with the delegated token of the bound project and the Grasshopper canvas commands. A bridge or DG
+# failure is an outcome result like degram.documents.*; a request DG refuses for what it is (unknown session or
+# answer, applied session, invalid option: HTTP 400/404/409) is a JSON-RPC error whose data.code is DG's own code.
+
+_REFUSAL_RPC_CODES = {400: 4400, 404: 4404, 409: 4409}
+
+
+def _mapping_call(rid, name: str, call) -> dict:
+    if (refused := _not_degram(rid, name)) is not None:
+        return refused
+    from degram_variant import runtime
+    from degram_variant.dg_client import DgRefused
+    from degram_variant.outcomes import BridgeError
+    rt = runtime.get()
+    token = rt.cancels.new(name)
+    try:
+        with token.active():
+            return _ok(rid, {"status": "ok", **call(rt.mapping, token)})
+    except ValueError as exc:
+        return _degram_err(rid, 4400, "BAD_REQUEST", str(exc))
+    except DgRefused as exc:
+        return _err(rid, _REFUSAL_RPC_CODES.get(exc.status, 4400), f"{exc.code}: {exc.message}",
+                    {"code": exc.code, "status": exc.status})
+    except BridgeError as exc:
+        return _outcome(rid, exc)
+    finally:
+        rt.cancels.discard(name, token)
+
+
+@method("degram.mapping.sessions")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.sessions",
+                         lambda m, t: m.sessions(params.get("document"), params.get("app"), t))
+
+
+@method("degram.mapping.session")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.session",
+                         lambda m, t: {"session": m.session(params.get("sessionId"), t)})
+
+
+@method("degram.mapping.answer")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.answer", lambda m, t: {"session": m.answer(
+        params.get("sessionId"), params.get("questionId"), params.get("optionId"), params.get("groupIds"), t)})
+
+
+@method("degram.mapping.undo")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.undo",
+                         lambda m, t: {"session": m.undo(params.get("sessionId"), params.get("answerId"), t)})
+
+
+@method("degram.mapping.start")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(t))
+
+
+@method("degram.mapping.focus")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.focus", lambda m, t: m.focus(params.get("componentId"), t))
 
 
 def register(server) -> None:
