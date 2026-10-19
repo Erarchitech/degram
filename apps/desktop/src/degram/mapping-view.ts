@@ -154,7 +154,10 @@ const REFUSED: Record<string, keyof Omit<MappingCopy['refused'], 'generic'>> = {
   MAPPING_ANSWER_NOT_FOUND: 'answerGone',
   MAPPING_QUESTION_NOT_FOUND: 'questionGone',
   MAPPING_OPTION_INVALID: 'optionInvalid',
-  MAPPING_SESSION_NOT_FOUND: 'sessionGone'
+  MAPPING_SESSION_NOT_FOUND: 'sessionGone',
+  MAPPING_COMMIT_REQUIRED: 'commitRequired',
+  MAPPING_COMMIT_CONFLICT: 'commitConflict',
+  MAPPING_ANSWER_COMMITTED: 'answerCommitted'
 }
 
 /**
@@ -184,7 +187,7 @@ export function mappingFailureText(
 
 /**
  * Keep re-reading while something can still change on its own: open proposals, a pending LLM, a start in flight, and
- * answers waiting for CONNECTOR's apply (it applies about 10 s after the last answer; undo then closes, §7.5).
+ * explicitly confirmed batches waiting for a CAD receipt. Polling never authorizes a write.
  */
 export function needsPolling(session: MappingSession | null, starting: boolean): boolean {
   if (starting) {
@@ -194,6 +197,8 @@ export function needsPolling(session: MappingSession | null, starting: boolean):
   return Boolean(
     session &&
     !session.appliedAt &&
-    (session.questions.length > 0 || session.llmStatus === 'pending' || session.answers.length > 0)
+    (session.questions.length > 0 ||
+      session.llmStatus === 'pending' ||
+      session.batches.some(batch => batch.delivery === 'queued'))
   )
 }

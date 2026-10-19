@@ -146,6 +146,77 @@ class TestDgClientMapping:
         assert exc.value.code == "CREDENTIALS_MISSING" and dg.requests == []
 
 
+class TestExplicitCommit:
+    def test_panel_keeps_commit_metadata_without_cad_payload(self, rt, dg):
+        batch = {"batchId": "commit-old", "answerIds": ["A-1"], "delivery": {"state": "written"},
+                 "payload": {"elements": [{"nativeId": "large-detail"}]}}
+        dg.routes[f"{BASE}/{SID}"] = (200, {**SESSION, "revision": "a" * 24,
+                                            "pendingAnswerIds": ["A-2"], "batches": [batch]})
+        session = rpc("degram.mapping.session", {"sessionId": SID})["result"]["session"]
+        assert session["revision"] == "a" * 24 and session["pendingAnswerIds"] == ["A-2"]
+        assert session["batches"] == [{k: v for k, v in batch.items() if k != "payload"}]
+
+    def test_rpc_posts_exact_four_answers_without_a_cad_call_or_followup_read(self, rt, dg, gh):
+        ids = [f"A-{i}" for i in range(4)]
+        intent = {"sessionId": SID, "requestId": "commit-test", "revision": "a" * 24, "answerIds": ids}
+        batch = {"batchId": "commit-test", "revision": "a" * 24, "answerIds": ids,
+                 "committedAt": "now", "delivery": {"state": "queued"}, "payload": {"elements": []}}
+        dg.routes[f"POST {BASE}/{SID}/apply"] = (200, batch)
+        reply = rpc("degram.mapping.apply", intent)["result"]
+        assert reply["status"] == "ok" and reply["batch"]["answerIds"] == ids
+        assert reply["batch"]["delivery"] == {"state": "queued"}
+        assert "payload" not in reply["batch"]
+        assert dg.requests[0]["body"] == {"project": PROJECT, **{k: v for k, v in intent.items() if k != "sessionId"}}
+        assert dg.requests[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
+        assert len(dg.requests) == 1 and gh.commands() == []
+
+    def test_apply_does_not_bypass_a_delegated_permission_refusal(self, rt, dg, gh):
+        dg.routes[f"POST {BASE}/{SID}/apply"] = (403, refusal("PRINCIPAL_NOT_PERMITTED"))
+        reply = rpc("degram.mapping.apply", {"sessionId": SID, "requestId": "commit-test",
+                                              "revision": "a" * 24, "answerIds": ["A-1"]})["result"]
+        assert reply["code"] == "ACCESS_DENIED"
+        assert len(dg.requests) == 1 and gh.commands() == []
+
+    @pytest.mark.parametrize("over", [{"answerIds": []}, {"answerIds": ["A-1", "A-1"]},
+                                       {"revision": "stale"}, {"requestId": "x"}])
+    def test_no_implicit_or_malformed_commit(self, rt, dg, over):
+        intent = {"sessionId": SID, "requestId": "commit-test", "revision": "a" * 24,
+                  "answerIds": ["A-1"], **over}
+        assert rpc("degram.mapping.apply", intent)["error"]["data"]["code"] == "BAD_REQUEST"
+        assert dg.requests == []
+
+    def test_reply_must_match_exact_intent_and_delivery_state(self, rt, dg):
+        intent = {"sessionId": SID, "requestId": "commit-test", "revision": "a" * 24,
+                  "answerIds": ["A-1"]}
+        valid = {"batchId": "commit-test", "revision": "a" * 24, "answerIds": ["A-1"],
+                 "delivery": {"state": "queued"}}
+        for changed in ({"batchId": "another"}, {"revision": "b" * 24},
+                        {"answerIds": ["A-2"]}, {"delivery": {"state": "unknown"}}):
+            dg.routes[f"POST {BASE}/{SID}/apply"] = (200, {**valid, **changed})
+            reply = rpc("degram.mapping.apply", intent)["result"]
+            assert reply["code"] == "DG_UNAVAILABLE" and reply["reason"] == "MALFORMED"
+            assert not reply.get("batch")
+        assert len(dg.requests) == 4
+
+    def test_answer_ids_are_canonical_and_scope_cannot_be_overridden(self, rt, dg):
+        batch = {"batchId": "commit-test", "revision": "a" * 24, "answerIds": ["A-1", "A-2"],
+                 "delivery": {"state": "queued"}}
+        dg.routes[f"POST {BASE}/{SID}/apply"] = (200, batch)
+        intent = {"sessionId": SID, "requestId": "commit-test", "revision": "a" * 24,
+                  "answerIds": ["A-2", "A-1"]}
+        assert rpc("degram.mapping.apply", intent)["result"]["batch"] == batch
+        assert dg.requests[0]["body"]["answerIds"] == ["A-1", "A-2"]
+        reply = rpc("degram.mapping.apply", {**intent, "project": "foreign"})
+        assert "error" in reply and len(dg.requests) == 1
+
+    def test_conflict_is_preserved_without_retry(self, rt, dg):
+        dg.routes[f"POST {BASE}/{SID}/apply"] = (409, refusal("MAPPING_COMMIT_CONFLICT"))
+        reply = rpc("degram.mapping.apply", {"sessionId": SID, "requestId": "commit-test",
+                                              "revision": "a" * 24, "answerIds": ["A-1"]})
+        assert reply["error"]["data"] == {"code": "MAPPING_COMMIT_CONFLICT", "status": 409}
+        assert len(dg.requests) == 1
+
+
 class TestRpc:
     def test_sessions_of_a_gh_document_use_the_key_the_canvas_names(self, rt, dg, gh):
         dg.routes[BASE] = (200, {"sessions": ROWS})

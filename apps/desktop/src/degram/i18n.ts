@@ -102,6 +102,9 @@ export interface DegramCopy {
     proposals: string
     noProposals: string
     waitingApply: string
+    confirm: (count: number) => string
+    confirming: string
+    delivery: { queued: string; written: string; failed: string; unknown: string }
     applied: string
     answers: string
     /** Item rows in a proposal header (ru: 1 компонент / 2 компонента / 5 компонентов). */
@@ -161,6 +164,9 @@ export interface DegramCopy {
       questionGone: string
       optionInvalid: string
       sessionGone: string
+      commitRequired: string
+      commitConflict: string
+      answerCommitted: string
       generic: (message: string) => string
     }
   }
@@ -327,8 +333,15 @@ export const degramEn: DegramCopy = {
     llmPending: 'The LLM proposal is still being prepared; this view updates on its own.',
     proposals: 'Proposals',
     noProposals: 'No open proposals.',
-    waitingApply:
-      'All proposals are answered. CONNECTOR applies the mapping in about 10 s; until then a decision can be undone.',
+    waitingApply: 'Answers are drafts. Confirm once to queue only accepted decisions; other proposals remain open.',
+    confirm: n => `Confirm and write (${n})`,
+    confirming: 'Confirming…',
+    delivery: {
+      queued: 'Confirmed; waiting for the CAD connector to write',
+      written: 'Written — confirmed by the CAD connector',
+      failed: 'CAD write failed; no automatic replay',
+      unknown: 'Delivery status unavailable'
+    },
     applied: 'The session is applied.',
     answers: 'Decisions made',
     components: n => `${n} ${n === 1 ? 'component' : 'components'}`,
@@ -381,10 +394,13 @@ export const degramEn: DegramCopy = {
       questionGone: 'The proposal changed. The list is refreshed — answer again.',
       optionInvalid: "This option isn't offered any more. The list is refreshed.",
       sessionGone: 'The mapping session was not found. The list is refreshed.',
+      commitRequired: 'Accept at least one proposal before confirming.',
+      commitConflict: 'The mapping changed. Refresh and review accepted decisions before confirming again.',
+      answerCommitted: 'This decision is already confirmed and cannot be undone.',
       generic: message => `DG refused the request: ${message}`
     }
   },
-  sessions: { empty: "There are no sessions in this project yet." },
+  sessions: { empty: 'There are no sessions in this project yet.' },
   errors: {
     dgUnreachable: "The DG server can't be reached. Check your network or VPN, then retry the request.",
     modelUnavailable:
@@ -474,7 +490,8 @@ export const degramEn: DegramCopy = {
   },
   notice: {
     dismiss: 'Dismiss notice',
-    grantRequired: project => `DeGram access to ${project} has not been granted yet. Request it under Connectors or ask the project owner.`
+    grantRequired: project =>
+      `DeGram access to ${project} has not been granted yet. Request it under Connectors or ask the project owner.`
   }
 }
 
@@ -564,7 +581,15 @@ export const degramRu: DegramCopy = {
     proposals: 'Предложения',
     noProposals: 'Открытых предложений нет.',
     waitingApply:
-      'Все предложения отвечены. CONNECTOR применит меппинг примерно через 10 с; до этого решение можно отменить.',
+      'Ответы — черновики. Одно подтверждение отправит на запись только принятые решения; остальные предложения останутся открытыми.',
+    confirm: n => `Подтвердить и записать (${n})`,
+    confirming: 'Подтверждение…',
+    delivery: {
+      queued: 'Подтверждено; ожидает записи CAD-коннектором',
+      written: 'Записано — подтверждено CAD-коннектором',
+      failed: 'Ошибка записи в CAD; автоматического повтора нет',
+      unknown: 'Статус записи недоступен'
+    },
     applied: 'Сессия применена.',
     answers: 'Принятые решения',
     components: n => `${n} ${ruPlural(n, 'компонент', 'компонента', 'компонентов')}`,
@@ -617,10 +642,13 @@ export const degramRu: DegramCopy = {
       questionGone: 'Предложение изменилось. Список обновлён — ответьте ещё раз.',
       optionInvalid: 'Этот вариант больше не предлагается. Список обновлён.',
       sessionGone: 'Сессия меппинга не найдена. Список обновлён.',
+      commitRequired: 'Перед подтверждением примите хотя бы одно предложение.',
+      commitConflict: 'Меппинг изменился. Обновите список и проверьте принятые решения перед повторным подтверждением.',
+      answerCommitted: 'Решение уже подтверждено — отменить его нельзя.',
       generic: message => `DG отклонил запрос: ${message}`
     }
   },
-  sessions: { empty: "В этом проекте пока нет сеансов." },
+  sessions: { empty: 'В этом проекте пока нет сеансов.' },
   errors: {
     dgUnreachable: 'Сервер DG недоступен. Проверьте сеть или VPN и повторите запрос.',
     modelUnavailable: 'Сервис модели недоступен. Сообщение не обработано; повторите запрос через несколько минут.',
@@ -710,6 +738,7 @@ export const degramRu: DegramCopy = {
   },
   notice: {
     dismiss: 'Закрыть уведомление',
-    grantRequired: project => `Доступ DeGram к проекту ${project} ещё не выдан. Запросите его в разделе «Коннекторы» или у владельца проекта.`
+    grantRequired: project =>
+      `Доступ DeGram к проекту ${project} ещё не выдан. Запросите его в разделе «Коннекторы» или у владельца проекта.`
   }
 }

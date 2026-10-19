@@ -13,7 +13,7 @@
 
 import './mapping.css'
 
-import { type KeyboardEvent, type ReactNode, useId, useState } from 'react'
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,13 +26,16 @@ import { scopeKeyOf } from './documents-store'
 import type { DegramCopy } from './i18n'
 import {
   answerMapping,
+  applyMapping,
   focusComponent,
   type MappingAnswer,
+  type MappingCommitIntent,
   type MappingItem,
   type MappingQuestion,
   MappingRefusal,
   type MappingSession,
   type MappingSummary,
+  pendingMappingAnswers,
   type SessionResult,
   showRevitItem,
   startMapping,
@@ -345,7 +348,7 @@ function AnswerCard({
 }
 
 interface Pending {
-  kind: 'answer' | 'undo'
+  kind: 'answer' | 'undo' | 'apply'
   id: string
 }
 
@@ -416,7 +419,73 @@ function SessionView({
       copy.mapping.undone
     )
 
-  const allAnswered = session.questions.length === 0 && session.answers.length > 0
+  const answerIds = pendingMappingAnswers(session)
+  const intent = useRef<MappingCommitIntent | null>(null)
+  const applying = useRef(false)
+  const mounted = useRef(true)
+
+  // Lifecycle guard only, not a mirrored store value; StrictMode re-runs setup after cleanup.
+  // eslint-disable-next-line no-restricted-syntax
+  useEffect(() => {
+    mounted.current = true
+
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const apply = async () => {
+    if (applying.current || pending || !answerIds.length) {
+      return
+    }
+
+    applying.current = true
+    const key = JSON.stringify([session.revision, answerIds])
+
+    if (!intent.current || JSON.stringify([intent.current.revision, intent.current.answerIds]) !== key) {
+      intent.current = { requestId: `commit-${session.revision}`, revision: session.revision, answerIds }
+    }
+
+    setPending({ kind: 'apply', id: 'apply' })
+    setErrors(s => ({ ...s, apply: '' }))
+
+    try {
+      const result = await applyMapping(session.sessionId, intent.current)
+
+      if (!mounted.current) {
+        return
+      }
+
+      if (result.outcome) {
+        setErrors(s => ({ ...s, apply: mappingFailureText(copy, result.outcome, { app, project }) }))
+        reload()
+      } else {
+        const ids = new Set(result.batch.answerIds)
+
+        adopt({
+          ...session,
+          pendingAnswerIds: session.pendingAnswerIds.filter(id => !ids.has(id)),
+          answers: session.answers.map(answer => (ids.has(answer.answerId) ? { ...answer, undoable: false } : answer)),
+          batches: [...session.batches.filter(batch => batch.batchId !== result.batch.batchId), result.batch]
+        })
+        reload()
+      }
+    } catch (error) {
+      if (mounted.current) {
+        const outcome =
+          error instanceof MappingRefusal ? { code: error.code, message: error.message } : { code: 'DG_UNAVAILABLE' }
+
+        setErrors(s => ({ ...s, apply: mappingFailureText(copy, outcome, { app, project }) }))
+        reload()
+      }
+    } finally {
+      applying.current = false
+
+      if (mounted.current) {
+        setPending(null)
+      }
+    }
+  }
 
   return (
     <div className="grid gap-3">
@@ -433,8 +502,25 @@ function SessionView({
       {session.appliedAt ? (
         <Muted>{copy.mapping.applied}</Muted>
       ) : (
-        allAnswered && <Muted>{copy.mapping.waitingApply}</Muted>
+        <div className="grid gap-1.5">
+          <Muted>{copy.mapping.waitingApply}</Muted>
+          <Button
+            className="justify-self-start"
+            data-testid="degram-mapping-apply"
+            disabled={pending !== null || answerIds.length === 0}
+            onClick={() => void apply()}
+            size="sm"
+          >
+            {pending?.kind === 'apply' ? copy.mapping.confirming : copy.mapping.confirm(answerIds.length)}
+          </Button>
+          {errors.apply && <Failure text={errors.apply} />}
+        </div>
       )}
+      {session.batches.map(batch => (
+        <p className="text-[0.75rem] leading-[1.4] text-muted-foreground" key={batch.batchId} role="status">
+          {copy.mapping.delivery[batch.delivery]} · {batch.answerIds.length}
+        </p>
+      ))}
       {notice && <Muted>{notice}</Muted>}
 
       <div className="grid gap-1">
@@ -651,6 +737,7 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
           adopt={adopt}
           app={app}
           copy={copy}
+          key={`${scopeKeyOf(degram)}:${app}:${document}:${state.session.sessionId}`}
           onFocus={focus}
           project={project}
           reload={reload}

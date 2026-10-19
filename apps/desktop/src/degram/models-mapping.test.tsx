@@ -70,7 +70,10 @@ const SESSION = {
       items: [item({}), item({ itemId: 'G-2', name: 'Panels C', componentId: null, count: 3, alternatives: [] })],
       options: [
         { optionId: 'class:ex:GlassPanel', label: 'GlassPanel' },
-        { optionId: 'design-error:ex:BottomTriangularPanel', label: 'BottomTriangularPanel — rule violations are design errors' },
+        {
+          optionId: 'design-error:ex:BottomTriangularPanel',
+          label: 'BottomTriangularPanel — rule violations are design errors'
+        },
         { optionId: 'none', label: 'None of these' }
       ]
     },
@@ -107,7 +110,16 @@ const SESSION = {
       title: 'Accept 1 group',
       titleRu: 'Принять 1 группу',
       optionId: 'accept-all',
-      items: [item({ itemId: 'G-3', name: 'Panels B', componentId: PANELS_B, count: 125, alternatives: [], state: 'confirmed' })],
+      items: [
+        item({
+          itemId: 'G-3',
+          name: 'Panels B',
+          componentId: PANELS_B,
+          count: 125,
+          alternatives: [],
+          state: 'confirmed'
+        })
+      ],
       decidedAt: '2026-10-18T10:01:00Z',
       decidedBy: 'ann',
       undoable: true
@@ -195,7 +207,15 @@ const subtab = (app: 'grasshopper' | 'revit') =>
 async function openGh(locale?: string) {
   const ui = withActions(<ModelsPage />)
 
-  render(locale ? <I18nProvider configClient={null} initialLocale={locale}>{ui}</I18nProvider> : ui)
+  render(
+    locale ? (
+      <I18nProvider configClient={null} initialLocale={locale}>
+        {ui}
+      </I18nProvider>
+    ) : (
+      ui
+    )
+  )
   await screen.findByText(GH_ROW.name)
   fireEvent.click(within(subtab('grasshopper')).getByTestId('degram-mapping-toggle'))
   await within(subtab('grasshopper')).findByTestId('degram-mapping-progress')
@@ -216,6 +236,166 @@ afterEach(() => {
   $degramEnabled.set(false)
   $activeGatewayProfile.set('default')
   delete (window as { hermesDesktop?: unknown }).hermesDesktop
+})
+
+describe('Explicit batch confirmation', () => {
+  const revision = 'a'.repeat(24)
+  const accepted = ['A-1', 'A-2', 'A-3', 'A-4']
+
+  const draft = {
+    ...SESSION,
+    revision,
+    pendingAnswerIds: accepted,
+    batches: [],
+    llm: { status: 'done' },
+    questions: Array.from({ length: 6 }, (_, i) => ({ ...SESSION.questions[0], questionId: `Q-open-${i}` })),
+    answers: accepted.map(answerId => ({ ...SESSION.answers[0], answerId }))
+  }
+
+  it('one click confirms exactly four accepted decisions while six proposals remain open', async () => {
+    await ready()
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.session': () => ({ status: 'ok', session: draft }),
+        'degram.mapping.apply': params => {
+          const batch = {
+            batchId: params.requestId,
+            revision,
+            answerIds: params.answerIds,
+            committedAt: 'now',
+            delivery: { state: 'queued' }
+          }
+
+          draft.batches.push(batch as never)
+
+          return { status: 'ok', batch }
+        }
+      })
+    )
+
+    const panel = await openGh('ru')
+    const button = within(panel).getByRole('button', { name: 'Подтвердить и записать (4)' })
+
+    expect(gw.count('degram.mapping.apply')).toBe(0)
+    fireEvent.click(button)
+    fireEvent.click(button)
+    await within(panel).findByText(/Подтверждено; ожидает записи CAD-коннектором/)
+    expect(gw.count('degram.mapping.apply')).toBe(1)
+    expect(gw.last('degram.mapping.apply')).toEqual({
+      sessionId: SESSION.sessionId,
+      requestId: `commit-${revision}`,
+      revision,
+      answerIds: accepted
+    })
+    expect(within(panel).getAllByTestId('degram-mapping-proposal')).toHaveLength(6)
+    expect(within(panel).queryByText(/Записано — подтверждено/)).toBeNull()
+    expect(gw.count('degram.mapping.start')).toBe(0)
+    draft.batches.length = 0
+  })
+
+  it('refusal remains visible and a retry reuses the same explicit intent', async () => {
+    await ready()
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.session': () => ({ status: 'ok', session: draft }),
+        'degram.mapping.apply': () => ({ status: 'error', code: 'ACCESS_DENIED', reason: 'HTTP_403' })
+      })
+    )
+
+    const panel = await openGh('ru')
+    fireEvent.click(within(panel).getByRole('button', { name: 'Подтвердить и записать (4)' }))
+    await within(panel).findByRole('alert')
+    const first = gw.last('degram.mapping.apply')
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Подтвердить и записать (4)' }))
+    await waitFor(() => expect(gw.count('degram.mapping.apply')).toBe(2))
+    expect(gw.last('degram.mapping.apply')).toEqual(first)
+    expect(within(panel).queryByText(/Подтверждено; ожидает записи/)).toBeNull()
+  })
+
+  it('keeps a successful confirmation visible when its refresh fails', async () => {
+    await ready()
+    let committed = false
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.sessions': () =>
+          committed
+            ? { status: 'error', code: 'DG_UNAVAILABLE' }
+            : { status: 'ok', document: 'tower-facade', sessions: [ROW()], signedIn: true },
+        'degram.mapping.session': () => ({ status: 'ok', session: draft }),
+        'degram.mapping.apply': params => {
+          committed = true
+
+          return {
+            status: 'ok',
+            batch: {
+              batchId: params.requestId,
+              revision,
+              answerIds: params.answerIds,
+              delivery: { state: 'queued' }
+            }
+          }
+        }
+      })
+    )
+
+    const panel = await openGh('ru')
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Подтвердить и записать (4)' }))
+    await within(panel).findByText(/Подтверждено; ожидает записи CAD-коннектором/)
+    await within(panel).findByRole('alert')
+    expect((within(panel).getByTestId('degram-mapping-apply') as HTMLButtonElement).disabled).toBe(true)
+    expect(gw.count('degram.mapping.apply')).toBe(1)
+    expect(within(panel).queryByText(/Записано — подтверждено/)).toBeNull()
+  })
+
+  it.each([
+    ['written', 'Записано — подтверждено CAD-коннектором'],
+    ['failed', 'Ошибка записи в CAD; автоматического повтора нет']
+  ])('shows the connector receipt %s without resending confirmation', async (state, text) => {
+    await ready()
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.session': () => ({
+          status: 'ok',
+          session: {
+            ...draft,
+            pendingAnswerIds: [],
+            batches: [{ batchId: 'previous', answerIds: accepted, revision, delivery: { state } }]
+          }
+        })
+      })
+    )
+
+    const panel = await openGh('ru')
+
+    expect(within(panel).getByText(new RegExp(text))).toBeTruthy()
+    expect((within(panel).getByTestId('degram-mapping-apply') as HTMLButtonElement).disabled).toBe(true)
+    expect(gw.count('degram.mapping.apply')).toBe(0)
+  })
+
+  it('an old server or an empty question list cannot authorize confirmation', async () => {
+    await ready()
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.session': () => ({
+          status: 'ok',
+          session: { ...SESSION, questions: [], llm: { status: 'done' } }
+        })
+      })
+    )
+
+    const panel = await openGh('ru')
+    expect(
+      (within(panel).getByRole('button', { name: 'Подтвердить и записать (0)' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(gw.count('degram.mapping.apply')).toBe(0)
+  })
 })
 
 describe('Mapping sub-tab on the Models page (1303-10)', () => {
@@ -264,7 +444,10 @@ describe('Mapping sub-tab on the Models page (1303-10)', () => {
     await ready()
     const gw = fakeGateway(backend())
     const tab = await openGh()
-    const chips = within(within(tab).getAllByTestId('degram-mapping-proposal')[0]!).getAllByTestId('degram-mapping-chip')
+
+    const chips = within(within(tab).getAllByTestId('degram-mapping-proposal')[0]!).getAllByTestId(
+      'degram-mapping-chip'
+    )
 
     fireEvent.click(chips[0]!)
     await waitFor(() => expect(gw.last('degram.mapping.focus')).toEqual({ componentId: PANELS_A }))
@@ -487,7 +670,15 @@ const revitSession = (sessionId = REVIT_SID, title = 'Accept 2 groups') => ({
 async function openRevit(locale?: string) {
   const ui = withActions(<ModelsPage />)
 
-  render(locale ? <I18nProvider configClient={null} initialLocale={locale}>{ui}</I18nProvider> : ui)
+  render(
+    locale ? (
+      <I18nProvider configClient={null} initialLocale={locale}>
+        {ui}
+      </I18nProvider>
+    ) : (
+      ui
+    )
+  )
   await screen.findByText(REVIT_ROW.name)
   fireEvent.click(within(subtab('revit')).getByTestId('degram-mapping-toggle'))
   await within(subtab('revit')).findByTestId('degram-mapping-revit-connector')
@@ -617,7 +808,9 @@ describe('Mapping sub-tab of a Revit model (1303-13)', () => {
     reply = { status: 'error', code: 'BUSY', message: 'Revit did not answer in time.', bridgeState: 'busy' }
     fireEvent.click(chips[0]!)
     expect(
-      await within(tab).findByText('Revit is busy (a command or dialog is open). Finish it in Revit, then retry the request.')
+      await within(tab).findByText(
+        'Revit is busy (a command or dialog is open). Finish it in Revit, then retry the request.'
+      )
     ).toBeTruthy()
 
     fireEvent.click(chips[2]!)
@@ -628,7 +821,10 @@ describe('Mapping sub-tab of a Revit model (1303-13)', () => {
     await ready()
     const gw = fakeGateway(backend())
     const tab = await openGh()
-    const chips = within(within(tab).getAllByTestId('degram-mapping-proposal')[0]!).getAllByTestId('degram-mapping-chip')
+
+    const chips = within(within(tab).getAllByTestId('degram-mapping-proposal')[0]!).getAllByTestId(
+      'degram-mapping-chip'
+    )
 
     expect(chips[0]!.getAttribute('aria-label')).toBe('Show Panels A on the Grasshopper canvas')
     expect(chips[1]!.getAttribute('aria-label')).toBe('Panels C — No canvas component is known for this item')

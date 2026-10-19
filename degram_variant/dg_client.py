@@ -7,8 +7,11 @@ Reachable, and only for the project of the delegated credential (the project is 
   the project's mapping sessions;
 - ``POST {relayBaseUrl}/mapping/sessions/{id}/decisions`` and ``POST {relayBaseUrl}/mapping/sessions/{id}/undo``:
   answer a mapping proposal, take one answer back (owner decision 2026-10-18, Phase 1303-10: the delegated token
-  may read the mapping sessions and post or undo answers of its own project). Creating, applying a session and the
-  profile routes stay out of reach.
+  may read the mapping sessions and post or undo answers of its own project). Creating sessions and the profile
+  routes stay out of reach.
+- ``POST {relayBaseUrl}/mapping/sessions/{id}/apply`` carries explicit batch intent from the shared button. This
+  server requires the bound project and a live editor role. Delivery receipts remain connector-only; any
+  ACCESS_DENIED is returned without credential fallback.
 
 The token is read from the in-memory credential per request, sent as a Bearer header only (no cookie, so no CSRF
 token) and never returned; the server re-checks membership and role. Failures are named: ``DG_UNAVAILABLE``
@@ -178,6 +181,18 @@ class DgClient:
 
     def undo_mapping_answer(self, session_id: str, answer_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
         return _session_of(self._mapping("POST", session_id, "undo", cancel, {"answerId": answer_id}))
+
+    def commit_mapping(self, session_id: str, request_id: str, revision: str, answer_ids: list[str],
+                       cancel: CancelToken | None = None) -> dict[str, Any]:
+        """Explicit intent only; DG still enforces the principal's existing apply permission."""
+        data = self._mapping("POST", session_id, "apply", cancel,
+                             {"requestId": request_id, "revision": revision, "answerIds": list(answer_ids)})
+        if (not isinstance(data, dict) or data.get("batchId") != request_id
+                or data.get("revision") != revision or data.get("answerIds") != answer_ids
+                or not isinstance(data.get("delivery"), dict)
+                or data["delivery"].get("state") not in ("queued", "written", "failed")):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG mapping answer has no confirmed batch.")
+        return data
 
 
 def _session_of(data: Any) -> dict[str, Any]:

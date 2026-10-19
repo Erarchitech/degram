@@ -247,6 +247,12 @@ def _(rid, params: dict) -> dict:
                          lambda m, t: {"session": m.undo(params.get("sessionId"), params.get("answerId"), t)})
 
 
+@method("degram.mapping.apply")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.apply", lambda m, t: {"batch": m.apply(
+        params.get("sessionId"), params.get("requestId"), params.get("revision"), params.get("answerIds"), t)})
+
+
 @method("degram.mapping.start")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(app=params.get("app"), cancel=t))

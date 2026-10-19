@@ -1383,6 +1383,20 @@ export interface DegramMappingUndoParams {
   sessionId: string
   answerId: string
 }
+export interface DegramMappingApplyParams {
+  sessionId: string
+  requestId: string
+  revision: string
+  answerIds: string[]
+}
+export interface DegramMappingApplyResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  batch?: unknown
+}
 export interface DegramMappingStartParams {
   app?: string | null
 }
@@ -5162,6 +5176,8 @@ export interface RpcMethods {
   'degram.documents.unpin': { params: DegramDocumentsUnpinParams; result: DegramDocumentsUnpinResult }
   /** Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID. */
   'degram.mapping.answer': { params: DegramMappingAnswerParams; result: DegramMappingSessionResult }
+  /** Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt. */
+  'degram.mapping.apply': { params: DegramMappingApplyParams; result: DegramMappingApplyResult }
   /** Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements). */
   'degram.mapping.focus': { params: DegramMappingFocusParams; result: DegramMappingFocusResult }
   /** One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND. */
@@ -5645,6 +5661,7 @@ export const RPC_METHODS = [
   'degram.documents.pin',
   'degram.documents.unpin',
   'degram.mapping.answer',
+  'degram.mapping.apply',
   'degram.mapping.focus',
   'degram.mapping.session',
   'degram.mapping.sessions',

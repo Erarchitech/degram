@@ -191,6 +191,17 @@ class DegramMappingUndoParams(Params):
     answerId: str
 
 
+class DegramMappingApplyParams(Params):
+    sessionId: str
+    requestId: str
+    revision: str
+    answerIds: list[str]
+
+
+class DegramMappingApplyResult(DegramOutcomeFields):
+    batch: JsonValue = None  # immutable confirmation metadata, not proof of a CAD write
+
+
 class DegramMappingStartParams(Params):
     app: str | None = None  # grasshopper (default): CONNECTOR start_mapping; revit: the connector's dg_start_mapping
 
@@ -227,6 +238,10 @@ method("degram.mapping.answer", params=DegramMappingAnswerParams, result=DegramM
 method("degram.mapping.undo", params=DegramMappingUndoParams, result=DegramMappingSessionResult,
        doc="Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, "
            "MAPPING_ANSWER_NOT_FOUND.")
+method("degram.mapping.apply", params=DegramMappingApplyParams, result=DegramMappingApplyResult,
+       doc="Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. "
+           "DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. "
+           "Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt.")
 method("degram.mapping.start", params=DegramMappingStartParams, result=DegramMappingStartResult,
        doc="Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge "
            "start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). "

@@ -236,9 +236,9 @@ ALLOWED_RPC_METHODS = frozenset({
     # the CAD read capabilities (plan 11): pick and pin a document, preview and send the context, cancel a read
     "degram.documents.list", "degram.documents.pin", "degram.documents.unpin", "degram.context.preview",
     "degram.context.send", "degram.context.cancel",
-    # the Mapping sub-tab of «Модели» (1303-10): read the project's sessions, answer or undo, start and focus on the canvas
+    # Mapping: explicit user intent is forwarded to DG, whose principal policy remains authoritative.
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
-    "degram.mapping.start", "degram.mapping.focus",
+    "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus",
 })
 
 # ``config.set`` keys that would re-open provider/model/toolset/MCP/auxiliary selection, the working

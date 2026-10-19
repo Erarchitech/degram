@@ -943,6 +943,24 @@
       }
     },
     {
+      "name": "degram.mapping.apply",
+      "summary": "Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingApplyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingApplyResult"
+        }
+      }
+    },
+    {
       "name": "degram.mapping.focus",
       "summary": "Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements).",
       "params": [
@@ -13261,6 +13279,104 @@
           "optionId"
         ],
         "title": "DegramMappingAnswerParams",
+        "type": "object"
+      },
+      "DegramMappingApplyParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "answerIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Answerids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionId",
+          "requestId",
+          "revision",
+          "answerIds"
+        ],
+        "title": "DegramMappingApplyParams",
+        "type": "object"
+      },
+      "DegramMappingApplyResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "batch": {
+            "default": null,
+            "title": "Batch"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingApplyResult",
         "type": "object"
       },
       "DegramMappingFocusParams": {

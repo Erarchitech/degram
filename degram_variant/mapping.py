@@ -6,7 +6,8 @@ session and showing its items belong to the CAD side: in Grasshopper the CONNECT
 canvas focuses a component (``gh_bridge``); in Revit the DG Revit connector starts from the active model
 (``dg_start_mapping``) and selects and zooms a group's elements (``dg_show_elements``) through the Revit MCP child
 (``revit_bridge``, D-47, D-51). This module only routes, filters the session list by document and trims what the panel
-does not read. Nothing here creates or applies a session on DG directly.
+does not read. Only the shared confirmation button sends explicit accepted-answer batch intent to DG; existing
+server permissions still apply. Nothing here creates a DG session or writes to CAD directly.
 
 A document is matched by its *document key*: the file name without its extension, lower-cased, every character that
 is not a letter, a digit, ``-`` or ``_`` replaced by ``-`` (``MappingCanvasReader.DocumentKey`` in DG.gha; the Revit
@@ -84,7 +85,11 @@ def _app(value: Any, default: str | None) -> str | None:
 
 def panel_session(session: dict[str, Any]) -> dict[str, Any]:
     """The session as the panel reads it: everything but the per-element and per-group detail."""
-    return {k: v for k, v in session.items() if k not in PANEL_DROPPED_KEYS}
+    out = {k: v for k, v in session.items() if k not in PANEL_DROPPED_KEYS}
+    if isinstance(out.get("batches"), list):
+        out["batches"] = [{k: v for k, v in batch.items() if k != "payload"}
+                          for batch in out["batches"] if isinstance(batch, dict)]
+    return out
 
 
 def _connector_fields(status: dict[str, Any], connector: bool) -> dict[str, Any]:
@@ -170,6 +175,21 @@ class MappingService:
     def undo(self, session_id: Any, answer_id: Any, cancel: CancelToken | None = None) -> dict[str, Any]:
         return panel_session(self._dg.undo_mapping_answer(
             _require_id(session_id, "sessionId"), _require_id(answer_id, "answerId"), cancel))
+
+    def apply(self, session_id: Any, request_id: Any, revision: Any, answer_ids: Any,
+              cancel: CancelToken | None = None) -> dict[str, Any]:
+        session_id = _require_id(session_id, "sessionId")
+        if not isinstance(request_id, str) or not 3 <= len(request_id) <= 64:
+            raise ValueError("requestId must have 3 to 64 characters")
+        if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{24}", revision):
+            raise ValueError("revision must be the current 24-character revision")
+        if (not isinstance(answer_ids, list) or not answer_ids or len(answer_ids) > 5000
+                or not all(isinstance(v, str) and v.strip() and len(v) <= _MAX_ID for v in answer_ids)
+                or len(set(answer_ids)) != len(answer_ids)):
+            raise ValueError("answerIds must be a nonempty list of unique answer ids")
+        batch = self._dg.commit_mapping(session_id, request_id, revision, sorted(answer_ids), cancel)
+        # Do not turn a successful commit into a failure if a subsequent session read fails.
+        return {k: batch[k] for k in ("batchId", "revision", "answerIds", "committedAt", "delivery") if k in batch}
 
     # -- CAD side: start and show ---------------------------------------------------------------------
     def start(self, app: Any = "grasshopper", cancel: CancelToken | None = None) -> dict[str, Any]:

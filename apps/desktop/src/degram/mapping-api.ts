@@ -69,7 +69,18 @@ export interface MappingAnswer {
   undoable: boolean
 }
 
+export interface MappingBatch {
+  batchId: string
+  revision: string
+  answerIds: string[]
+  committedAt: string
+  delivery: 'queued' | 'written' | 'failed' | 'unknown'
+}
+
 export interface MappingSession {
+  revision: string
+  pendingAnswerIds: string[]
+  batches: MappingBatch[]
   sessionId: string
   label: string
   document: null | string
@@ -223,6 +234,21 @@ function parseAnswer(raw: unknown): MappingAnswer | null {
   }
 }
 
+function parseBatch(raw: unknown): MappingBatch | null {
+  const b = asRecord(raw)
+  const state = asRecord(b?.delivery)?.state
+
+  return b && asString(b.batchId)
+    ? {
+        batchId: asString(b.batchId),
+        revision: asString(b.revision),
+        answerIds: asList(b.answerIds).filter((v): v is string => typeof v === 'string' && Boolean(v)),
+        committedAt: asString(b.committedAt),
+        delivery: state === 'queued' || state === 'written' || state === 'failed' ? state : 'unknown'
+      }
+    : null
+}
+
 export function parseSession(raw: unknown): MappingSession | null {
   const s = asRecord(raw)
   const sessionId = asString(s?.sessionId)
@@ -237,6 +263,13 @@ export function parseSession(raw: unknown): MappingSession | null {
     document: asString(s.document) || null,
     createdAt: asString(s.createdAt),
     appliedAt: asString(s.appliedAt) || null,
+    revision: /^[a-f0-9]{24}$/.test(asString(s.revision)) ? asString(s.revision) : '',
+    pendingAnswerIds: asList(s.pendingAnswerIds).filter((v): v is string => typeof v === 'string' && Boolean(v)),
+    batches: asList(s.batches).flatMap(raw => {
+      const batch = parseBatch(raw)
+
+      return batch ? [batch] : []
+    }),
     summary: parseSummary(s.summary),
     questions: asList(s.questions).flatMap(q => {
       const question = parseQuestion(q)
@@ -315,6 +348,51 @@ export async function listMappingSessions(app: string, document: string): Promis
     signedIn: typeof raw?.signedIn === 'boolean' ? raw.signedIn : null,
     connectorMessage: asString(raw?.connectorMessage) || null
   }
+}
+
+export interface MappingCommitIntent {
+  requestId: string
+  revision: string
+  answerIds: string[]
+}
+
+/** Never infer acceptance from counters, auto matches, or an empty question list. */
+export function pendingMappingAnswers(session: MappingSession): string[] {
+  if (session.appliedAt || !session.revision) {
+    return []
+  }
+
+  const committed = new Set(session.batches.flatMap(batch => batch.answerIds))
+
+  return [...new Set(session.pendingAnswerIds)]
+    .filter(id => !committed.has(id) && session.answers.some(answer => answer.answerId === id && answer.undoable))
+    .sort()
+}
+
+export async function applyMapping(
+  sessionId: string,
+  intent: MappingCommitIntent
+): Promise<{ outcome: OutcomeInfo; batch: null } | { outcome: null; batch: MappingBatch }> {
+  if (!intent.answerIds.length || !/^[a-f0-9]{24}$/.test(intent.revision)) {
+    throw new MappingRefusal('MAPPING_COMMIT_REQUIRED', 'MAPPING_COMMIT_REQUIRED')
+  }
+
+  const raw = await call('degram.mapping.apply', { sessionId, ...intent })
+  const outcome = outcomeOf(raw)
+  const batch = parseBatch(asRecord(raw)?.batch)
+
+  if (
+    outcome ||
+    !batch ||
+    batch.batchId !== intent.requestId ||
+    batch.revision !== intent.revision ||
+    JSON.stringify(batch.answerIds) !== JSON.stringify([...intent.answerIds].sort()) ||
+    batch.delivery === 'unknown'
+  ) {
+    return { outcome: outcome ?? { code: 'DG_UNAVAILABLE', reason: 'MALFORMED' }, batch: null }
+  }
+
+  return { outcome: null, batch }
 }
 
 export async function readMappingSession(sessionId: string): Promise<SessionResult> {
