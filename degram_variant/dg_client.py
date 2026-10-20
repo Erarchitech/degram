@@ -82,7 +82,8 @@ class DgClient:
             raise BridgeError(exc.code, None, str(exc).split(": ", 1)[-1]) from exc
 
     def _send(self, method: str, url: str, token: str, what: str, cancel: CancelToken | None, *,
-              body: dict | None = None, refusals: bool = False, read_timeout_s: float | None = None) -> Any:
+              body: dict | None = None, refusals: bool = False, read_timeout_s: float | None = None,
+              refusal_statuses: frozenset[int] = REFUSAL_STATUSES) -> Any:
         check(cancel)
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         content = None
@@ -96,7 +97,7 @@ class DgClient:
                 with client.stream(method, url, headers=headers, content=content) as response:
                     status = response.status_code
                     data = bytearray()
-                    if status == 200 or (refusals and status in REFUSAL_STATUSES):
+                    if status == 200 or (refusals and status in refusal_statuses):
                         for chunk in response.iter_bytes():
                             check(cancel)
                             data += chunk
@@ -109,7 +110,7 @@ class DgClient:
             raise BridgeError(DG_UNAVAILABLE, "UNREACHABLE", f"The DG backend could not be reached ({type(exc).__name__}).") from exc
         if status in (401, 403):
             raise BridgeError(ACCESS_DENIED, f"HTTP_{status}", "The DG backend refused the delegated token for this project.")
-        if refusals and status in REFUSAL_STATUSES:
+        if refusals and status in refusal_statuses:
             raise _refusal(status, bytes(data))
         if status != 200:
             raise BridgeError(DG_UNAVAILABLE, f"HTTP_{status}", f"The DG backend answered HTTP {status}.")
@@ -181,6 +182,26 @@ class DgClient:
 
     def undo_mapping_answer(self, session_id: str, answer_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
         return _session_of(self._mapping("POST", session_id, "undo", cancel, {"answerId": answer_id}))
+
+    # -- property check of the bound project (1303-15) ------------------------------------------------------
+    def property_check(self, action: str, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """``generate``: DG writes the property scripts for the current rules and places the check on the canvas;
+        ``run``: re-places it when the rules' properties changed, then checks the current Design State and paints
+        Revit; ``clear``: removes the colours; ``status``: reads the last result. Always the bound project."""
+        routes = {
+            "generate": ("/scripts/property-calculator/place", {}),
+            "run": ("/scripts/property-check/run", {}),
+            "clear": ("/scripts/property-check/run", {"clear": True}),
+            "status": ("/scripts/property-check/status", {}),
+        }
+        if action not in routes:
+            raise BridgeError(DG_UNAVAILABLE, "BAD_ACTION", f"Unknown property-check action {action!r}.")
+        check(cancel)
+        info, token = self._scope()
+        path, extra = routes[action]
+        return self._send("POST", f"{info.relay_base_url}{path}", token, "property check", cancel,
+                          body={"project": info.project, **extra}, refusals=True, read_timeout_s=150.0,
+                          refusal_statuses=REFUSAL_STATUSES | {422, 502, 503})
 
     def commit_mapping(self, session_id: str, request_id: str, revision: str, answer_ids: list[str],
                        cancel: CancelToken | None = None) -> dict[str, Any]:

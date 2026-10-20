@@ -153,6 +153,60 @@ def _project_graph(args: dict, **_kw) -> str:
     return _outcome_json(read)
 
 
+PROPERTY_CHECK_ACTIONS = ("generate", "run", "clear", "status")
+PROPERTY_CHECK_LINES = 120
+
+
+def _property_check(args: dict, **_kw) -> str:
+    """1303-15: DG writes the scripts that compute the rule properties, places the check on the Grasshopper canvas
+    and runs it against the live Revit model; violating elements are painted in Revit. Bound project only."""
+    from degram_variant import runtime
+    from degram_variant.dg_client import DgRefused
+
+    action = str((args or {}).get("action") or "run")
+    if action not in PROPERTY_CHECK_ACTIONS:
+        return json.dumps({"status": "refused", "code": "BAD_ACTION",
+                           "message": f"action must be one of {', '.join(PROPERTY_CHECK_ACTIONS)}"})
+
+    def call() -> dict[str, Any]:
+        try:
+            data = runtime.get().dg.property_check(action)
+        except DgRefused as exc:
+            return {"status": "refused", "code": exc.code, "message": exc.message}
+        status = data.get("status") if isinstance(data.get("status"), dict) else data
+        out: dict[str, Any] = {"status": "ok", "action": action}
+        if action == "generate" or data.get("refreshed"):
+            placed = data if action == "generate" else data["refreshed"]
+            out["scripts"] = {
+                "resolved": [{k: r.get(k) for k in ("ruleId", "dataPropertyLabel", "calculator", "origin", "resolvedBy")}
+                             for r in placed.get("resolved") or []],
+                "unsupported": placed.get("unsupported") or [],
+                "placed": {k: (placed.get("placed") or {}).get(k) for k in ("created", "replaced", "wires", "warnings")},
+            }
+        if action != "generate":
+            out["finished"] = data.get("finished", True)
+            out["boxes"] = status.get("boxes")
+            out["violations"] = (status.get("violations") or [])[:PROPERTY_CHECK_LINES]
+            out["highlighter"] = (status.get("highlighterReport") or [])[:20]
+            out["calculator"] = (status.get("calculatorReport") or [])[:60]
+            out["messages"] = (status.get("messages") or [])[:30]
+        return out
+
+    return _outcome_json(call)
+
+
+registry.register(
+    name="degram_property_check", toolset="degram", handler=_property_check, check_fn=_is_degram,
+    schema={"name": "degram_property_check",
+            "description": "Check the current Design State of the open Revit model against the rules of the current "
+                           "project. 'generate': DG writes the scripts that compute the properties the rules test "
+                           "(stored scripts are reused, new rules get new ones) and places the check on the "
+                           "Grasshopper canvas; 'run': re-generates if the rules changed, re-reads the model, "
+                           "validates and paints violating elements red, passing ones green in the active Revit view; "
+                           "'clear': removes the colours; 'status': the last result. Always the user's current project.",
+            "parameters": {"type": "object", "additionalProperties": False,
+                           "properties": {"action": {"type": "string", "enum": list(PROPERTY_CHECK_ACTIONS)}},
+                           "required": ["action"]}})
 registry.register(
     name="degram_list_documents", toolset="degram", handler=_list_documents, check_fn=_is_degram,
     schema={"name": "degram_list_documents",

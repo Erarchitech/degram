@@ -88,6 +88,7 @@ class TestAllowlistContents:
         assert ALLOWED_TOOL_NAMES == frozenset({
             "clarify", "todo_list",
             "degram_project_graph", "degram_document_snapshot", "degram_list_documents", "degram_bridge_status",
+            "degram_property_check",
             "mcp__revit__get_revit_status", "mcp__revit__get_revit_model_info", "mcp__revit__list_open_documents",
             "mcp__revit__get_selection_snapshot", "mcp__revit__get_element_properties", "mcp__revit__list_levels",
             "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})

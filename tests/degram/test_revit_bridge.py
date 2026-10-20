@@ -271,7 +271,8 @@ class TestChildLifecycle:
 
 
 class TestDegramToolset:
-    NAMES = ("degram_project_graph", "degram_list_documents", "degram_document_snapshot", "degram_bridge_status")
+    NAMES = ("degram_project_graph", "degram_list_documents", "degram_document_snapshot", "degram_bridge_status",
+             "degram_property_check")
 
     def _call(self, name, args=None):
         from tools.registry import registry
