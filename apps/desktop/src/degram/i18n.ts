@@ -33,6 +33,7 @@ interface TitledCopy {
 export interface DegramCopy {
   /** The product wordmark. Brand text, identical in every locale. */
   brand: string
+  target: { label: string; selected: string; effective: string; none: string; connecting: string; switching: string; busy: string; locked: string; failed: string; config: string; retry: string }
   /** The DeGram sidebar rows (D-42): exactly these seven, in this order. */
   nav: {
     dg: string
@@ -249,6 +250,7 @@ export interface DegramCopy {
 }
 
 export const degramEn: DegramCopy = {
+  target: { label: 'DG environment', selected: 'Selected', effective: 'Effective origin', none: 'No active environment', connecting: 'Reading DG environment…', switching: 'Switching environment…', busy: 'Finish or Stop the current operation, then retry', locked: 'A launch override locks this target. Remove it and restart DeGram', failed: 'Target switch failed. Retry explicitly; no fallback was started.', config: 'Invalid target configuration. Repair it and restart DeGram.', retry: 'Retry target' },
   brand: 'DeGram',
   nav: {
     dg: 'DG',
@@ -496,6 +498,7 @@ export const degramEn: DegramCopy = {
 }
 
 export const degramRu: DegramCopy = {
+  target: { label: 'Среда DG', selected: 'Выбрано', effective: 'Активный адрес', none: 'Нет активной среды', connecting: 'Проверка среды DG…', switching: 'Переключение среды…', busy: 'Завершите или остановите текущую операцию и повторите выбор', locked: 'Адрес задан при запуске. Уберите переопределение и перезапустите DeGram', failed: 'Переключение не удалось. Повторите явно; другая среда не запущена.', config: 'Ошибка конфигурации среды. Исправьте её и перезапустите DeGram.', retry: 'Повторить подключение к среде' },
   brand: 'DeGram',
   nav: {
     dg: 'DG',

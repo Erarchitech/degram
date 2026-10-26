@@ -13,6 +13,15 @@ from .base import JsonValue, Params, Result
 from .registry import method
 
 
+class DegramEnvironmentBarrierParams(Params):
+    environmentId: str
+    generation: int
+
+
+class DegramEnvironmentBarrierResult(Result):
+    ok: bool = True
+
+
 class DegramCredentialsSetParams(Params):
     token: str
     expiresAt: str | float
@@ -41,6 +50,12 @@ class DegramCredentialsClearResult(Result):
     ok: bool = True
 
 
+method("degram.environment.quiesce", params=DegramEnvironmentBarrierParams, result=DegramEnvironmentBarrierResult,
+       doc="Fail closed unless the local DeGram backend has no active work, then reject new work for this generation.")
+method("degram.environment.resume", params=DegramEnvironmentBarrierParams, result=DegramEnvironmentBarrierResult,
+       doc="Reopen only the exact generation quiesced before an aborted pre-persistence environment switch.")
+method("degram.environment.assert_active", params=DegramEnvironmentBarrierParams, result=DegramEnvironmentBarrierResult,
+       doc="Reject a target-bound request while its backend generation is quiesced for an environment switch.")
 method("degram.credentials.set", params=DegramCredentialsSetParams, result=DegramCredentialsSetResult,
        doc="Store the delegated DG token in process memory (variant degram only). Errors: CREDENTIALS_INVALID.")
 method("degram.credentials.clear", params=Params, result=DegramCredentialsClearResult,

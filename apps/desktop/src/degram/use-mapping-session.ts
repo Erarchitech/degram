@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { listMappingSessions, MappingRefusal, type MappingSession, readMappingSession } from './mapping-api'
 import { MAPPING_POLL_MS, needsPolling } from './mapping-view'
 import type { OutcomeInfo } from './use-degram-gateway'
+import { environmentStamp, isCurrentEnvironment } from './use-degram-state'
 
 /** How long after a start the sub-tab keeps looking for the new session. */
 export const START_FOLLOW_MS = 60_000
@@ -45,14 +46,28 @@ export function useMappingSession(app: string, document: string, open: boolean, 
   const [state, setState] = useState<MappingPanelState>(INITIAL)
   const [followUntil, setFollowUntil] = useState(0)
   const generation = useRef(0)
+  const key = JSON.stringify([app, document, scopeKey])
+  const currentKey = useRef(key)
+  const [stateKey, setStateKey] = useState(key)
+
+  if (currentKey.current !== key) {
+    currentKey.current = key
+    generation.current++
+  }
+
   /** The session shown when the followed start began; only a different one ends the follow. */
   const followFrom = useRef<null | string>(null)
 
   /** Read the session `sessionId`, or (without one) find the document's newest session first. */
   const read = useCallback(
     async (sessionId?: string): Promise<void> => {
+      if (key !== currentKey.current) {
+        return
+      }
+
       const gen = ++generation.current
-      const current = () => gen === generation.current
+      const stamp = environmentStamp()
+      const current = () => key === currentKey.current && gen === generation.current && isCurrentEnvironment(stamp)
 
       try {
         let id = sessionId
@@ -110,15 +125,16 @@ export function useMappingSession(app: string, document: string, open: boolean, 
         setState(s => ({ ...s, loading: false, loaded: true, outcome: failure(error) }))
       }
     },
-    [app, document]
+    [app, document, key]
   )
 
   // A new document or scope starts from nothing; collapsing drops in-flight answers but keeps the last view.
   useEffect(() => {
     generation.current++
+    setStateKey(key)
     setState(INITIAL)
     setFollowUntil(0)
-  }, [app, document, scopeKey])
+  }, [key])
 
   useEffect(() => {
     if (!open) {
@@ -153,22 +169,39 @@ export function useMappingSession(app: string, document: string, open: boolean, 
   }, [open, state, following, sessionId, read])
 
   /** A local answer or undo returned the recomputed session: it wins over any read still in flight. */
-  const adopt = useCallback((session: MappingSession) => {
-    generation.current++
-    setState(s => ({ ...s, loading: false, loaded: true, outcome: null, session }))
-  }, [])
+  const adopt = useCallback(
+    (session: MappingSession) => {
+      if (currentKey.current !== key) {
+        return
+      }
+
+      generation.current++
+      setState(s => ({ ...s, loading: false, loaded: true, outcome: null, session }))
+    },
+    [key]
+  )
 
   /** Follow a start: re-read the document's newest session until one other than `fromSessionId` appears. */
   const follow = useCallback(
     (fromSessionId: null | string = null) => {
+      if (currentKey.current !== key) {
+        return
+      }
+
       followFrom.current = fromSessionId
       setFollowUntil(Date.now() + START_FOLLOW_MS)
       void read()
     },
-    [read]
+    [read, key]
   )
 
   const reload = useCallback(() => void read(), [read])
 
-  return { state, adopt, follow, reload, following }
+  return {
+    state: stateKey === key ? state : INITIAL,
+    adopt,
+    follow,
+    reload,
+    following: stateKey === key && following
+  }
 }

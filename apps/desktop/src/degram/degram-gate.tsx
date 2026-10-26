@@ -11,9 +11,10 @@ import { Button } from '@/components/ui/button'
 import { DialogPortalContainerContext } from '@/components/ui/dialog-portal-context'
 import { useI18n } from '@/i18n'
 
+import { DgTargetSelector } from './dg-target-selector'
 import { IsolationBootFailure } from './isolation-boot-failure'
 import { DgUnreachable, SignInState } from './sign-in-state'
-import { degramBridge, dismissDegramNotice, refreshDegramState, useDegram } from './use-degram-state'
+import { degramBridge, dismissDegramNotice, isEnvironmentReady, refreshDegramState, useDegram } from './use-degram-state'
 
 function Surface({ children }: { children: React.ReactNode }) {
   // Popovers opened from inside the surface (the project picker) portal into it: a body-level popover would sit
@@ -29,6 +30,7 @@ function Surface({ children }: { children: React.ReactNode }) {
       {/* Keeps the native window drag handle reachable above the surface. */}
       <div className="h-8 shrink-0 [-webkit-app-region:drag]" />
       <DialogPortalContainerContext.Provider value={node}>
+        <DgTargetSelector />
         <div className="min-h-0 flex-1">{children}</div>
       </DialogPortalContainerContext.Provider>
     </div>
@@ -78,7 +80,7 @@ export function OpenProjectNotices() {
 }
 
 export function DegramGate() {
-  const { bootError, loaded, state } = useDegram()
+  const { bootError, environment, loaded, state } = useDegram()
 
   if (bootError) {
     return (
@@ -88,7 +90,7 @@ export function DegramGate() {
     )
   }
 
-  if (!loaded || state?.auth.kind !== 'signed-in' || state.scope.status !== 'ready') {
+  if (!loaded || !isEnvironmentReady(environment) || state?.auth.kind !== 'signed-in' || state.scope.status !== 'ready') {
     return <Surface><FirstScreen /></Surface>
   }
 

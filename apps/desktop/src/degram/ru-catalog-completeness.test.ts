@@ -97,8 +97,10 @@ function leaves(value: unknown, path = ''): Leaf[] {
 const kindOf = (value: unknown) => (Array.isArray(value) ? 'array' : typeof value)
 
 // D-13: DeGram/DG/Revit/Grasshopper are product names; STDIO, OAuth, URL,
-// KEY/value and the MCP command example are protocol or literal input tokens.
-// Add exceptions only after checking the specific value in EN/RU.
+// KEY/value, opaque identifiers and literal input tokens are intentionally
+// identical. The reviewed DeGram-visible Settings leaves below include protocol
+// labels, product names and examples that cannot be translated without changing
+// their accepted input or displayed identity.
 const IDENTICAL_COPY = new Set([
   'degram.brand',
   'degram.nav.dg',
@@ -124,6 +126,17 @@ const IDENTICAL_COPY = new Set([
   'composer.url',
   'composer.urlPlaceholder',
   'install.remoteUrlPlaceholder',
+  'settings.plugins.installModal.repoPlaceholder',
+  'settings.vault.originPlaceholder',
+  'settings.vault.originPlaceholderCheckout',
+  'settings.vault.identifierShown',
+  'settings.vault.cvcField',
+  'settings.notifications.testTitle',
+  'settings.appearance.installPlaceholder',
+  'settings.connections.kindCloud',
+  'settings.connections.kindSsh',
+  'settings.gateway.cloudTitle',
+  'settings.gateway.cloudSignInTitle',
   'statusStack.exit',
   'cron.deliveryLabels.telegram',
   'cron.deliveryLabels.discord',
@@ -148,7 +161,8 @@ const IDENTICAL_COPY = new Set([
 // English words such as Save and Tools are not identifiers even if they contain
 // no spaces: every identical leaf is reviewed explicitly above.
 const IDENTIFIER_ARGS: Record<string, number[]> = {
-  'settings.toolsets.webCapabilitySelectedMessage': [1]
+  'settings.toolsets.webCapabilitySelectedMessage': [1],
+  'settings.plugins.installModal.missingEnv': [0]
 }
 
 function assertCopy(english: unknown, translated: unknown, prefix: string): void {

@@ -82,7 +82,7 @@ export const DG_VIEW_WEB_PREFERENCES = Object.freeze({
   allowRunningInsecureContent: false
 })
 
-export type DgViewWebPreferences = typeof DG_VIEW_WEB_PREFERENCES
+export type DgViewWebPreferences = Omit<typeof DG_VIEW_WEB_PREFERENCES, 'partition'> & { partition: string }
 
 export interface DgWebContentsLike {
   loadURL: (url: string) => Promise<void>
@@ -110,6 +110,8 @@ export interface DgWebViewLike {
 
 export interface DgViewDeps {
   origin: string
+  partition?: string
+  isCurrent?: () => boolean
   /** `new WebContentsView({ webPreferences })`. */
   createView: (webPreferences: DgViewWebPreferences) => DgWebViewLike
   emit: (event: DegramEvent) => void
@@ -225,7 +227,7 @@ function validBounds(bounds: DgBounds): boolean {
 
 export function createDgView(deps: DgViewDeps): DgView {
   const { origin, logger } = deps
-  const view: DgWebViewLike = deps.createView(DG_VIEW_WEB_PREFERENCES)
+  const view: DgWebViewLike = deps.createView({ ...DG_VIEW_WEB_PREFERENCES, partition: deps.partition ?? DEGRAM_DG_PARTITION })
   const contents = view.webContents
   let state: DgViewState = { page: 'blank', mode: 'graph' }
   let lang: DgLocale | null = null
@@ -234,6 +236,7 @@ export function createDgView(deps: DgViewDeps): DgView {
   let loadedBase: string | null = null
 
   const load = async (url: string): Promise<void> => {
+    if (deps.isCurrent && !deps.isCurrent()) return
     try {
       await contents.loadURL(url)
     } catch (error) {
@@ -258,7 +261,7 @@ export function createDgView(deps: DgViewDeps): DgView {
   contents.on('will-attach-webview', (event: { preventDefault: () => void }) => event.preventDefault())
 
   contents.on('did-navigate-in-page', (_event: unknown, url: string, isMainFrame: boolean) => {
-    if (!isMainFrame || !isAllowedDgUrl(url, origin)) {
+    if ((deps.isCurrent && !deps.isCurrent()) || !isMainFrame || !isAllowedDgUrl(url, origin)) {
       return
     }
     let hash: string

@@ -13,7 +13,7 @@ import { Loader } from '@/components/ui/loader'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
-import { degramBridge, useDegram } from './use-degram-state'
+import { degramBridge, isEnvironmentReady, useDegram } from './use-degram-state'
 import { useDgBounds } from './use-dg-bounds'
 
 /** The text wordmark: Oswald 500, uppercase, 0.02em tracking (UI-SPEC Display role). Brand moments only. */
@@ -59,11 +59,11 @@ export function DgUnreachable({ action, actionLabel }: { action: () => void; act
 export function SignInState({ children }: { children?: React.ReactNode } = {}) {
   const { t } = useI18n()
   const copy = t.degram
-  const { loaded, painted, sessionEnded, state } = useDegram()
+  const { environment, loaded, painted, sessionEnded, state } = useDegram()
   const hostRef = useRef<HTMLDivElement>(null)
   const unreachable = state?.dg.reachable === false
   // The native view stays hidden until the login page painted, so the loader is never covered by a blank view.
-  const showView = loaded && painted && !unreachable
+  const showView = loaded && painted && !unreachable && isEnvironmentReady(environment)
 
   useDgBounds(hostRef, showView)
 

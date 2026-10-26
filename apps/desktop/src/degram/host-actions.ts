@@ -12,17 +12,8 @@ import { interruptSession, stopRequest } from './request-lifecycle'
  * Resolves when the interrupt settled, so a caller can switch scope or sign out right after.
  */
 export async function stopActiveResponse(): Promise<void> {
-  let pending: Promise<unknown> = Promise.resolve()
-
-  stopRequest({
-    interrupt: () => {
-      pending = interruptSession($activeSessionId.get())()
-
-      return pending
-    }
-  })
-
-  await pending.catch(() => undefined)
+  const interrupt = interruptSession($activeSessionId.get())
+  await stopRequest({ interrupt })
 }
 
 /** Drop the open session for a fresh draft: a new scope never reuses the previous project's transcript. */

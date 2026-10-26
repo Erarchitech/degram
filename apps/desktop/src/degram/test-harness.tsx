@@ -54,6 +54,12 @@ export function install(initial: DegramState): Harness {
   let signOutListener: (() => void) | null = null
 
   const bridge: DegramBridge = {
+    getEnvironment: vi.fn(async () => { throw new Error('environment fixture not configured') }),
+    onEnvironment: vi.fn(() => () => undefined),
+    selectTarget: vi.fn(async () => { throw new Error('environment fixture not configured') }),
+    retryTarget: vi.fn(async () => { throw new Error('environment fixture not configured') }),
+    acquireOperation: vi.fn(async () => { throw new Error('environment fixture not configured') }),
+    releaseOperation: vi.fn(async () => undefined),
     getState: vi.fn(async () => initial),
     onState: vi.fn(cb => {
       stateListener = cb

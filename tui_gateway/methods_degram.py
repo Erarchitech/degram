@@ -26,6 +26,122 @@ def _degram_err(rid, code: int, name: str, message: str):
     return _err(rid, code, f"{name}: {message}", {"code": name})
 
 
+def _environment_barrier_params(rid, params: dict):
+    from degram_variant.lockdown import is_degram
+    if not is_degram():
+        return None, _degram_err(rid, 4403, "NOT_DEGRAM", "environment control is only available in variant degram")
+    environment_id = params.get("environmentId")
+    generation = params.get("generation")
+    if not isinstance(environment_id, str) or not environment_id.startswith("dg-env-v1-") or len(environment_id) != 74:
+        return None, _degram_err(rid, 4400, "BAD_ENVIRONMENT", "environmentId is invalid")
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+        return None, _degram_err(rid, 4400, "BAD_GENERATION", "generation is invalid")
+    return {"environmentId": environment_id, "generation": generation}, None
+
+
+def _degram_has_active_work() -> bool:
+    # The session registry is the gateway authority. Renderer lifecycle state is intentionally
+    # absent here: a streaming/native operation remains active until this registry settles.
+    with _sessions_lock:
+        return any(isinstance(session, dict) and (session.get("running") or session.get("_compute_host_active"))
+                   for session in _sessions.values())
+
+
+@method("degram.environment.quiesce")
+def _(rid, params: dict) -> dict:
+    global _degram_environment_barrier
+    target, error = _environment_barrier_params(rid, params)
+    if error:
+        return error
+    with _degram_environment_lock:
+        if _degram_environment_barrier is not None:
+            if _degram_environment_barrier != target:
+                return _degram_err(rid, 4090, "ENVIRONMENT_GENERATION_MISMATCH", "another generation is quiesced")
+            return _ok(rid, {"ok": True})
+        try:
+            if _degram_environment_work or _degram_has_active_work():
+                return _degram_err(rid, 4090, "ENVIRONMENT_BUSY", "active work must stop before switching target")
+        except Exception:
+            # A switch cannot infer safety from a failed activity probe.
+            return _degram_err(rid, 5036, "ENVIRONMENT_ACTIVITY_UNKNOWN", "could not confirm backend activity")
+        _degram_environment_barrier = target
+    return _ok(rid, {"ok": True})
+
+
+@method("degram.environment.resume")
+def _(rid, params: dict) -> dict:
+    global _degram_environment_barrier
+    target, error = _environment_barrier_params(rid, params)
+    if error:
+        return error
+    with _degram_environment_lock:
+        if _degram_environment_barrier != target:
+            return _degram_err(rid, 4090, "ENVIRONMENT_GENERATION_MISMATCH", "only the quiesced generation may resume")
+        _degram_environment_barrier = None
+    return _ok(rid, {"ok": True})
+
+
+@method("degram.environment.assert_active")
+def _(rid, params: dict) -> dict:
+    target, error = _environment_barrier_params(rid, params)
+    if error:
+        return error
+    with _degram_environment_lock:
+        if _degram_environment_barrier is not None:
+            return _degram_err(rid, 4090, "ENVIRONMENT_QUIESCED", "target is quiesced for an environment switch")
+    return _ok(rid, {"ok": True})
+
+
+# Only switch control and credential disposal may enter a frozen backend. In particular, an
+# untagged request or a forged generation cannot reopen admission. Stock Hermes is unchanged.
+_DEGRAM_ENVIRONMENT_CONTROL = frozenset({
+    "degram.environment.quiesce", "degram.environment.resume", "degram.environment.assert_active",
+    "degram.credentials.clear", "degram.credentials.status",
+})
+
+
+def _degram_environment_acquire(rid, method_name: str, params: dict):
+    global _degram_environment_work
+    from degram_variant.lockdown import DegramLockedError, assert_rpc_allowed, is_degram, rpc_locked_response
+    if not is_degram():
+        return False, None
+    try:
+        assert_rpc_allowed(method_name, params)
+    except DegramLockedError as exc:
+        return False, rpc_locked_response(rid, exc, _err)
+    if method_name in _DEGRAM_ENVIRONMENT_CONTROL:
+        return False, None
+    with _degram_environment_lock:
+        if _degram_environment_barrier is not None:
+            return False, _degram_err(rid, 4090, "ENVIRONMENT_QUIESCED", "backend is quiesced for an environment switch")
+        _degram_environment_work += 1
+    return True, None
+
+
+def _degram_environment_release():
+    global _degram_environment_work
+    with _degram_environment_lock:
+        _degram_environment_work -= 1
+
+
+def _degram_environment_request_allowed(rid, params: dict):
+    """Validate optional metadata; dispatcher admission is authoritative even without it."""
+    with _degram_environment_lock:
+        if _degram_environment_barrier is not None:
+            return _degram_err(rid, 4090, "ENVIRONMENT_QUIESCED", "backend is quiesced for an environment switch")
+    target = params.get("_degram_environment")
+    if target is None:
+        return None
+    if not isinstance(target, dict):
+        return _degram_err(rid, 4400, "BAD_ENVIRONMENT", "target-bound request has invalid environment metadata")
+    normalized, error = _environment_barrier_params(rid, target)
+    if error:
+        return error
+    if _degram_environment_barrier == normalized:
+        return _degram_err(rid, 4090, "ENVIRONMENT_QUIESCED", "target is quiesced for an environment switch")
+    return None
+
+
 @method("degram.credentials.set")
 def _(rid, params: dict) -> dict:
     from degram_variant.credentials import DegramCredentialsError, credentials
@@ -82,6 +198,8 @@ def _outcome(rid, exc):
 
 @method("degram.documents.list")
 def _(rid, params: dict) -> dict:
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, "degram.documents.list")) is not None:
         return refused
     from degram_variant import runtime
@@ -101,6 +219,8 @@ def _(rid, params: dict) -> dict:
 
 @method("degram.documents.pin")
 def _(rid, params: dict) -> dict:
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, "degram.documents.pin")) is not None:
         return refused
     from degram_variant import runtime
@@ -127,6 +247,8 @@ def _(rid, params: dict) -> dict:
 @method("degram.documents.unpin")
 def _(rid, params: dict) -> dict:
     """D-29: forget one bridge's pinned document (``app``) or every pin (``app`` null); the other bridge keeps its own."""
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, "degram.documents.unpin")) is not None:
         return refused
     from degram_variant import runtime
@@ -145,6 +267,8 @@ def _(rid, params: dict) -> dict:
 
 @method("degram.context.preview")
 def _(rid, params: dict) -> dict:
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, "degram.context.preview")) is not None:
         return refused
     from degram_variant import runtime
@@ -158,6 +282,8 @@ def _(rid, params: dict) -> dict:
 
 @method("degram.context.send")
 def _(rid, params: dict) -> dict:
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, "degram.context.send")) is not None:
         return refused
     from degram_variant import relay_headers, runtime
@@ -186,6 +312,8 @@ def _(rid, params: dict) -> dict:
 
 @method("degram.context.cancel")
 def _(rid, params: dict) -> dict:
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, "degram.context.cancel")) is not None:
         return refused
     from degram_variant import runtime
@@ -201,7 +329,9 @@ def _(rid, params: dict) -> dict:
 _REFUSAL_RPC_CODES = {400: 4400, 404: 4404, 409: 4409}
 
 
-def _mapping_call(rid, name: str, call) -> dict:
+def _mapping_call(rid, name: str, call, params: dict) -> dict:
+    if (refused := _degram_environment_request_allowed(rid, params)) is not None:
+        return refused
     if (refused := _not_degram(rid, name)) is not None:
         return refused
     from degram_variant import runtime
@@ -226,43 +356,43 @@ def _mapping_call(rid, name: str, call) -> dict:
 @method("degram.mapping.sessions")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.sessions",
-                         lambda m, t: m.sessions(params.get("document"), params.get("app"), t))
+                         lambda m, t: m.sessions(params.get("document"), params.get("app"), t), params)
 
 
 @method("degram.mapping.session")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.session",
-                         lambda m, t: {"session": m.session(params.get("sessionId"), t)})
+                         lambda m, t: {"session": m.session(params.get("sessionId"), t)}, params)
 
 
 @method("degram.mapping.answer")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.answer", lambda m, t: {"session": m.answer(
-        params.get("sessionId"), params.get("questionId"), params.get("optionId"), params.get("groupIds"), t)})
+        params.get("sessionId"), params.get("questionId"), params.get("optionId"), params.get("groupIds"), t)}, params)
 
 
 @method("degram.mapping.undo")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.undo",
-                         lambda m, t: {"session": m.undo(params.get("sessionId"), params.get("answerId"), t)})
+                         lambda m, t: {"session": m.undo(params.get("sessionId"), params.get("answerId"), t)}, params)
 
 
 @method("degram.mapping.apply")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.apply", lambda m, t: {"batch": m.apply(
-        params.get("sessionId"), params.get("requestId"), params.get("revision"), params.get("answerIds"), t)})
+        params.get("sessionId"), params.get("requestId"), params.get("revision"), params.get("answerIds"), t)}, params)
 
 
 @method("degram.mapping.start")
 def _(rid, params: dict) -> dict:
-    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(app=params.get("app"), cancel=t))
+    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(app=params.get("app"), cancel=t), params)
 
 
 @method("degram.mapping.focus")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.focus", lambda m, t: m.focus(
         component_id=params.get("componentId"), app=params.get("app"), session_id=params.get("sessionId"),
-        item_id=params.get("itemId"), cancel=t))
+        item_id=params.get("itemId"), cancel=t), params)
 
 
 def register(server) -> None:

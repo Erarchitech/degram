@@ -1,4 +1,7 @@
 import fs from 'node:fs'
+import { environmentIdForOrigin } from './dg-target-config'
+
+const environment = { origin: 'http://dg.test:8080', environmentId: environmentIdForOrigin('http://dg.test:8080') }
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,6 +40,7 @@ interface Rig {
   /** cleanupLegacy(keep) calls (the one-time D-30 cleanup). */
   cleanups: ScopeKey[][]
   cleanupFail: { error: Error | null }
+  migrationFail: { error: Error | null }
   ensured: ScopeKey[]
   released: string[]
   viewResets: number
@@ -74,6 +78,7 @@ function rig(
   const purgedProjects: Rig['purgedProjects'] = []
   const cleanups: ScopeKey[][] = []
   const cleanupFail: Rig['cleanupFail'] = { error: null }
+  const migrationFail: Rig['migrationFail'] = { error: null }
   const ensured: ScopeKey[] = []
   const released: string[] = []
   const rpcFail = new Map<string, Error>()
@@ -107,6 +112,7 @@ function rig(
     purgedProjects,
     cleanups,
     cleanupFail,
+    migrationFail,
     ensured,
     released,
     viewResets: 0,
@@ -122,6 +128,7 @@ function rig(
   out.scope = createScopeController({
     session,
     origin: dg.origin,
+    environmentId: environmentIdForOrigin(dg.origin),
     clock,
     logger,
     emit: event => {
@@ -152,6 +159,12 @@ function rig(
         purgedProjects.push({ user, project })
 
         return []
+      },
+      migrateLegacy: async () => {
+        log.push('profiles.migrateLegacy')
+        if (migrationFail.error) {
+          throw migrationFail.error
+        }
       },
       cleanupLegacy: async keep => {
         log.push('profiles.cleanupLegacy')
@@ -248,11 +261,12 @@ describe('createScopeController: explicit project selection (D-19)', () => {
     const result = await r.scope.selectProject('alpha')
 
     expect(result).toMatchObject({ ok: true })
-    expect(r.ensured).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
+    expect(r.ensured).toEqual([{ ...environment, user: 'alice', company: 'ACME', project: 'alpha' }])
 
     const profile = 'scope-alice-ACME-alpha'
 
     expect(r.log.entries.filter(e => !e.startsWith('event:'))).toEqual([
+      'profiles.migrateLegacy',
       'profiles.cleanupLegacy',
       'profiles.ensure:alpha',
       `backend.ensure:${profile}`,
@@ -411,8 +425,8 @@ describe('createScopeController: scope switch fully resets context', () => {
     const r = rig([{ project: 'alpha' }, { project: 'beta' }])
     await r.scope.selectProject('alpha')
     const failing = createScopeController({
-      session: r.session, origin: r.dg.origin, clock: r.clock, logger: r.logger, emit: event => r.events.push(event),
-      profiles: { ensure: async key => ({ profile: profileFor(key) }), purge: async () => undefined, purgeProject: async () => [], cleanupLegacy: async () => ({ ran: false, failed: [] }) },
+      session: r.session, origin: r.dg.origin, environmentId: environment.environmentId, clock: r.clock, logger: r.logger, emit: event => r.events.push(event),
+      profiles: { ensure: async key => ({ profile: profileFor(key) }), purge: async () => undefined, purgeProject: async () => [], migrateLegacy: async () => undefined, cleanupLegacy: async () => ({ ran: false, failed: [] }) },
       backend: { ensure: async () => ({ call: async () => undefined }), release: async () => { throw new Error('release failed') } },
       view: { reset: async () => undefined, clearStorage: async () => undefined }
     })
@@ -484,7 +498,7 @@ describe('createScopeController: failures before the credential exists', () => {
 
     const broken = createScopeController({
       session: r.session,
-      origin: r.dg.origin,
+      origin: r.dg.origin, environmentId: environment.environmentId,
       clock: r.clock,
       logger: r.logger,
       emit: () => undefined,
@@ -492,7 +506,7 @@ describe('createScopeController: failures before the credential exists', () => {
         ensure,
         purge: async () => undefined,
         purgeProject: async () => [],
-        cleanupLegacy: async () => ({ ran: false, failed: [] })
+        migrateLegacy: async () => undefined, cleanupLegacy: async () => ({ ran: false, failed: [] })
       },
       backend: { ensure: vi.fn(), release: vi.fn() },
       view: { reset: async () => undefined, clearStorage: async () => undefined }
@@ -789,7 +803,7 @@ describe('access revoked for the active project (403 / membership loss)', () => 
       'view.reset',
       'event:access-revoked'
     ])
-    expect(r.purged).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
+    expect(r.purged).toEqual([{ ...environment, user: 'alice', company: 'ACME', project: 'alpha' }])
     // every profile of this user + project under any company key goes too (G-15)
     expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'alpha' }])
     expect(r.events).toEqual([{ type: 'access-revoked', project: 'alpha', purged: true }])
@@ -824,7 +838,7 @@ describe('access revoked for the active project (403 / membership loss)', () => 
 
     await r.clock.advance(HEARTBEAT_MS)
 
-    expect(r.purged).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
+    expect(r.purged).toEqual([{ ...environment, user: 'alice', company: 'ACME', project: 'alpha' }])
   })
 
   it('reports purged:false when the profile purge fails but still clears credential, scope and view', async () => {
@@ -849,7 +863,7 @@ describe('access revoked for the active project (403 / membership loss)', () => 
     const result = await r.scope.selectProject('alpha')
 
     expect(result).toMatchObject({ ok: false, code: 'ACCESS_DENIED' })
-    expect(r.purged).toEqual([{ user: 'alice', company: 'ACME', project: 'alpha' }])
+    expect(r.purged).toEqual([{ ...environment, user: 'alice', company: 'ACME', project: 'alpha' }])
     expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'alpha' }])
     expect(r.released).toEqual([]) // the exchange rejected access before a backend was started
     expect(r.ensured).toEqual([])
@@ -969,7 +983,7 @@ describe('a refused selection leaves the open project running (F-07, D-48, T-130
     const result = await r.scope.selectProject('beta')
 
     expect(result).toMatchObject({ ok: false, code: 'ACCESS_DENIED' })
-    expect(r.purged).toEqual([{ user: 'alice', company: 'GLOBEX', project: 'beta' }])
+    expect(r.purged).toEqual([{ ...environment, user: 'alice', company: 'GLOBEX', project: 'beta' }])
     expect(r.purgedProjects).toEqual([{ user: 'alice', project: 'beta' }])
     expect(r.events).toEqual([{ type: 'access-revoked', project: 'beta', purged: true }])
     expect(r.released).toEqual([])
@@ -1113,6 +1127,57 @@ describe('forwarded agent outcomes', () => {
   })
 })
 
+describe('environment switching', () => {
+  const stamp = { environmentId: environment.environmentId, generation: 3 }
+
+  it('freezes project admission before backend quiesce and resumes only explicitly', async () => {
+    const r = rig()
+    await r.scope.selectProject('alpha')
+    await r.scope.quiesceForEnvironmentSwitch(stamp)
+    const before = r.rpcCalls.length
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: false, code: 'SUPERSEDED' })
+    expect(r.rpcCalls).toHaveLength(before)
+    await r.scope.resumeForEnvironmentSwitch(stamp)
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: true })
+  })
+
+  it('refuses a switch during scope opening, before the backend has returned', async () => {
+    const r = rig()
+    let finish!: () => void
+    r.backendGate.promise = new Promise(resolve => { finish = resolve })
+    const opening = r.scope.selectProject('alpha')
+    await new Promise(resolve => setImmediate(resolve))
+    await expect(r.scope.quiesceForEnvironmentSwitch(stamp)).rejects.toThrow(/busy/)
+    finish()
+    expect(await opening).toMatchObject({ ok: true })
+  })
+
+  it('refuses unknown activity after credential handoff fails, then releases the retained profile', async () => {
+    const r = rig()
+    r.rpcFail.set('degram.credentials.set', new Error('gateway disconnected'))
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: false, code: 'CREDENTIALS_REJECTED' })
+    await expect(r.scope.quiesceForEnvironmentSwitch(stamp)).rejects.toThrow(/activity unknown/)
+    await r.scope.closeForEnvironmentSwitch()
+    expect(r.released).toEqual(['scope-alice-ACME-alpha'])
+  })
+
+  it('retains strict teardown failures and never wipes partition storage', async () => {
+    const r = rig()
+    await r.scope.selectProject('alpha')
+    r.rpcFail.set('degram.credentials.clear', new Error('clear failed'))
+    await expect(r.scope.closeForEnvironmentSwitch()).rejects.toThrow('clear failed')
+    expect(r.released).toEqual([])
+    expect(r.clock.activeIntervals()).toBe(0)
+    r.rpcFail.delete('degram.credentials.clear')
+    await r.scope.closeForEnvironmentSwitch()
+    expect(r.released).toEqual(['scope-alice-ACME-alpha'])
+    expect(r.storageClears).toBe(0)
+    expect(r.purged).toEqual([])
+    await r.session.refresh()
+    expect(r.clock.activeIntervals()).toBe(0)
+  })
+})
+
 describe('dispose', () => {
   it('stops every timer', async () => {
     const r = rig()
@@ -1135,24 +1200,35 @@ describe('one-time cleanup of profiles made before scope manifests (D-30)', () =
 
     expect(r.cleanups).toEqual([
       [
-        { user: 'alice', company: 'ACME', project: 'alpha' },
-        { user: 'alice', company: null, project: 'beta' }
+        { ...environment, user: 'alice', company: 'ACME', project: 'alpha' },
+        { ...environment, user: 'alice', company: null, project: 'beta' }
       ]
     ])
     expect(r.log.indexOf('profiles.cleanupLegacy')).toBeLessThan(r.log.indexOf('profiles.ensure:alpha'))
   })
 
-  it('a failing cleanup never blocks opening a project and is not retried within the run', async () => {
+  it('fails closed before ensure when migration/cleanup fails and allows an explicit retry', async () => {
     const r = rig()
-
     r.cleanupFail.error = new Error('python exploded')
-
-    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: true })
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: false, code: 'PROFILE_FAILED' })
+    expect(r.ensured).toHaveLength(0)
     expect(r.logger.warn).toHaveBeenCalled()
+    r.cleanupFail.error = null
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: true })
+    expect(r.cleanups).toHaveLength(2)
+  })
 
-    await r.scope.selectProject('alpha')
-
-    expect(r.cleanups).toHaveLength(1)
+  it('does not ensure or start a backend after a migration failure, and heartbeat handles the rejection', async () => {
+    const r = rig()
+    r.migrationFail.error = new Error('backend still running')
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: false, code: 'PROFILE_FAILED' })
+    expect(r.ensured).toEqual([])
+    expect(r.cleanups).toEqual([])
+    expect(r.log.entries.some(line => line.startsWith('backend.ensure:'))).toBe(false)
+    await expect(r.scope.checkAccess('heartbeat')).resolves.toBeUndefined()
+    r.migrationFail.error = null
+    expect(await r.scope.selectProject('alpha')).toMatchObject({ ok: true })
+    expect(r.log.indexOf('profiles.migrateLegacy')).toBeLessThan(r.log.indexOf('profiles.cleanupLegacy'))
   })
 
   it('also runs from the access check after sign-in, before any project is opened', async () => {

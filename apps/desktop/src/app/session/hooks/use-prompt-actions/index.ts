@@ -701,12 +701,15 @@ export function usePromptActions({
       setBusy(false)
     }
 
-    // Variant degram: the request state (and a bridge read in flight) clears in this very frame.
-    degramOnStop()
+    // Variant degram: paint Stop now, but retain its target lease until interrupt settles.
+    let settleDegramStop = () => undefined as void
+    const degramStop = new Promise<void>(resolve => { settleDegramStop = resolve })
+    degramOnStop(degramStop)
     setAwaitingResponse(false)
     setTurnStartedAt(null)
 
     if (!sessionId) {
+      settleDegramStop()
       releaseBusy()
       setMessages(finalizeStoppedMessages($messages.get()))
 
@@ -768,6 +771,8 @@ export function usePromptActions({
     } catch (err) {
       releaseBusy()
       notifyError(err, copy.stopFailed)
+    } finally {
+      settleDegramStop()
     }
   }, [activeSessionIdRef, busyRef, copy.stopFailed, requestGateway, selectedStoredSessionIdRef, updateSessionState])
 

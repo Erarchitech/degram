@@ -15,8 +15,8 @@
 // The pool arbiter (electron/pool-retire.ts) must also never choose the active scope as an LRU or foreground-recovery
 // victim: `guardPrepare` wraps its `prepare` step, and a null token means «not retired».
 
-/** `scope-` + 16 lowercase hex (degram_variant/profiles.py profile_name_for_scope), bare or `conn:local::`-prefixed. */
-export const SCOPE_PROFILE_KEY = /^(?:conn:local::)?scope-[0-9a-f]{16}$/
+/** Legacy 16-hex or environment-owned 32-hex profile, bare or `conn:local::`-prefixed. */
+export const SCOPE_PROFILE_KEY = /^(?:conn:local::)?scope-(?:[0-9a-f]{16}|[0-9a-f]{32})$/
 
 const LOCAL_PREFIX = 'conn:local::'
 

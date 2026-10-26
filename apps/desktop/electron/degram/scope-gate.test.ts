@@ -26,10 +26,14 @@ const gateWith = () => {
 }
 
 describe('scope profile names', () => {
-  it('matches exactly `scope-` + 16 lowercase hex, bare or as the local pool key', () => {
+  it('matches legacy 16-hex and environment-owned 32-hex names, bare or as the local pool key', () => {
     expect(SCOPE_PROFILE_KEY.test(A)).toBe(true)
     expect(isScopeProfile(`conn:local::${A}`)).toBe(true)
     expect(isScopeProfile(A.toUpperCase())).toBe(true)
+    const modern = `scope-${'a'.repeat(32)}`
+    expect(isScopeProfile(modern)).toBe(true)
+    expect(isScopeProfile(`conn:local::${modern}`)).toBe(true)
+    expect(() => gateWith().gate.assertCanStart(modern)).toThrow(/no longer exists/)
 
     for (const other of ['default', 'scope-', 'scope-123', `${A}0`, `x${A}`, 'conn:ssh::' + A, 'work', '']) {
       expect(isScopeProfile(other)).toBe(false)
@@ -188,7 +192,7 @@ describe('main.ts wiring (source pins; main.ts cannot be imported in a unit test
 
   it('hands the scope controller allow/release and gates both backend start paths for the DeGram identity', () => {
     expect(main).toContain("import { createScopeBackendGate } from './degram/scope-gate'")
-    expect(main).toMatch(/ensure: async \(profile: string\) => \{\n\s*\/\/[^\n]*\n\s*scopeGate\.allow\(profile\)\n\s*await ensureBackend\(profile,/)
+    expect(main).toMatch(/ensure: async \(profile: string\) => \{\n\s*\/\/[^\n]*\n\s*if \(!descriptor\.isCurrent\(\)\) throw new Error\('degram: obsolete environment'\)\n\s*scopeGate\.allow\(profile\)\n\s*await ensureBackend\(profile,/)
     expect(main).toMatch(/scopeGate\.release\(profile, \(\): Promise<void> => teardownPoolBackendAndWait\(profile\)\)/)
     // ensureBackend and ensureRegistryBackend (the local source): after the deletion gate, only for the DeGram identity.
     expect(main.match(/if \(PRODUCT_IDENTITY\.degram\) \{\n\s*scopeGate\.assertCanStart\((key|profileKey)\)\n\s*\}/g)).toHaveLength(2)

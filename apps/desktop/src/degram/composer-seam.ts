@@ -15,11 +15,12 @@ import { registry } from '@/contrib/registry'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $activeGatewayProfile } from '@/store/profile'
 
-import { $documents } from './documents-store'
+import { $documents, scopeKeyOf } from './documents-store'
 import {
   $lifecycle,
   clearArmed,
   composerGate,
+  hasTargetBoundSend,
   markSendFailed,
   markSent,
   routeMismatch,
@@ -66,11 +67,12 @@ export async function degramPromptSubmit<R>(rpc: Rpc, params: SubmitParams, time
 
   // The one hard check behind the disabled Send button: a turn never goes out on the route of another scope
   // (G-7, T-1301-18-02). Refused before the machine enters `streaming` and before any RPC.
-  if (routeMismatch()) {
+  if (!hasTargetBoundSend(params.text) || routeMismatch()) {
     throw new Error(`${ROUTE_MISMATCH}: the chat is not on the profile of the selected project`)
   }
 
   const plan = takeSendPlan(params.text)
+  const key = scopeKeyOf($degram.get())
 
   markSent(params.session_id, params.text)
 
@@ -83,20 +85,26 @@ export async function degramPromptSubmit<R>(rpc: Rpc, params: SubmitParams, time
         )
       : await rpc<R>('prompt.submit', params, timeoutMs)
 
+    if (key !== scopeKeyOf($degram.get())) {
+      throw new Error('degram: obsolete environment')
+    }
+
     clearArmed()
 
     return result
   } catch (error) {
-    markSendFailed(error instanceof Error ? error.message : String(error))
+    if (key === scopeKeyOf($degram.get())) {
+      markSendFailed(error instanceof Error ? error.message : String(error))
+    }
 
     throw error
   }
 }
 
 /** The composer's Stop (the stock cancel already sends `session.interrupt`): clear the request state and the read. */
-export function degramOnStop(): void {
+export function degramOnStop(interrupt?: Promise<unknown>): void {
   if ($degramEnabled.get()) {
-    stopRequest()
+    void stopRequest(interrupt ? { interrupt: () => interrupt } : {})
   }
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createDegramRuntime, DEGRAM_CHANNELS, type DegramRuntime, registerDegramIpc } from './ipc'
 import type { BackendHandle, ScopeKey } from './scope'
+import { environmentIdForOrigin } from './dg-target-config'
 import {
   createFakeClock,
   createFakeDg,
@@ -16,6 +17,7 @@ type Sent = { channel: string; payload: unknown }
 function rig(
   options: {
     signedIn?: boolean
+    generation?: number
     memberships?: { project: string; company?: string | null }[]
   } = {}
 ) {
@@ -58,6 +60,8 @@ function rig(
 
   const runtime = createDegramRuntime({
     origin: dg.origin,
+    environmentId: environmentIdForOrigin(dg.origin),
+    generation: options.generation,
     fetch: dg.fetch,
     clock,
     logger,
@@ -73,6 +77,7 @@ function rig(
 
         return []
       },
+      migrateLegacy: async () => undefined,
       cleanupLegacy: async () => ({ ran: false, failed: [] })
     },
     backend: { ensure: async () => handle, release: async () => undefined },
@@ -102,6 +107,18 @@ const states = (sent: Sent[]) => sent.filter(s => s.channel === DEGRAM_CHANNELS.
 const eventsOf = (sent: Sent[]) => sent.filter(s => s.channel === DEGRAM_CHANNELS.event).map(s => s.payload as any)
 
 describe('degram runtime: sign-in page and initial state', () => {
+  it('stamps production state and events with the immutable runtime environment generation', async () => {
+    const r = rig({ generation: 7 })
+    await r.runtime.start()
+    const stamp = { environmentId: environmentIdForOrigin(r.dg.origin), generation: 7 }
+    expect(r.runtime.getState().environment).toEqual(stamp)
+    expect(states(r.sent).every(state => JSON.stringify(state.environment) === JSON.stringify(stamp))).toBe(true)
+    r.fake.emit('did-fail-load', {}, -105, 'unreachable', r.dg.origin, true)
+    expect(eventsOf(r.sent).length).toBeGreaterThan(0)
+    expect(eventsOf(r.sent).every(event => JSON.stringify(event.environment) === JSON.stringify(stamp))).toBe(true)
+    r.runtime.dispose()
+  })
+
   it('starts on the DG login page when signed out and exposes no project', async () => {
     const r = rig({ signedIn: false })
 

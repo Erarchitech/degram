@@ -11,7 +11,7 @@ import { $sessions, setSessions } from '@/store/session'
 
 import type { DegramState } from '../../electron/degram/ipc'
 
-import { degramScopeTag, followScopeRoute, handleNewScope, routeDisagreesWithScope } from './scope-route'
+import { degramScopeTag, followScopeRoute, handleNewScope, invalidateScopeRoute, routeDisagreesWithScope } from './scope-route'
 import { makeState, noScope } from './test-harness'
 import { setDegramGatewayForTests } from './use-degram-gateway'
 import { $degram, resetDegramStore } from './use-degram-state'
@@ -76,6 +76,19 @@ describe('routeDisagreesWithScope', () => {
 })
 
 describe('followScopeRoute', () => {
+  it('does not pin or open a chat when an environment reset supersedes an in-flight activation', async () => {
+    let finish!: () => void
+    vi.mocked(profile.ensureGatewayProfile).mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+    const open = vi.fn()
+    const pending = handleNewScope({ ...ready('new'), environment: { environmentId: 'a', generation: 1 } }, { fresh: true }, open)
+    invalidateScopeRoute()
+    finish()
+    await pending
+    expect(profile.pinNewChatProfile).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+    expect($sessions.get()).toEqual([])
+  })
+
   it('wipes the session lists, then moves the route to the scope profile, then pins the next chat to it', async () => {
     const order: string[] = []
 

@@ -41,6 +41,7 @@ import { Slot } from '@/contrib/react/slot'
 import { registry } from '@/contrib/registry'
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
 import { DegramShellHost } from '@/degram/shell-host'
+import { DgTargetSelector } from '@/degram/dg-target-selector'
 import { LocalizedTabTitle, translateNow } from '@/i18n'
 import { NEW_SESSION_TITLE, sessionTitle as storedSessionTitle } from '@/lib/chat-runtime'
 import {
@@ -847,6 +848,7 @@ export function ContribController() {
           data-contrib-shell=""
           style={{ '--titlebar-height': '0px' } as CSSProperties}
         >
+          {degramEnabled && <DgTargetSelector working />}
           <LayoutTreeRoot titlebar />
 
           {/* "Close running tab?" — the busy/input-blocked tile close gate. */}

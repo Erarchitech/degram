@@ -14,18 +14,18 @@ import { RefreshCw } from '@/lib/icons'
 
 import { FirstScreen, OpenProjectNotices } from './degram-gate'
 import { DgConnecting, DgUnreachable } from './sign-in-state'
-import { degramBridge, useDegram } from './use-degram-state'
+import { degramBridge, isEnvironmentReady, useDegram } from './use-degram-state'
 import { useDgBounds } from './use-dg-bounds'
 
 export function DgPage() {
   const { t } = useI18n()
   const copy = t.degram
-  const { painted, state } = useDegram()
+  const { environment, painted, state } = useDegram()
   const bridge = degramBridge()
   const hostRef = useRef<HTMLDivElement>(null)
 
   const signedIn = state?.auth.kind === 'signed-in'
-  const ready = signedIn && state.scope.status === 'ready'
+  const ready = signedIn && state.scope.status === 'ready' && isEnvironmentReady(environment)
   const unreachable = ready && state.dg.reachable === false
   const mode = state?.dg.mode
   const page = state?.dg.page

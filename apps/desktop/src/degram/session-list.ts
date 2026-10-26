@@ -6,6 +6,8 @@ import type { SessionInfo } from '@/types/hermes'
 
 import type { DegramState } from '../../electron/degram/ipc'
 
+import { isCurrentEnvironment } from './use-degram-state'
+
 /** DeGram session-list module stays independent from the app profile store. */
 export interface ScopeRoute {
   get: () => string | null
@@ -88,7 +90,10 @@ export async function listScopeSessions(
   route: ScopeRoute,
   requester: ScopeSessionRequester
 ): Promise<ScopeSessionsResult> {
-  if (state && state.scope.status === 'ready' && routeDisagreesWithScope(state, route)) {
+  if (
+    (state?.environment && !isCurrentEnvironment(state.environment)) ||
+    (state && state.scope.status === 'ready' && routeDisagreesWithScope(state, route))
+  ) {
     return { failed: true, sessions: [] }
   }
 
@@ -98,7 +103,11 @@ export async function listScopeSessions(
       limit: Math.max(1, limit)
     })
 
-    if (failedOutcome(response)) {
+    if (
+      (state?.environment && !isCurrentEnvironment(state.environment)) ||
+      routeDisagreesWithScope(state, route) ||
+      failedOutcome(response)
+    ) {
       return { failed: true, sessions: [] }
     }
 

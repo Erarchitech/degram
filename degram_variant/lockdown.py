@@ -233,6 +233,8 @@ ALLOWED_RPC_METHODS = frozenset({
     "session.redirect", "prompt.submit",
     # the two user-answerable server->client requests of the allowlisted tools
     "approval.pending", "approval.received", "approval.respond", "clarify.lock", "request.answer",
+    # target switch control: the loopback main process uses this local backend activity fence
+    "degram.environment.quiesce", "degram.environment.resume", "degram.environment.assert_active",
     # the delegated credential handoff
     "degram.credentials.set", "degram.credentials.clear", "degram.credentials.status",
     # the CAD read capabilities (plan 11): pick and pin a document, preview and send the context, cancel a read

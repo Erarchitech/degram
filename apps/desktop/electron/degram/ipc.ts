@@ -10,6 +10,9 @@
 // validates every payload, and calls the runtime. There is no channel that can read a credential.
 //
 import { DEGRAM_CHANNELS } from './channels'
+import type { EnvironmentViewState, EnvironmentSwitchResult } from './environment-controller'
+import type { DgTargetMode } from './dg-target-config'
+
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
 import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgView, DgViewDeps, DgViewPage } from './dg-view'
@@ -18,6 +21,9 @@ import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult 
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
 export { DEGRAM_CHANNELS, type DegramChannel } from './channels'
+
+export interface EnvironmentStamp { environmentId: string; generation: number }
+export interface OperationStamp extends EnvironmentStamp { id: number }
 
 /** What the renderer may know about the DG session. No token, no cookie, no password. */
 export interface DegramAuthView {
@@ -36,6 +42,8 @@ export interface DegramTrayLabels {
 export const DEFAULT_TRAY_LABELS: DegramTrayLabels = { signOut: 'Выйти из DG' }
 
 export interface DegramState {
+  /** Present on coordinator-owned runtimes; legacy isolated-runtime fixtures have no target. */
+  environment?: EnvironmentStamp
   auth: DegramAuthView
   scope: ScopeState
   dg: { mode: DgMode; page: DgViewPage; reachable: boolean }
@@ -43,6 +51,12 @@ export interface DegramState {
 
 /** The renderer-facing bridge exposed by preload.ts as `window.hermesDesktop.degram`. No credential getter. */
 export interface DegramBridge {
+  getEnvironment: () => Promise<EnvironmentViewState>
+  onEnvironment: (callback: (state: EnvironmentViewState) => void) => () => void
+  selectTarget: (request: EnvironmentStamp & { mode: DgTargetMode }) => Promise<EnvironmentSwitchResult>
+  retryTarget: (request: EnvironmentStamp) => Promise<EnvironmentSwitchResult>
+  acquireOperation: (request: EnvironmentStamp) => Promise<OperationStamp>
+  releaseOperation: (request: OperationStamp) => Promise<void>
   getState: () => Promise<DegramState>
   onState: (callback: (state: DegramState) => void) => () => void
   onEvent: (callback: (event: DegramEvent) => void) => () => void
@@ -69,6 +83,10 @@ export interface DegramBridge {
 }
 
 export interface DegramRuntimeDeps {
+  generation?: number
+  partition?: string
+  isCurrent?: () => boolean
+  environmentId: string
   origin: string
   fetch: PartitionFetch
   clock: Clock
@@ -107,6 +125,11 @@ export interface DegramRuntime {
   reportOutcome: (code: string) => Promise<boolean>
   /** The DeGram window gained focus: verify the DG session and the active project's membership. */
   onWindowFocus: () => Promise<void>
+  /** Strict target-switch teardown; unlike signOut it preserves partition storage/history. */
+  closeForEnvironmentSwitch: () => Promise<void>
+  /** Gateway-backed operation barrier for the active profile runtime. */
+  quiesceForEnvironmentSwitch: (target: { environmentId: string; generation: number }) => Promise<void>
+  resumeForEnvironmentSwitch: (target: { environmentId: string; generation: number }) => Promise<void>
   /** The partition's `dg_session` cookie changed (sign-in finished in the DG page, or ended). */
   onAuthCookieChanged: () => Promise<void>
   dispose: () => void
@@ -135,31 +158,41 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   let lastPublished = ''
   let viewChain: Promise<void> = Promise.resolve()
   let trayLabels: DegramTrayLabels = { ...DEFAULT_TRAY_LABELS }
+  let disposed = false
+  const isCurrent = (): boolean => !disposed && (deps.isCurrent?.() ?? true)
 
   /** View work runs one step at a time so loads cannot overlap into a stale page. */
   const viewTask = (task: () => Promise<void>): Promise<void> => {
-    viewChain = viewChain.then(task, task)
+    const guarded = (): Promise<void> => isCurrent() ? task() : Promise.resolve()
+    viewChain = viewChain.then(guarded, guarded)
 
     return viewChain
   }
 
   const session: DgSession = createDgSession({
     origin: deps.origin,
-    fetch: deps.fetch,
+    fetch: async request => {
+      if (!isCurrent()) throw new Error('degram: obsolete environment')
+      const response = await deps.fetch(request)
+      if (!isCurrent()) throw new Error('degram: obsolete environment')
+      return response
+    },
     clock: deps.clock,
     logger
   })
 
   let scope: ScopeController
 
+  const environment = deps.generation === undefined ? undefined : { environmentId: deps.environmentId, generation: deps.generation }
   const getState = (): DegramState => ({
+    ...(environment ? { environment } : {}),
     auth: authView(session.state()),
     scope: scope.getState(),
     dg: { mode: dgView.getState().mode, page: dgView.getState().page, reachable }
   })
 
   const publish = (): void => {
-    if (!scope.isSettled()) {
+    if (!isCurrent() || !scope.isSettled()) {
       return
     }
 
@@ -193,6 +226,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   }
 
   const onEvent = (event: DegramEvent): void => {
+    if (!isCurrent()) return
     if (event.type === 'dg-unreachable') {
       reachable = false
     } else if (event.type === 'dg-reachable') {
@@ -204,7 +238,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       void viewTask(restoreStartPage)
     }
 
-    deps.send(DEGRAM_CHANNELS.event, event)
+    deps.send(DEGRAM_CHANNELS.event, environment ? { ...event, environment } : event)
     publish()
   }
 
@@ -248,6 +282,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
   const dgView: DgView = createDgView({
     origin: deps.origin,
+    partition: deps.partition,
+    isCurrent,
     createView: deps.createView,
     emit: onEvent,
     openExternal: deps.openExternal,
@@ -272,6 +308,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
   scope = createScopeController({
     session,
     origin: deps.origin,
+    environmentId: deps.environmentId,
     clock: deps.clock,
     logger,
     emit: onEvent,
@@ -285,7 +322,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
   let previousKind: AuthState['kind'] = session.state().kind
 
-  session.onAuth(auth => {
+  const unsubscribeAuth = session.onAuth(auth => {
     const wasSignedIn = previousKind === 'signed-in'
 
     if (auth.kind !== 'unreachable') {
@@ -300,7 +337,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     publish()
   })
 
-  scope.onState(next => {
+  const unsubscribeScope = scope.onState(next => {
     noteHostState(hostStateOf(next.status))
     publish()
   })
@@ -410,6 +447,11 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
       return known
     },
+    closeForEnvironmentSwitch: async (): Promise<void> => {
+      await scope.closeForEnvironmentSwitch()
+    },
+    quiesceForEnvironmentSwitch: (target): Promise<void> => scope.quiesceForEnvironmentSwitch(target),
+    resumeForEnvironmentSwitch: (target): Promise<void> => scope.resumeForEnvironmentSwitch(target),
     onWindowFocus: async (): Promise<void> => {
       if (!reachable) {
         // D-08: focus is the re-check trigger while DG is unreachable (no timer polling), through the same
@@ -423,7 +465,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     },
     onAuthCookieChanged: async (): Promise<void> => {
       // A clearing sequence (sign-out, revocation) wipes the cookie itself; its own change event is not news.
-      if (!scope.isSettled()) {
+      if (!isCurrent() || !scope.isSettled()) {
         return
       }
 
@@ -437,6 +479,9 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       publish()
     },
     dispose: (): void => {
+      disposed = true
+      unsubscribeAuth()
+      unsubscribeScope()
       scope.dispose()
       dgView.destroy()
     }

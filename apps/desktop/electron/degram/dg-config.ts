@@ -41,7 +41,12 @@ export interface DgConfigDeps {
 }
 
 export interface DegramJson {
+  /** Legacy single-origin setting. DGMODE v2 reads it only to migrate safely. */
   dgOrigin?: string
+  /** DGMODE target schema; v2 is intentionally distinct from embedded DgMode (graph/full). */
+  schemaVersion?: unknown
+  activeDgTarget?: unknown
+  dgTargets?: unknown
   /** Interpreter that carries the Revit adapter's `mcp` 1.x (NOT the gateway interpreter). */
   revitPython?: string
   revitMcpDir?: string
@@ -102,7 +107,14 @@ export function readDegramJson(deps: Pick<DgConfigDeps, 'home' | 'readFile' | 'p
   const str = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim() ? value.trim() : undefined
 
-  return { dgOrigin: str(record.dgOrigin), revitPython: str(record.revitPython), revitMcpDir: str(record.revitMcpDir) }
+  return {
+    dgOrigin: str(record.dgOrigin),
+    schemaVersion: record.schemaVersion,
+    activeDgTarget: record.activeDgTarget,
+    dgTargets: record.dgTargets,
+    revitPython: str(record.revitPython),
+    revitMcpDir: str(record.revitMcpDir)
+  }
 }
 
 export function resolveDgOrigin(deps: DgConfigDeps): { origin: string; source: 'env' | 'file' | 'default' } {

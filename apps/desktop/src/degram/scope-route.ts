@@ -31,7 +31,7 @@ export function degramScopeTag(state: DegramState | null | undefined): string {
     return 'no-scope'
   }
 
-  return JSON.stringify([user, state.scope.company ?? '', project])
+  return JSON.stringify([state.environment?.environmentId ?? null, user, state.scope.company ?? '', project])
 }
 
 export type FollowOutcome = 'agreed' | 'failed' | 'superseded' | 'switched'
@@ -65,6 +65,10 @@ export function routeDisagreesWithScope(state: DegramState | null | undefined): 
 
 // Each call takes a ticket; an older call that finishes after a newer one started (rapid A -> B -> C) must not act.
 let latestTicket = 0
+export function invalidateScopeRoute(): void {
+  latestTicket++
+  wipeSessionListsForGatewaySwitch()
+}
 
 /**
  * Put the chat on the ready scope's profile. Order matters (D-19, T-1301-18-01): the previous scope's session

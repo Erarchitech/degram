@@ -17,24 +17,37 @@ import pytest
 from degram_variant import profiles
 from degram_variant.profiles import (
     ProfilePathError,
-    Scope,
+    Scope as ProfileScope,
     ensure_scope_profile,
-    profile_name_for_scope,
+    profile_name_for_scope as environment_profile_name,
     purge_scope_profile,
 )
 
 REPO = Path(__file__).resolve().parents[2]
+ORIGIN = "http://localhost:8080"
+ENVIRONMENT = profiles.environment_id_for_origin(ORIGIN)
+
+
+def Scope(user, company, project):
+    return ProfileScope(user, company, project, ORIGIN, ENVIRONMENT)
+
+
+def profile_name_for_scope(user, company, project, *environment):
+    return environment_profile_name(user, company, project, *(environment or (ORIGIN, ENVIRONMENT)))
 
 
 def expected_name(user, company, project) -> str:
-    digest = hashlib.sha256(f"{user}\x1f{company or ''}\x1f{project}".encode("utf-8")).hexdigest()
-    return "scope-" + digest[:16]
+    digest = hashlib.sha256(f"dg-profile-v2\x1f{ORIGIN}\x1f{user}\x1f{company or ''}\x1f{project}".encode("utf-8")).hexdigest()
+    return "scope-" + digest[:32]
 
 
 @pytest.fixture
 def home(tmp_path) -> Path:
     path = tmp_path / "DeGram" / "home"
     path.mkdir(parents=True)
+    (path / profiles.OWNERSHIP_NAME).write_text(json.dumps({
+        "version": 1, "origin": ORIGIN, "partition": "persist:degram-dg", "stage": "claimed"
+    }), encoding="utf-8")
     return path
 
 
@@ -45,7 +58,7 @@ class TestProfileName:
     def test_formula(self):
         assert profile_name_for_scope("alice", "acme", "tower") == expected_name("alice", "acme", "tower")
         assert profile_name_for_scope("alice", "acme", "tower").startswith("scope-")
-        assert len(profile_name_for_scope("alice", "acme", "tower")) == len("scope-") + 16
+        assert len(profile_name_for_scope("alice", "acme", "tower")) == len("scope-") + 32
 
     def test_company_none_is_encoded_as_empty(self):
         assert profile_name_for_scope("alice", None, "tower") == expected_name("alice", "", "tower")
@@ -286,7 +299,8 @@ class TestManifest:
     def test_ensure_writes_the_manifest_with_fixed_fields_and_no_token(self, home):
         path = Path(ensure_scope_profile(home, Scope("alice", "acme", "tower"))["path"])
         data = manifest_of(path)
-        assert set(data) == {"user", "company", "project", "createdAt"}
+        assert set(data) == {"version", "origin", "environmentId", "user", "company", "project", "createdAt"}
+        assert data["origin"] == ORIGIN and data["environmentId"] == ENVIRONMENT
         assert (data["user"], data["company"], data["project"]) == ("alice", "acme", "tower")
         assert data["createdAt"].endswith("Z")
         blob = (path / "degram-scope.json").read_text(encoding="utf-8").lower()
@@ -301,19 +315,22 @@ class TestManifest:
         scope = Scope("alice", "acme", "tower")
         path = Path(ensure_scope_profile(home, scope)["path"])
         (path / "degram-scope.json").write_text(
-            json.dumps({"user": "alice", "company": "acme", "project": "tower", "createdAt": "2020-01-01T00:00:00Z"}),
+            json.dumps({"version": 2, "origin": ORIGIN, "environmentId": ENVIRONMENT,
+                        "user": "alice", "company": "acme", "project": "tower", "createdAt": "2020-01-01T00:00:00Z"}),
             encoding="utf-8")
         ensure_scope_profile(home, scope)
         assert manifest_of(path)["createdAt"] == "2020-01-01T00:00:00Z"
 
     def test_ensure_backfills_a_legacy_profile_without_touching_its_state(self, home):
         scope = Scope("alice", "acme", "tower")
-        legacy = home / "profiles" / profile_name_for_scope(*scope)
+        legacy = home / "profiles" / profiles._legacy_name(*scope[:3])
         legacy.mkdir(parents=True)
         (legacy / "state.db").write_bytes(b"old history")
-        ensure_scope_profile(home, scope)
-        assert manifest_of(legacy)["project"] == "tower"
-        assert (legacy / "state.db").read_bytes() == b"old history"
+        profiles.migrate_legacy_profiles(home, [scope], backend_stopped=True)
+        adopted = Path(ensure_scope_profile(home, scope)["path"])
+        assert manifest_of(adopted)["project"] == "tower"
+        assert (adopted / "state.db").read_bytes() == b"old history"
+        assert not legacy.exists()
 
 
 class TestPurgeProject:
@@ -364,27 +381,27 @@ class TestLegacyCleanup:
 
     def test_backfills_kept_scopes_removes_the_rest_once_and_writes_the_marker(self, home):
         keep_scope = Scope("alice", "acme", "tower")
-        kept = self.make_legacy(home, profile_name_for_scope(*keep_scope))
-        stale = self.make_legacy(home, profile_name_for_scope("alice", None, "tower"))  # opened before its company
+        kept = self.make_legacy(home, profiles._legacy_name(*keep_scope[:3]))
+        stale = self.make_legacy(home, profiles._legacy_name("alice", None, "tower"))
         modern = Path(ensure_scope_profile(home, Scope("alice", "acme", "bridge"))["path"])
+        profiles.migrate_legacy_profiles(home, [keep_scope], backend_stopped=True)
         result = profiles.cleanup_legacy_profiles(home, [keep_scope])
-        assert result["ran"] is True and result["failed"] == []
-        assert result["backfilled"] == [kept.name] and result["removed"] == [stale.name]
-        assert kept.exists() and (kept / "state.db").read_bytes() == b"old"
-        assert manifest_of(kept)["project"] == "tower"
-        assert not stale.exists() and modern.exists()
-        assert (home / "profiles" / "degram-legacy-cleanup.done").is_file()
+        assert result["ran"] is True and result["failed"] == [stale.name]
+        assert result["removed"] == []
+        adopted = home / "profiles" / profile_name_for_scope(*keep_scope)
+        assert (adopted / "state.db").read_bytes() == b"old"
+        assert not kept.exists() and stale.exists() and modern.exists()
 
     def test_the_second_run_does_nothing(self, home):
         profiles.cleanup_legacy_profiles(home, [])
         late = self.make_legacy(home, "scope-fedcba9876543210")
         again = profiles.cleanup_legacy_profiles(home, [])
-        assert again == {"ran": False, "backfilled": [], "removed": [], "failed": []}
+        assert again == {"ran": True, "backfilled": [], "removed": [], "failed": [late.name]}
         assert late.exists()
 
     def test_a_fresh_install_still_writes_the_marker(self, home):
         assert profiles.cleanup_legacy_profiles(home, [])["ran"] is True
-        assert (home / "profiles" / "degram-legacy-cleanup.done").is_file()
+        assert not (home / "profiles" / "degram-legacy-cleanup.done").exists()
 
     def test_a_failed_removal_keeps_the_marker_unwritten(self, home, monkeypatch):
         self.make_legacy(home, "scope-0123456789abcdef")

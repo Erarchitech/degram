@@ -714,6 +714,16 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   // project scope. Typed in src/global.d.ts. There is deliberately NO getter for any credential: the
   // delegated token lives in main and the agent process only.
   degram: {
+    getEnvironment: () => ipcRenderer.invoke(DEGRAM_CHANNELS.getEnvironment),
+    onEnvironment: callback => {
+      const listener = (_event, state) => callback(state)
+      ipcRenderer.on(DEGRAM_CHANNELS.environmentChanged, listener)
+      return () => ipcRenderer.removeListener(DEGRAM_CHANNELS.environmentChanged, listener)
+    },
+    selectTarget: request => ipcRenderer.invoke(DEGRAM_CHANNELS.selectTarget, request),
+    retryTarget: request => ipcRenderer.invoke(DEGRAM_CHANNELS.retryTarget, request),
+    acquireOperation: request => ipcRenderer.invoke(DEGRAM_CHANNELS.acquireOperation, request),
+    releaseOperation: request => ipcRenderer.invoke(DEGRAM_CHANNELS.releaseOperation, request),
     getState: () => ipcRenderer.invoke(DEGRAM_CHANNELS.getState),
     onState: callback => {
       const listener = (_event, state) => callback(state)

@@ -43,7 +43,13 @@ import {
   request,
   subscribeGatewayEvents
 } from './use-degram-gateway'
-import { $degram, degramBridge } from './use-degram-state'
+import {
+  $degram,
+  acquireEnvironmentOperation,
+  degramBridge,
+  isEnvironmentReady,
+  onEnvironmentReset
+} from './use-degram-state'
 
 export type Phase = 'done' | 'failed' | 'idle' | 'interrupted' | 'previewing' | 'ready' | 'streaming'
 
@@ -91,6 +97,49 @@ const INITIAL: Lifecycle = {
 }
 
 export const $lifecycle = atom<Lifecycle>(INITIAL)
+let operationRelease: (() => Promise<void>) | null = null
+let operationTicket = 0
+let gateRunning = false
+let armedTimer: ReturnType<typeof setTimeout> | null = null
+
+async function holdOperation(): Promise<boolean> {
+  const ticket = ++operationTicket
+  const key = currentKey()
+  const release = await acquireEnvironmentOperation()
+
+  if (ticket !== operationTicket || key !== currentKey()) {
+    await release?.()
+
+    return false
+  }
+
+  operationRelease = release
+
+  return Boolean(release)
+}
+
+function releaseOperation(): void {
+  operationTicket++
+  const release = operationRelease
+  operationRelease = null
+  void release?.().catch(() => undefined)
+}
+
+function armSend(value: Armed): void {
+  armed = value
+
+  if (armedTimer) {
+    clearTimeout(armedTimer)
+  }
+
+  armedTimer = setTimeout(() => {
+    if (armed === value && $lifecycle.get().phase !== 'streaming') {
+      clearArmed()
+    }
+  }, ARMED_TTL_MS)
+}
+
+onEnvironmentReset(() => resetLifecycle())
 
 // -- pure transitions ---------------------------------------------------------------------------------------
 
@@ -171,14 +220,9 @@ export function syncLifecycleScope(): void {
   const key = currentKey()
 
   if ($lifecycle.get().scopeKey !== key) {
-    const previous = $lifecycle.get()
-
-    if (previous.previewId) {
-      void cancelContext(previous.previewId).catch(() => undefined)
-    }
-
-    clearArmed()
-    $lifecycle.set({ ...INITIAL, scopeKey: key })
+    // Main owns cancellation of the departed runtime. Never send an old preview id
+    // through the newly active gateway.
+    resetLifecycle(key)
   }
 }
 
@@ -192,7 +236,9 @@ export function useLifecycle(): Lifecycle {
 
 export function resetLifecycle(scopeKey = ''): void {
   clearArmed()
+  consentResolver?.(false)
   consentResolver = null
+  releaseOperation()
   $lifecycle.set({ ...INITIAL, scopeKey })
 }
 
@@ -211,7 +257,8 @@ function newPreviewId(): string {
 const RPC_TIMEOUT = /request timed out after (\d+(?:\.\d+)?)s/i
 
 // A failure of the gateway connection itself (the socket is gone, never opened, or stopped answering heartbeats).
-const GATEWAY_TRANSPORT = /gateway not connected|socket|websocket|connection|econn|network|heartbeat|closed|disconnected/i
+const GATEWAY_TRANSPORT =
+  /gateway not connected|socket|websocket|connection|econn|network|heartbeat|closed|disconnected/i
 
 /**
  * What a failed preview RPC means (1301-19, G-14). A timeout names itself and its seconds (the bridge's own BUSY comes
@@ -271,10 +318,22 @@ export async function refreshPreview(): Promise<void> {
   // Synchronous: the card shows the spinner and Send is disabled before the read could answer.
   dispatch({ type: 'preview-start', previewId })
 
+  const release = await acquireEnvironmentOperation()
+
+  if (!release || currentKey() !== key || $lifecycle.get().previewId !== previewId) {
+    void release?.()
+
+    if (currentKey() === key) {
+      dispatch({ type: 'preview-failed', previewId, outcome: { code: 'DG_UNAVAILABLE' } })
+    }
+
+    return
+  }
+
   try {
     const result = await previewContext(scope, previewId, project)
 
-    if (currentKey() !== key) {
+    if (currentKey() !== key || $lifecycle.get().previewId !== previewId) {
       return
     }
 
@@ -303,6 +362,8 @@ export async function refreshPreview(): Promise<void> {
     if (currentKey() === key) {
       dispatch({ type: 'preview-failed', previewId, outcome: classifyPreviewError(error) })
     }
+  } finally {
+    await release()
   }
 }
 
@@ -348,6 +409,7 @@ export function resolveConsent(granted: boolean): void {
 // -- send (the user's Send, through the composer gate) -------------------------------------------------------
 
 interface Armed {
+  scopeKey: string
   previewId: string
   consent: boolean
   text: string
@@ -361,7 +423,16 @@ const ARMED_TTL_MS = 30_000
 
 /** The arming is spent (the turn was accepted) or void (the gate ran again, the scope changed). */
 export function clearArmed(): void {
+  if (armedTimer) {
+    clearTimeout(armedTimer)
+  }
+
+  armedTimer = null
   armed = null
+
+  if ($lifecycle.get().phase !== 'streaming' && !$lifecycle.get().confirmOpen) {
+    releaseOperation()
+  }
 }
 
 /**
@@ -369,7 +440,10 @@ export function clearArmed(): void {
  * scope's backend and credential (G-7, D-19, T-1301-18-02). Independent of any pinned document.
  */
 export function routeMismatch(): boolean {
-  return $degramEnabled.get() && routeDisagreesWithScope($degram.get().state)
+  return (
+    $degramEnabled.get() &&
+    (!isEnvironmentReady($degram.get().environment) || routeDisagreesWithScope($degram.get().state))
+  )
 }
 
 /**
@@ -421,9 +495,19 @@ export function sendBlockedReason(): 'mismatch' | 'previewing' | 'read-failed' |
  * needs the user's confirmation first; anything else cancels the send (the draft stays in the composer).
  */
 export async function composerGate<T extends { text: string }>(draft: T): Promise<T | null> {
+  if (!$degramEnabled.get()) {
+    return draft
+  }
+
+  if (gateRunning || $lifecycle.get().phase === 'streaming') {
+    return null
+  }
+
+  gateRunning = true
+
   try {
-    if (!$degramEnabled.get() || !currentKey()) {
-      return draft
+    if (!currentKey()) {
+      return $degram.get().environment ? null : draft
     }
 
     syncDocumentsScope()
@@ -435,11 +519,23 @@ export async function composerGate<T extends { text: string }>(draft: T): Promis
       return null
     }
 
+    const key = currentKey()
+
+    if (!(await holdOperation()) || currentKey() !== key) {
+      releaseOperation()
+
+      return null
+    }
+
     if (pinnedApps($documents.get()).length === 0) {
+      armSend({ scopeKey: key, previewId: '', consent: false, text: draft.text, at: Date.now() })
+
       return draft
     }
 
     if (sendBlockedReason() !== null) {
+      releaseOperation()
+
       return null
     }
 
@@ -450,22 +546,34 @@ export async function composerGate<T extends { text: string }>(draft: T): Promis
       consent = await requestConsent()
 
       if (!consent) {
+        releaseOperation()
+
         return null
       }
 
       // The scope or the document may have changed while the dialog was open: the consent was for a payload that
       // is no longer the one on the card.
-      if (sendBlockedReason() !== null || $lifecycle.get().preview?.previewId !== preview.previewId) {
+      if (
+        currentKey() !== key ||
+        sendBlockedReason() !== null ||
+        $lifecycle.get().preview?.previewId !== preview.previewId
+      ) {
+        releaseOperation()
+
         return null
       }
     }
 
-    armed = { previewId: preview.previewId, consent, text: draft.text, at: Date.now() }
+    armSend({ scopeKey: key, previewId: preview.previewId, consent, text: draft.text, at: Date.now() })
 
     return draft
   } catch {
     // Unlike a plugin, this gate fails closed: a broken gate must not send without the disclosed context.
+    releaseOperation()
+
     return null
+  } finally {
+    gateRunning = false
   }
 }
 
@@ -479,11 +587,31 @@ export interface SendPlan {
  * call, and that retry must still carry the context the card disclosed. `clearArmed` ends it once accepted.
  */
 export function takeSendPlan(text: string): null | SendPlan {
-  if (!armed || armed.text !== text || Date.now() - armed.at > ARMED_TTL_MS) {
+  if (
+    !armed ||
+    armed.scopeKey !== currentKey() ||
+    armed.text !== text ||
+    Date.now() - armed.at > ARMED_TTL_MS ||
+    !armed.previewId
+  ) {
     return null
   }
 
   return { previewId: armed.previewId, consent: armed.consent }
+}
+
+export function hasTargetBoundSend(text: string): boolean {
+  if (!$degram.get().environment) {
+    return true
+  }
+
+  return Boolean(
+    operationRelease &&
+    armed &&
+    armed.scopeKey === currentKey() &&
+    armed.text === text &&
+    Date.now() - armed.at <= ARMED_TTL_MS
+  )
 }
 
 /** The stock submit path dispatched the turn: the machine enters `streaming`. */
@@ -507,6 +635,7 @@ function forwardToMain(code: null | string): void {
 }
 
 function afterTurn(): void {
+  releaseOperation()
   // The next message gets a fresh read of the selection; reading is not sending.
   void refreshPreview()
 }
@@ -580,18 +709,27 @@ export function handleTurnEvent(event: { type: string; session_id?: string; payl
   }
 }
 
-let eventBinding: null | { identity: object | null; off: () => void } = null
+let eventBinding: null | { identity: object | null; key: string; off: () => void } = null
 
 /** Follow the active gateway's turn events (re-binds when the gateway is swapped). Returns the disposer. */
 export function bindTurnEvents(): () => void {
   const identity = gatewayIdentity()
+  const key = currentKey()
 
-  if (eventBinding && eventBinding.identity === identity) {
+  if (eventBinding && eventBinding.identity === identity && eventBinding.key === key) {
     return unbindTurnEvents
   }
 
   eventBinding?.off()
-  eventBinding = { identity, off: subscribeGatewayEvents(handleTurnEvent) }
+  eventBinding = {
+    identity,
+    key,
+    off: subscribeGatewayEvents(event => {
+      if (currentKey() === key) {
+        handleTurnEvent(event)
+      }
+    })
+  }
 
   return unbindTurnEvents
 }
@@ -610,8 +748,11 @@ export function startTurnEventSync(): () => void {
     bindTurnEvents()
   })
 
+  const stopScope = $degram.listen(() => bindTurnEvents())
+
   return () => {
     stop()
+    stopScope()
     unbindTurnEvents()
   }
 }
@@ -623,24 +764,31 @@ export function startTurnEventSync(): () => void {
  * `interrupted` before any RPC returns. The bridge read is aborted (`degram.context.cancel`, once); the caller
  * that owns the interrupt RPC passes it so it is sent once too.
  */
-export function stopRequest(options: { interrupt?: () => Promise<unknown> } = {}): void {
+export async function stopRequest(options: { interrupt?: () => Promise<unknown> } = {}): Promise<void> {
   const state = $lifecycle.get()
+  const key = currentKey()
   const hadRead = state.phase === 'previewing'
   const wasStreaming = state.phase === 'streaming'
-
+  // Detach this turn's lease: a late Stop must never release a newer request's lease.
+  const release = operationRelease
+  operationRelease = null
+  operationTicket++
   clearArmed()
+  consentResolver?.(false)
+  consentResolver = null
+  $lifecycle.set({ ...$lifecycle.get(), confirmOpen: false })
   dispatch(hadRead ? { type: 'preview-stop' } : { type: 'interrupted' })
 
-  if (hadRead || wasStreaming) {
-    // The next read starts only after the cancel settled, so the cancel cannot abort it.
-    const cancelled = cancelContext(hadRead ? (state.previewId ?? undefined) : undefined).catch(() => undefined)
+  const cancelled =
+    hadRead || wasStreaming ? cancelContext(hadRead ? (state.previewId ?? undefined) : undefined) : Promise.resolve()
 
-    if (wasStreaming) {
-      void cancelled.then(afterTurn)
-    }
+  const interrupted = options.interrupt ? Promise.resolve().then(options.interrupt) : Promise.resolve()
+  await Promise.allSettled([cancelled, interrupted])
+  await release?.().catch(() => undefined)
+
+  if (wasStreaming && key === currentKey() && $lifecycle.get().phase === 'interrupted') {
+    void refreshPreview()
   }
-
-  void options.interrupt?.()?.catch(() => undefined)
 }
 
 /** Interrupt the live turn of a session through the gateway (`session.interrupt`). */
@@ -664,6 +812,7 @@ export function narrowContext(): void {
  * transcript behave exactly as for a typed message. Only ever called from a click.
  */
 export async function retryRequest(submit: (text: string) => Promise<boolean> | boolean): Promise<boolean> {
+  const key = currentKey()
   const text = $lifecycle.get().failure?.lastText ?? $lifecycle.get().lastText
 
   if (!text) {
@@ -676,16 +825,21 @@ export async function retryRequest(submit: (text: string) => Promise<boolean> | 
     await refreshPreview()
   }
 
-  return Boolean(await submit(text))
+  return key === currentKey() && Boolean(await submit(text))
 }
 
 /** Unpin one bridge's document, or both with no argument (the escape from a blocked send). The other pin stays. */
 export async function unpinDocument(app?: BridgeApp): Promise<void> {
+  const key = currentKey()
+
   // Whole-definition is a Grasshopper-only scope: without that pin the card is back on the selection.
   if (!app || app === 'grasshopper') {
     $lifecycle.set({ ...$lifecycle.get(), scope: 'selection' })
   }
 
   await unpin(app)
-  await refreshPreview()
+
+  if (key === currentKey()) {
+    await refreshPreview()
+  }
 }

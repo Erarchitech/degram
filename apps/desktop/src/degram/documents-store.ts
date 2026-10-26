@@ -23,7 +23,7 @@ import {
   type PinnedMap,
   unpinDocument
 } from './use-degram-gateway'
-import { $degram, type DegramStore } from './use-degram-state'
+import { $degram, type DegramStore, onEnvironmentReset } from './use-degram-state'
 
 export interface AppEntry {
   /** A list read is in flight for this bridge (the group shows «Проверка» while the others stay usable). */
@@ -67,10 +67,19 @@ export const $documents = atom<DocumentsStore>(INITIAL)
 export function scopeKeyOf(store: Pick<DegramStore, 'state'>): string {
   const scope = store.state?.scope
 
-  return scope && scope.status === 'ready' ? `${scope.company ?? ''}|${scope.project ?? ''}|${scope.epoch}` : ''
+  return scope && scope.status === 'ready'
+    ? JSON.stringify([
+        store.state?.environment ?? null,
+        store.state?.auth.username,
+        scope.company,
+        scope.project,
+        scope.epoch
+      ])
+    : ''
 }
 
 const currentScopeKey = (): string => scopeKeyOf($degram.get())
+onEnvironmentReset(() => resetDocuments())
 
 /** The pinned apps in the order the strip and the picker show them. */
 export const pinnedApps = (store: Pick<DocumentsStore, 'pinned'>): BridgeApp[] =>
@@ -275,7 +284,9 @@ export async function pinRow(row: DocumentRow): Promise<void> {
   }
 
   // The group rows follow the answer: the pinned row gets its dot, the previous one loses it.
-  void refreshDocuments(row.app)
+  if (currentScopeKey() === key) {
+    void refreshDocuments(row.app)
+  }
 }
 
 /** A failed pin puts back only this bridge's previous pin, mismatch flag and message; the other bridge is untouched. */

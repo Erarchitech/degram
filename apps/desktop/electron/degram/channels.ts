@@ -7,6 +7,12 @@
 /** IPC channel names. Request channels are `ipcMain.handle`; `stateChanged`, `event` and `requestSignOut` are main to renderer. */
 export const DEGRAM_CHANNELS = {
   getState: 'degram:get-state',
+  getEnvironment: 'degram:get-environment',
+  environmentChanged: 'degram:environment-changed',
+  selectTarget: 'degram:select-target',
+  retryTarget: 'degram:retry-target',
+  acquireOperation: 'degram:acquire-operation',
+  releaseOperation: 'degram:release-operation',
   selectProject: 'degram:select-project',
   signOut: 'degram:sign-out',
   setDgMode: 'degram:set-dg-mode',

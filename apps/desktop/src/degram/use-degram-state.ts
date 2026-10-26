@@ -14,10 +14,11 @@ import { translateNow } from '@/i18n/runtime'
 import { setConnectionScopeTag } from '@/lib/connection-scoped'
 import { notify } from '@/store/notifications'
 
-import type { DegramBridge, DegramState } from '../../electron/degram/ipc'
+import type { EnvironmentViewState } from '../../electron/degram/environment-controller'
+import type { DegramBridge, DegramState, EnvironmentStamp, OperationStamp } from '../../electron/degram/ipc'
 import type { DegramEvent } from '../../electron/degram/scope'
 
-import { degramScopeTag, type NewScopeHandler, routeDisagreesWithScope } from './scope-route'
+import { degramScopeTag, invalidateScopeRoute, type NewScopeHandler, routeDisagreesWithScope } from './scope-route'
 
 /** A boot refusal main reported (plan 04: HOME_OVERLAP). */
 export interface DegramBootError {
@@ -27,6 +28,7 @@ export interface DegramBootError {
 }
 
 export interface DegramStore {
+  environment?: EnvironmentViewState | null
   /** The first state arrived (or was found missing). Before that the shell shows the connecting loader. */
   loaded: boolean
   state: DegramState | null
@@ -55,15 +57,26 @@ const INITIAL: DegramStore = {
 }
 
 export const $degram = atom<DegramStore>(INITIAL)
+const environmentResetters = new Set<() => void>()
+
+export function onEnvironmentReset(reset: () => void): () => void {
+  environmentResetters.add(reset)
+
+  return () => {
+    environmentResetters.delete(reset)
+  }
+}
 
 // A load finished (`dg-reachable`) since the last state arrived. Events precede the state they cause, so a
 // page change that follows its own paint event must not reset `painted`.
 let reachableSinceState = false
 let activeBridge: DegramBridge | null = null
 // undefined: no scope observed yet. null: observed without a ready scope. number: the epoch already handled.
-let handledEpoch: null | number | undefined
+let handledEpoch: null | string | undefined
 // The shell host's reaction to the DG page's «Новая сессия» pill (D-41).
 let newSessionHandler: (() => void) | undefined
+let stateRevision = 0
+let takeRuntimeState: ((state: DegramState) => void) | undefined
 
 export function resetDegramStore(): void {
   $degram.set(INITIAL)
@@ -71,6 +84,8 @@ export function resetDegramStore(): void {
   activeBridge = null
   handledEpoch = undefined
   newSessionHandler = undefined
+  takeRuntimeState = undefined
+  stateRevision++
   setConnectionScopeTag(null)
 }
 
@@ -83,7 +98,88 @@ export function degramBridge(): DegramBridge | undefined {
   return activeBridge ?? (typeof window === 'undefined' ? undefined : window.hermesDesktop?.degram)
 }
 
+export function environmentStamp(): EnvironmentStamp | null {
+  const target = $degram.get().environment
+
+  return target?.selected ? { environmentId: target.selected.environmentId, generation: target.generation } : null
+}
+
+export function isCurrentEnvironment(stamp: EnvironmentStamp | null | undefined): boolean {
+  const target = $degram.get().environment
+
+  if (!target) {
+    return !stamp
+  } // legacy isolated-runtime tests only
+
+  return Boolean(
+    stamp &&
+    target.selected &&
+    target.generation === stamp.generation &&
+    target.selected.environmentId === stamp.environmentId
+  )
+}
+
+export function isEnvironmentReady(target: EnvironmentViewState | null | undefined): boolean {
+  if (!target) {
+    return true
+  } // A standalone runtime has no environment coordinator.
+
+  const selected = target.selected
+  const effective = target.effectiveRuntime
+
+  return Boolean(
+    target.status === 'ready' &&
+    selected &&
+    effective &&
+    (selected.mode === 'developer' || selected.mode === 'demo') &&
+    selected.mode === effective.mode &&
+    selected.origin === effective.origin &&
+    selected.environmentId === effective.environmentId &&
+    selected.partition === effective.partition
+  )
+}
+
+export async function acquireEnvironmentOperation(): Promise<(() => Promise<void>) | null> {
+  const bridge = degramBridge()
+  const stamp = environmentStamp()
+
+  if (!$degram.get().environment) {
+    return async () => undefined
+  }
+
+  if (!bridge || !stamp || !isEnvironmentReady($degram.get().environment)) {
+    return null
+  }
+
+  let lease: OperationStamp
+
+  try {
+    lease = await bridge.acquireOperation(stamp)
+  } catch {
+    return null
+  }
+
+  if (!isCurrentEnvironment(lease) || !isEnvironmentReady($degram.get().environment)) {
+    await bridge.releaseOperation(lease)
+
+    return null
+  }
+
+  let released = false
+
+  return async () => {
+    if (!released) {
+      released = true
+      await bridge.releaseOperation(lease)
+    }
+  }
+}
+
 function applyState(state: DegramState): void {
+  if (!isCurrentEnvironment(state.environment)) {
+    return
+  }
+
   const prev = $degram.get()
   const pageChanged = prev.state !== null && prev.state.dg.page !== state.dg.page
   const first = prev.state === null
@@ -109,7 +205,12 @@ function applyState(state: DegramState): void {
           : false,
     sessionEnded: state.auth.kind === 'signed-in' ? false : prev.sessionEnded,
     grantRequired: signedOut || openedNew ? null : prev.grantRequired,
-    backendFailed: signedOut || state.scope.status === 'ready' ? null : state.scope.error === 'BACKEND_START_FAILED' && state.scope.project ? { project: state.scope.project } : prev.backendFailed,
+    backendFailed:
+      signedOut || state.scope.status === 'ready'
+        ? null
+        : state.scope.error === 'BACKEND_START_FAILED' && state.scope.project
+          ? { project: state.scope.project }
+          : prev.backendFailed,
     accessRevoked: signedOut || openedNew ? null : prev.accessRevoked
   })
   reachableSinceState = false
@@ -123,7 +224,15 @@ function applyState(state: DegramState): void {
  * observation is only recorded, so a reload never disturbs a session restore.
  */
 function noteScope(state: DegramState): 'new' | 'restore' | null {
-  const { epoch, status } = state.scope
+  const { status } = state.scope
+
+  const epoch = JSON.stringify([
+    state.environment ?? null,
+    state.auth.username,
+    state.scope.company,
+    state.scope.project,
+    state.scope.epoch
+  ])
 
   if (handledEpoch === undefined) {
     handledEpoch = status === 'ready' ? epoch : null
@@ -185,10 +294,12 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
 
     case 'grant-required':
       $degram.set({ ...$degram.get(), grantRequired: { project: event.project } })
+
       return
 
     case 'backend-start-failed':
       $degram.set({ ...$degram.get(), backendFailed: { project: event.project } })
+
       return
 
     case 'new-session-requested':
@@ -218,7 +329,75 @@ export function startDegramSync(
   newSessionHandler = onNewSession
   let disposed = false
 
+  let stateEventSeen = false
+  let environmentEventSeen = false
+  let pendingState: DegramState | null = null
+
+  const takeEnvironment = (environment: EnvironmentViewState): void => {
+    const previous = $degram.get().environment
+
+    if (previous && environment.generation < previous.generation) {
+      return
+    }
+
+    if (
+      previous?.selected &&
+      environment.selected &&
+      previous.generation === environment.generation &&
+      previous.selected.environmentId !== environment.selected.environmentId
+    ) {
+      return
+    }
+
+    const changed =
+      previous?.generation !== environment.generation ||
+      previous?.selected?.environmentId !== environment.selected?.environmentId
+
+    stateRevision++
+
+    if (changed) {
+      handledEpoch = undefined
+      reachableSinceState = false
+      setConnectionScopeTag('no-scope')
+      invalidateScopeRoute()
+
+      for (const reset of environmentResetters) {
+        reset()
+      }
+
+      $degram.set({ ...INITIAL, loaded: true, environment })
+    } else {
+      $degram.set({ ...$degram.get(), environment })
+    }
+
+    if (environment.status === 'ready' && pendingState) {
+      const pending = pendingState
+      pendingState = null
+      take(pending)
+    }
+  }
+
   const take = (state: DegramState): void => {
+    const environment = $degram.get().environment
+
+    if (
+      state.environment &&
+      (!environment ||
+        state.environment.generation > environment.generation ||
+        (isCurrentEnvironment(state.environment) && environment.status === 'switching'))
+    ) {
+      if (!pendingState?.environment || state.environment.generation >= pendingState.environment.generation) {
+        pendingState = state
+      }
+
+      return
+    }
+
+    if (!isCurrentEnvironment(state.environment) || !isEnvironmentReady(environment)) {
+      return
+    }
+
+    stateRevision++
     // Scope-keyed stores (pins) move first, so nothing paints the previous scope's list under the new state.
     setConnectionScopeTag(degramScopeTag(state))
     applyState(state)
@@ -230,14 +409,38 @@ export function startDegramSync(
     }
   }
 
+  takeRuntimeState = take
+
   const offState = bridge.onState(state => {
     if (!disposed) {
+      stateEventSeen = true
       take(state)
     }
   })
 
-  const offEvent = bridge.onEvent(event => {
+  const offEnvironment = bridge.onEnvironment(environment => {
     if (!disposed) {
+      environmentEventSeen = true
+      takeEnvironment(environment)
+    }
+  })
+
+  void bridge
+    .getEnvironment()
+    .then(environment => {
+      if (!disposed && !environmentEventSeen) {
+        takeEnvironment(environment)
+      }
+    })
+    .catch(() => undefined)
+
+  const offEvent = bridge.onEvent(event => {
+    if (
+      !disposed &&
+      isCurrentEnvironment(event.environment) &&
+      (!$degram.get().environment || $degram.get().environment?.status === 'ready')
+    ) {
+      stateRevision++
       handleEvent(event, bridge)
     }
   })
@@ -245,7 +448,7 @@ export function startDegramSync(
   void bridge
     .getState()
     .then(state => {
-      if (!disposed) {
+      if (!disposed && !stateEventSeen) {
         take(state)
       }
     })
@@ -259,10 +462,12 @@ export function startDegramSync(
     disposed = true
     offState()
     offEvent()
+    offEnvironment()
 
     if (activeBridge === bridge) {
       activeBridge = null
       newSessionHandler = undefined
+      takeRuntimeState = undefined
     }
   }
 }
@@ -275,13 +480,26 @@ export async function refreshDegramState(): Promise<void> {
     return
   }
 
+  const stamp = environmentStamp()
+  const revision = stateRevision
   $degram.set({ ...$degram.get(), refresh: 'loading' })
 
   try {
-    applyState(await bridge.getState())
+    const state = await bridge.getState()
+
+    if (!isCurrentEnvironment(stamp)) {
+      return
+    }
+
+    if (revision === stateRevision) {
+      ;(takeRuntimeState ?? applyState)(state)
+    }
+
     $degram.set({ ...$degram.get(), refresh: 'idle' })
   } catch {
-    $degram.set({ ...$degram.get(), refresh: 'error' })
+    if (isCurrentEnvironment(stamp)) {
+      $degram.set({ ...$degram.get(), refresh: 'error' })
+    }
   }
 }
 
@@ -326,5 +544,10 @@ export function useDegramActions(): DegramActions {
 
 export function dismissDegramNotice(kind: 'access' | 'grant' | 'backend'): void {
   const current = $degram.get()
-  $degram.set({ ...current, accessRevoked: kind === 'access' ? null : current.accessRevoked, grantRequired: kind === 'grant' ? null : current.grantRequired, backendFailed: kind === 'backend' ? null : current.backendFailed })
+  $degram.set({
+    ...current,
+    accessRevoked: kind === 'access' ? null : current.accessRevoked,
+    grantRequired: kind === 'grant' ? null : current.grantRequired,
+    backendFailed: kind === 'backend' ? null : current.backendFailed
+  })
 }

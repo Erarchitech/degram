@@ -1234,6 +1234,13 @@ export interface ConnectorPolicySetResult {
   revision: string
   effective: ConnectorPolicyEffectiveUnrestricted | ConnectorPolicyEffectiveDenyAll | ConnectorPolicyEffectiveAllow | ConnectorPolicyEffectiveDeny
 }
+export interface DegramEnvironmentBarrierParams {
+  environmentId: string
+  generation: number
+}
+export interface DegramEnvironmentBarrierResult {
+  ok?: boolean
+}
 export interface DegramCredentialsSetParams {
   token: string
   expiresAt: string | number
@@ -5174,6 +5181,12 @@ export interface RpcMethods {
   'degram.documents.pin': { params: DegramDocumentsPinParams; result: DegramDocumentsPinResult }
   /** Forget the pinned document of one bridge (app) or of every bridge (app null); nothing else changes. */
   'degram.documents.unpin': { params: DegramDocumentsUnpinParams; result: DegramDocumentsUnpinResult }
+  /** Reject a target-bound request while its backend generation is quiesced for an environment switch. */
+  'degram.environment.assert_active': { params: DegramEnvironmentBarrierParams; result: DegramEnvironmentBarrierResult }
+  /** Fail closed unless the local DeGram backend has no active work, then reject new work for this generation. */
+  'degram.environment.quiesce': { params: DegramEnvironmentBarrierParams; result: DegramEnvironmentBarrierResult }
+  /** Reopen only the exact generation quiesced before an aborted pre-persistence environment switch. */
+  'degram.environment.resume': { params: DegramEnvironmentBarrierParams; result: DegramEnvironmentBarrierResult }
   /** Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID. */
   'degram.mapping.answer': { params: DegramMappingAnswerParams; result: DegramMappingSessionResult }
   /** Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt. */
@@ -5660,6 +5673,9 @@ export const RPC_METHODS = [
   'degram.documents.list',
   'degram.documents.pin',
   'degram.documents.unpin',
+  'degram.environment.assert_active',
+  'degram.environment.quiesce',
+  'degram.environment.resume',
   'degram.mapping.answer',
   'degram.mapping.apply',
   'degram.mapping.focus',

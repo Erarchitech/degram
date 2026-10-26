@@ -102,6 +102,11 @@ _sessions_lock = threading.RLock()  # reentrant: _close_session_by_id may run un
 _cfg_cache: dict | None = None
 _cfg_sig: tuple | None = None
 _cfg_path = None
+# Admission and quiescence share a lock: queued RPCs count as work before a pool worker starts.
+# methods_degram owns the fence; stock Hermes never participates.
+_degram_environment_lock = threading.RLock()
+_degram_environment_work = 0
+_degram_environment_barrier: dict | None = None
 
 # Idempotency registry for session.create: maps client-supplied key → sid so a
 # retried create (e.g. response lost in transit) returns the same session

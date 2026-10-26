@@ -4,7 +4,35 @@
 // with the bundled interpreter. Arguments are an argv array (never a shell string), the CLI prints one
 // JSON object on stdout, and a non-zero exit is an error whose text comes from the CLI's JSON on stderr.
 
+import { createHash } from 'node:crypto'
+
 import type { ScopeKey } from './scope'
+import { environmentIdForOrigin } from './dg-target-config'
+import { normalizeDgOrigin } from './dg-config'
+
+export interface ProfileEnvironment {
+  origin: string
+  environmentId: string
+}
+
+export function validateProfileEnvironment(environment: ProfileEnvironment): void {
+  if (normalizeDgOrigin(environment.origin) !== environment.origin ||
+      environmentIdForOrigin(environment.origin) !== environment.environmentId) {
+    throw new ProfilesCliError('environment', 'origin and environmentId do not match')
+  }
+}
+
+/** Cross-language vector: UTF-8 dg-profile-v2/origin/user/company/project, separated by U+001F. */
+export function profileNameForScope(scope: ScopeKey): string {
+  validateProfileEnvironment(scope)
+  const fields = [scope.user, scope.company ?? '', scope.project].map(value => value.trim())
+
+  if (!fields[0] || !fields[2] || fields.some(value => value.includes('\x1f'))) {
+    throw new ProfilesCliError('scope', 'invalid profile scope')
+  }
+
+  return `scope-${createHash('sha256').update(['dg-profile-v2', scope.origin, ...fields].join('\x1f'), 'utf8').digest('hex').slice(0, 32)}`
+}
 
 export interface ProfilesCliRun {
   code: number | null
@@ -17,6 +45,7 @@ export interface ProfilesCliDeps {
   run: (args: string[]) => Promise<ProfilesCliRun>
   /** The fixed DeGram home (`--home`). */
   home: string
+  environment: ProfileEnvironment
 }
 
 export class ProfilesCliError extends Error {
@@ -38,7 +67,9 @@ function argsFor(command: 'ensure' | 'purge', home: string, scope: ScopeKey): st
     `--home=${home}`,
     `--user=${scope.user}`,
     ...(scope.company ? [`--company=${scope.company}`] : []),
-    `--project=${scope.project}`
+    `--project=${scope.project}`,
+    `--origin=${scope.origin}`,
+    `--environment-id=${scope.environmentId}`
   ]
 }
 
@@ -69,11 +100,20 @@ export interface ProfilesCli {
   purge: (scope: ScopeKey) => Promise<void>
   /** Remove every profile of `user` + `project` under any company key (the manifest names the owner, G-15). */
   purgeProject: (user: string, project: string) => Promise<string[]>
-  /** One-time D-30 cleanup: back-fill the given scopes' manifests, remove profiles still without one. */
+  migrateLegacy: (keep: ScopeKey[], stopBackend: (profile: string) => Promise<void>) => Promise<void>
+  /** Inspect ambiguous legacy records after migration; never delete unowned state. */
   cleanupLegacy: (keep: ScopeKey[]) => Promise<LegacyCleanupResult>
 }
 
 export function createProfilesCli(deps: ProfilesCliDeps): ProfilesCli {
+  validateProfileEnvironment(deps.environment)
+  const environmentArgs = [`--origin=${deps.environment.origin}`, `--environment-id=${deps.environment.environmentId}`]
+  const checkScope = (scope: ScopeKey): void => {
+    validateProfileEnvironment(scope)
+    if (scope.origin !== deps.environment.origin || scope.environmentId !== deps.environment.environmentId) {
+      throw new ProfilesCliError('scope', 'scope belongs to another environment')
+    }
+  }
   const executeRaw = async (command: string, args: string[]): Promise<unknown> => {
     const result: ProfilesCliRun = await deps.run(args)
 
@@ -93,6 +133,7 @@ export function createProfilesCli(deps: ProfilesCliDeps): ProfilesCli {
   }
 
   const execute = async (command: 'ensure' | 'purge', scope: ScopeKey): Promise<Record<string, unknown>> => {
+    checkScope(scope)
     const parsed = await executeRaw(command, argsFor(command, deps.home, scope))
 
     if (Array.isArray(parsed)) {
@@ -113,6 +154,10 @@ export function createProfilesCli(deps: ProfilesCliDeps): ProfilesCli {
         throw new ProfilesCliError('ensure', 'the CLI result has no profile name')
       }
 
+      if (parsed.profile !== profileNameForScope(scope)) {
+        throw new ProfilesCliError('ensure', 'the CLI profile does not match the requested environment scope')
+      }
+
       return { profile: parsed.profile }
     },
     purge: async (scope: ScopeKey): Promise<void> => {
@@ -125,18 +170,38 @@ export function createProfilesCli(deps: ProfilesCliDeps): ProfilesCli {
         'purge-project',
         `--home=${deps.home}`,
         `--user=${user}`,
-        `--project=${project}`
+        `--project=${project}`,
+        ...environmentArgs
       ])
 
       return strings(parsed)
     },
+    migrateLegacy: async (keep, stopBackend): Promise<void> => {
+      keep.forEach(checkScope)
+      const candidates = await executeRaw('migration-status', [
+        '-m', 'degram_variant.profiles', 'migration-status', `--home=${deps.home}`, ...environmentArgs
+      ])
+      if (!Array.isArray(candidates) || candidates.some(name => typeof name !== 'string' || !/^scope-[a-f0-9]{16,32}$/.test(name))) {
+        throw new ProfilesCliError('migration-status', 'invalid migration candidates')
+      }
+      for (const profile of candidates as string[]) {
+        await stopBackend(profile)
+      }
+      // The CLI reads the durable legacy owner, not the currently selected target.
+      await executeRaw('migrate', [
+        '-m', 'degram_variant.profiles', 'migrate', `--home=${deps.home}`, ...environmentArgs,
+        `--keep-json=${JSON.stringify(keep)}`, '--backend-stopped'
+      ])
+    },
     cleanupLegacy: async (keep: ScopeKey[]): Promise<LegacyCleanupResult> => {
+      keep.forEach(checkScope)
       const parsed = (await executeRaw('cleanup-legacy', [
         '-m',
         'degram_variant.profiles',
         'cleanup-legacy',
         `--home=${deps.home}`,
-        `--keep-json=${JSON.stringify(keep.map(k => ({ user: k.user, company: k.company, project: k.project })))}`
+        `--keep-json=${JSON.stringify(keep)}`,
+        ...environmentArgs
       ])) as Record<string, unknown>
 
       return {

@@ -216,8 +216,11 @@ import {
 } from './dashboard-token'
 import { resolveDashboardWebDist } from './dashboard-web-dist'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
-import { DEGRAM_DG_PARTITION, degramBackendEnv, resolveDgOrigin } from './degram/dg-config'
+import { degramBackendEnv, readDegramJson } from './degram/dg-config'
+import { configuredDgTargets, resolveDgTarget, type ResolvedDgTarget } from './degram/dg-target-config'
+import { claimLegacyPartitionOwnership, legacyOriginForAdoption, partitionForTarget, persistDgTargetSettings } from './degram/environment-storage'
 import { createNetPartitionFetch } from './degram/dg-session'
+import { DEGRAM_CHANNELS } from './degram/channels'
 import { createGatewayRpc } from './degram/gateway-rpc'
 import {
   assertNoHermesOverlap,
@@ -230,7 +233,7 @@ import {
   resolveDegramPaths,
   updateMenuEntries
 } from './degram/isolation'
-import { createDegramMainWiring, type DegramMainWiring } from './degram/main-wiring'
+import { createDegramEnvironmentWiring, type DegramEnvironmentWiring } from './degram/main-wiring'
 import { removeRetiredPairing } from './degram/pairing-store'
 import { createProfilesCli, resolveProfilesInvocation } from './degram/profiles-cli'
 import { createScopeBackendGate } from './degram/scope-gate'
@@ -15241,9 +15244,9 @@ function closeQuickEntryWindow() {
 
 // DeGram (Phase 1301-12): sign-in partition, embedded DG view, delegated-token lifecycle and project scope.
 // Built lazily on the first window and only for the DeGram identity; every other product never reaches it.
-let degramWiring: DegramMainWiring | null | undefined
+let degramWiring: DegramEnvironmentWiring | null | undefined
 
-function ensureDegramWiring(): DegramMainWiring | null {
+function ensureDegramWiring(): DegramEnvironmentWiring | null {
   if (degramWiring !== undefined) {
     return degramWiring
   }
@@ -15255,106 +15258,163 @@ function ensureDegramWiring(): DegramMainWiring | null {
   }
 
   const degramHome: string = DEGRAM_PATHS.home
-  let origin: string
+  let target: ResolvedDgTarget
+  const configurationFailed = (error: unknown): null => {
+    rememberLog(`[degram] ${error instanceof Error ? error.message : 'invalid DG configuration'}`)
+    ipcMain.handle(DEGRAM_CHANNELS.getEnvironment, event => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('degram: untrusted sender')
+      return { selected: null, effectiveRuntime: null, status: 'error', error: 'CONFIG_INVALID', generation: 0,
+        override: Boolean(process.env.DEGRAM_DG_ORIGIN?.trim()) }
+    })
+    // Repair the configuration on disk and explicitly restart; never fall back to localhost.
+    return null
+  }
 
   try {
-    origin = resolveDgOrigin({
+    target = resolveDgTarget({
       env: process.env,
       home: degramHome,
       readFile: (file: string): string | null => {
         try {
           return fs.readFileSync(file, 'utf8')
-        } catch {
-          return null
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+          throw error
         }
       }
-    }).origin
+    })
+    if (target.mode === 'developer' && (target.source === 'legacy' || target.source === 'default')) {
+      const configFile = path.join(degramHome, 'degram.json')
+      const journalFile = path.join(degramHome, 'dg-environment-ownership.json')
+      const provenOrigin = legacyOriginForAdoption(target.origin, process.env.DEGRAM_DG_ORIGIN)
+      if (provenOrigin) {
+        claimLegacyPartitionOwnership({
+          configFile, journalFile,
+          readFile: file => {
+            try { return fs.readFileSync(file, 'utf8') } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+              throw error
+            }
+          },
+          writeFile: (file, text) => { fs.writeFileSync(file, text, { encoding: 'utf8', flag: 'wx' }) },
+          replaceFile: (temporary, destination) => fs.renameSync(temporary, destination),
+          temporaryFileFor: file => `${file}.${crypto.randomUUID()}.tmp`
+        }, provenOrigin)
+      }
+    }
   } catch (error) {
-    // Fail closed: an invalid DG origin must not fall back to another server.
-    rememberLog(`[degram] ${error instanceof Error ? error.message : 'invalid DG configuration'}`)
-
-    return null
+    return configurationFailed(error)
   }
 
-  const dgSession: Session = session.fromPartition(DEGRAM_DG_PARTITION)
-  const gatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never })
-
-  const profiles = createProfilesCli({
-    home: degramHome,
-    run: async (args: string[]) => {
-      const backend = await resolveHermesBackend([]).catch(() => null)
-
-      const invocation = resolveProfilesInvocation({
-        payload: bundledPayload(process.resourcesPath),
-        backend,
-        delimiter: path.delimiter,
-        baseEnv: buildDesktopBackendEnv()
-      })
-
-      if (!invocation) {
-        return {
-          code: null,
-          stdout: '',
-          stderr: JSON.stringify({ error: 'no Python interpreter for the profile CLI' })
-        }
+  const storage = {
+    configFile: path.join(degramHome, 'degram.json'),
+    journalFile: path.join(degramHome, 'dg-environment-ownership.json'),
+    readFile: (file: string): string | null => {
+      try { return fs.readFileSync(file, 'utf8') } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
       }
-
-      return new Promise(resolve => {
-        execFile(
-          invocation.command,
-          args,
-          hiddenWindowsChildOptions({ env: invocation.env, encoding: 'utf8', timeout: 60_000, maxBuffer: 1_048_576 }),
-          (error, stdout, stderr) => {
-            const code: number | null = error ? (typeof error.code === 'number' ? error.code : 1) : 0
-
-            resolve({ code, stdout: String(stdout), stderr: String(stderr) })
-          }
-        )
-      })
+    },
+    writeFile: (file: string, text: string): void => { fs.writeFileSync(file, text, { encoding: 'utf8', flag: 'wx' }) },
+    replaceFile: (temporary: string, destination: string): void => fs.renameSync(temporary, destination),
+    temporaryFileFor: (file: string): string => `${file}.${crypto.randomUUID()}.tmp`
+  }
+  let targets: ReturnType<typeof configuredDgTargets>
+  try {
+    targets = configuredDgTargets(readDegramJson({ home: degramHome, readFile: storage.readFile }))
+    // Preserve an explicitly configured legacy or launch-override origin in the descriptor map.
+    targets[target.mode] = { mode: target.mode, origin: target.origin, environmentId: target.environmentId, partition: target.partition }
+    for (const mode of ['developer', 'demo'] as const) {
+      targets[mode] = { ...targets[mode], partition: partitionForTarget(storage, targets[mode]) }
     }
-  })
-
+  } catch (error) {
+    return configurationFailed(error)
+  }
   removeRetiredPairing(app.getPath('userData'), { info: rememberLog, warn: rememberLog, error: rememberLog })
-
-  degramWiring = createDegramMainWiring({
-    origin,
-    fetch: createNetPartitionFetch({ net: electronNet as never, session: dgSession as never }),
-    clock: {
-      now: (): number => Date.now(),
-      setInterval: (fn: () => void, ms: number): unknown => {
-        const handle = setInterval(fn, ms)
-
-        handle.unref?.()
-
-        return handle
-      },
-      clearInterval: (handle: any): void => clearInterval(handle)
-    },
-    logger: { info: rememberLog, warn: rememberLog, error: rememberLog },
-    createView: webPreferences => new WebContentsView({ webPreferences: { ...webPreferences } }) as never,
-    openExternal: (url: string): unknown => openExternalUrl(url),
-    profiles,
-    backend: {
-      ensure: async (profile: string) => {
-        // The scope controller's own start: this profile becomes the one active scope profile (G-25).
-        scopeGate.allow(profile)
-        await ensureBackend(profile, { spawnPriority: 'foreground' })
-
-        return {
-          call: async (method: string, params: unknown): Promise<unknown> =>
-            gatewayRpc(await freshGatewayWsUrl(profile), method, params)
-        }
-      },
-      // Every window parks the left scope's sockets before the child is killed, so its dying socket starts no
-      // reconnect ladder (G-25); the gate also stops the profile being the active scope.
-      release: (profile: string): Promise<void> =>
-        scopeGate.release(profile, (): Promise<void> => teardownPoolBackendAndWait(profile))
-    },
+  degramWiring = createDegramEnvironmentWiring({
+    targets,
+    selected: targets[target.mode],
+    overrideActive: target.overrideActive,
+    persist: mode => { if (!target.overrideActive) persistDgTargetSettings(storage, mode, targets) },
     ipcMain,
-    cookieSession: dgSession,
-    // Phase 1301-20 (G-17): the tray's sign-out entry brings the window forward and its label follows the locale.
-    showWindow: () => minimizeToTray.restore(),
-    onTrayLabelsChanged: () => minimizeToTray.refreshMenu()
+    createDeps: descriptor => {
+      const origin = descriptor.origin
+      const dgSession: Session = session.fromPartition(descriptor.partition)
+      const gatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never })
+      const profiles = createProfilesCli({
+        home: degramHome,
+        environment: descriptor,
+        run: async (args: string[]) => {
+          const backend = await resolveHermesBackend([]).catch(() => null)
+          const invocation = resolveProfilesInvocation({
+            payload: bundledPayload(process.resourcesPath),
+            backend,
+            delimiter: path.delimiter,
+            baseEnv: buildDesktopBackendEnv()
+          })
+
+          if (!invocation) {
+            return {
+              code: null,
+              stdout: '',
+              stderr: JSON.stringify({ error: 'no Python interpreter for the profile CLI' })
+            }
+          }
+
+          return new Promise(resolve => {
+            execFile(
+              invocation.command,
+              args,
+              hiddenWindowsChildOptions({ env: invocation.env, encoding: 'utf8', timeout: 60_000, maxBuffer: 1_048_576 }),
+              (error, stdout, stderr) => {
+                const code: number | null = error ? (typeof error.code === 'number' ? error.code : 1) : 0
+                resolve({ code, stdout: String(stdout), stderr: String(stderr) })
+              }
+            )
+          })
+        }
+      })
+
+      return {
+        origin,
+        environmentId: descriptor.environmentId,
+        fetch: createNetPartitionFetch({ net: electronNet as never, session: dgSession as never }),
+        clock: {
+          now: (): number => Date.now(),
+          setInterval: (fn: () => void, ms: number): unknown => {
+            const handle = setInterval(fn, ms)
+            handle.unref?.()
+            return handle
+          },
+          clearInterval: (handle: any): void => clearInterval(handle)
+        },
+        logger: { info: rememberLog, warn: rememberLog, error: rememberLog },
+        createView: webPreferences => new WebContentsView({ webPreferences: { ...webPreferences } }) as never,
+        openExternal: (url: string): unknown => openExternalUrl(url),
+        profiles,
+        backend: {
+          ensure: async (profile: string) => {
+            // Only the scope controller may start its active profile (G-25).
+            if (!descriptor.isCurrent()) throw new Error('degram: obsolete environment')
+            scopeGate.allow(profile)
+            await ensureBackend(profile, { spawnPriority: 'foreground' })
+            return {
+              call: async (method: string, params: unknown): Promise<unknown> =>
+                gatewayRpc(await freshGatewayWsUrl(profile), method, {
+                  ...(params as Record<string, unknown>),
+                  _degram_environment: { environmentId: descriptor.environmentId, generation: descriptor.generation }
+                })
+            }
+          },
+          // Park sockets before killing the child; no reconnect ladder for the released scope.
+          release: (profile: string): Promise<void> =>
+            scopeGate.release(profile, (): Promise<void> => teardownPoolBackendAndWait(profile))
+        },
+        cookieSession: dgSession,
+        showWindow: () => minimizeToTray.restore(),
+        onTrayLabelsChanged: () => minimizeToTray.refreshMenu()
+      }
+    }
   })
 
   return degramWiring

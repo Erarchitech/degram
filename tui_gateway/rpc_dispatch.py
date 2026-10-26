@@ -11,7 +11,17 @@ def handle_request(req: dict) -> dict | None:
     with retirement.work() as admitted:
         if not admitted:
             return _err(req.get("id"), 5035, "backend is retiring; reconnect to continue")
-        return _handle_admitted_request(req)
+        normalized = _normalize_request(req)
+        if isinstance(normalized, dict):
+            return normalized
+        reserved, refused = _degram_environment_acquire(normalized[0], normalized[1], normalized[2])
+        if refused is not None:
+            return refused
+        try:
+            return _handle_admitted_request(req)
+        finally:
+            if reserved:
+                _degram_environment_release()
 
 
 def _handle_admitted_request(req: dict) -> dict | None:
@@ -24,6 +34,16 @@ def _handle_admitted_request(req: dict) -> dict | None:
         assert_rpc_allowed(method, params)  # variant degram: deny by default, before any handler or lookup
     except DegramLockedError as exc:
         return rpc_locked_response(rid, exc, _err)
+    # Main's environment stamp is a transport envelope, not a handler parameter. Validate
+    # and remove it before the existing closed method contracts; stock requests stay unchanged.
+    if "_degram_environment" in params:
+        stamp = params["_degram_environment"]
+        if not isinstance(stamp, dict):
+            return _degram_err(rid, 4400, "BAD_ENVIRONMENT", "invalid environment metadata")
+        _, problem = _environment_barrier_params(rid, stamp)
+        if problem is not None:
+            return problem
+        params = {key: value for key, value in params.items() if key != "_degram_environment"}
     if not (fn := _methods.get(method)):
         return _err(rid, -32601, f"unknown method: {method} — the client and the Hermes backend are out of sync "
                     "(different versions); run `hermes update` and restart both")
@@ -71,6 +91,16 @@ def dispatch(req: dict, transport: Optional[Transport] = None) -> dict | None:
         # Reserve BEFORE enqueueing: a queued handler has accepted work even though no worker runs yet.
         if not retirement.acquire():
             return _err(req.get("id"), 5035, "backend is retiring; reconnect to continue")
+        reserved, refused = _degram_environment_acquire(normalized[0], normalized[1], normalized[2])
+        if refused is not None:
+            retirement.release()
+            return refused
+
+        def release_work(_future=None):
+            if reserved:
+                _degram_environment_release()
+            retirement.release()
+
         try:
             ctx = contextvars.copy_context()  # the pool worker must see the bound transport
             owner = normalized[2].get("owner")
@@ -86,10 +116,10 @@ def dispatch(req: dict, transport: Optional[Transport] = None) -> dict | None:
                     t.write(resp)
             future = _pool.submit(lambda: ctx.run(run))
         except BaseException:
-            retirement.release()
+            release_work()
             raise
         # Also releases cancelled queued futures; the worker's own finally would never execute.
-        future.add_done_callback(lambda _: retirement.release())
+        future.add_done_callback(release_work)
         return None
     finally:
         reset_transport(token)

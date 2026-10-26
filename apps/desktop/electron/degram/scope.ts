@@ -19,10 +19,13 @@
 // All collaborators are injected (see test-support.ts for the fakes).
 
 import { relayBaseUrlFor } from './dg-config'
+import { environmentIdForOrigin } from './dg-target-config'
 import type { AuthState, Clock, DgSession, Logger, MeResult, MintResult } from './dg-session'
 import { DEGRAM_HEARTBEAT_S, DEGRAM_TOKEN_RENEW_S } from './dg-session'
 
 export interface ScopeKey {
+  origin: string
+  environmentId: string
   user: string
   company: string | null
   project: string
@@ -33,7 +36,7 @@ export interface BackendHandle {
   call: (method: string, params: unknown) => Promise<unknown>
 }
 
-export type DegramEvent =
+export type DegramEvent = { environment?: { environmentId: string; generation: number } } & (
   | { type: 'session-ended' }
   | { type: 'access-revoked'; project: string; purged: boolean }
   | { type: 'external-link-blocked'; url: string }
@@ -43,6 +46,7 @@ export type DegramEvent =
   | { type: 'backend-start-failed'; project: string }
   /** The DG page's «Новая сессия» pill, forwarded only while a scope is ready (D-41); the renderer starts a fresh chat. */
   | { type: 'new-session-requested' }
+)
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'
 
@@ -74,6 +78,7 @@ export type SelectResult = { ok: true; state: ScopeState } | { ok: false; code: 
 export interface ScopeDeps {
   session: DgSession
   origin: string
+  environmentId: string
   clock: Clock
   logger: Logger
   emit: (event: DegramEvent) => void
@@ -85,11 +90,9 @@ export interface ScopeDeps {
      * Resolves to the removed profile names.
      */
     purgeProject: (user: string, project: string) => Promise<string[]>
-    /**
-     * One-time D-30 cleanup of profiles made before manifests existed: the kept scopes are back-filled first.
-     * The CLI keeps a marker file, so calling it on every start is cheap and removes nothing twice.
-     */
+    /** Report ambiguous legacy records without deleting them, after journaled migration. */
     cleanupLegacy: (keep: ScopeKey[]) => Promise<{ ran: boolean; failed: string[] }>
+    migrateLegacy: (keep: ScopeKey[], stopBackend: (profile: string) => Promise<void>) => Promise<void>
   }
   backend: {
     ensure: (profile: string) => Promise<BackendHandle>
@@ -131,6 +134,16 @@ export interface ScopeController {
    * /auth/me and re-minted unless DG confirms the session ended.
    */
   reportOutcome: (code: string) => Promise<boolean>
+  /**
+   * Strict switch-only teardown. Clears the in-memory delegated credential then releases the
+   * backend; unlike signOut it does not reset the embedded view or wipe partition storage.
+   * A rejection is intentionally visible to the environment controller and blocks new auth.
+   */
+  closeForEnvironmentSwitch: () => Promise<void>
+  /** Fence the real profile backend before an environment switch; renderer state is never consulted. */
+  quiesceForEnvironmentSwitch: (target: { environmentId: string; generation: number }) => Promise<void>
+  /** Reopen the exact backend generation after a pre-persistence transaction abort. */
+  resumeForEnvironmentSwitch: (target: { environmentId: string; generation: number }) => Promise<void>
   /** Stop every timer. */
   dispose: () => void
 }
@@ -173,6 +186,10 @@ const IDLE: Omit<ScopeState, 'epoch'> = {
 
 export function createScopeController(deps: ScopeDeps): ScopeController {
   const { session, logger } = deps
+  if (environmentIdForOrigin(deps.origin) !== deps.environmentId) {
+    throw new Error('scope origin and environmentId do not match')
+  }
+  const environment = { origin: deps.origin, environmentId: deps.environmentId }
   let epoch = 0
   let state: ScopeState = { ...IDLE, epoch: 0 }
   let current: OpenScope | null = null
@@ -189,6 +206,9 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   let checking: Promise<void> | null = null
   let lastCheckAt = Number.NEGATIVE_INFINITY
   let unreachableReported = false
+  let environmentClosed = false
+  let environmentFrozen = false
+  let selecting = 0
   const listeners = new Set<(next: ScopeState) => void>()
 
   const stopHeartbeat = (): void => {
@@ -207,8 +227,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     renewPending = false
   }
 
-  session.onAuth(auth => {
-    if (auth.kind === 'signed-in') {
+  const unsubscribeAuth = session.onAuth(auth => {
+    if (!environmentClosed && !environmentFrozen && auth.kind === 'signed-in') {
       live = true
 
       if (!heartbeat) {
@@ -255,6 +275,53 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
         logger.warn('[degram] could not release the agent backend of the previous scope')
       }
     }
+  }
+
+  /**
+   * The environment-switch path cannot use best effort cleanup: authentication for another
+   * origin starts only after the current credential and backend have positively stopped.
+   * It deliberately leaves cookies/history and the embedded view alone.
+   */
+  const quiesceForEnvironmentSwitch = async (target: { environmentId: string; generation: number }): Promise<void> => {
+    if (selecting || clearing || checking || renewing) throw new Error('degram: scope busy')
+    if (active?.profile && !current?.handle) throw new Error('degram: backend activity unknown')
+    environmentFrozen = true
+    try {
+      if (current?.handle) await current.handle.call('degram.environment.quiesce', target)
+    } catch (error) {
+      environmentFrozen = false
+      throw error
+    }
+  }
+
+  const resumeForEnvironmentSwitch = async (target: { environmentId: string; generation: number }): Promise<void> => {
+    const open = current
+
+    if (open?.handle) await open.handle.call('degram.environment.resume', target)
+    environmentFrozen = false
+  }
+
+  const closeForEnvironmentSwitch = async (): Promise<void> => {
+    environmentClosed = true
+    environmentFrozen = true
+    epoch += 1
+    const open = current
+
+    stopHeartbeat()
+    stopRenewal()
+
+    if (open?.handle) {
+      await open.handle.call('degram.credentials.clear', {})
+    }
+    const profile = open?.profile ?? active?.profile
+    if (profile) {
+      await deps.backend.release(profile)
+    }
+
+    current = null
+    active = null
+    epoch += 1
+    setState({ ...IDLE, epoch })
   }
 
   /** Run one clearing sequence at a time; a concurrent trigger waits for it and is skipped (never doubled). */
@@ -392,29 +459,30 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     deps.emit({ type: 'access-revoked', project: key.project, purged })
   }
 
-  /**
-   * The D-30 one-time cleanup of manifest-less profiles, at most once per run and never concurrent with a
-   * selection (selectProject awaits it before it ensures a profile). The signed-in user's current scopes are
-   * back-filled first, so a profile the user can still open keeps its history; a failure is logged only.
-   */
+  /** Migrate proven legacy history before inspecting unowned profiles; selection waits and fails closed. */
   let legacyCleanup: Promise<void> | null = null
 
   const runLegacyCleanup = (me: Extract<MeResult, { kind: 'signed-in' }>): Promise<void> => {
     if (!legacyCleanup) {
-      const keep: ScopeKey[] = me.memberships.map(m => ({ user: me.username, company: m.company, project: m.project }))
+      const keep: ScopeKey[] = me.memberships.map(m => ({ ...environment, user: me.username, company: m.company, project: m.project }))
 
       legacyCleanup = deps.profiles
-        .cleanupLegacy(keep)
+        .migrateLegacy(keep, profile => deps.backend.release(profile))
+        .then(() => deps.profiles.cleanupLegacy(keep))
         .then(result => {
           if (result.ran) {
-            logger.info('[degram] cleaned up local profiles made before scope manifests existed')
+            logger.info('[degram] inspected legacy profiles after local migration')
           }
 
           if (result.failed.length > 0) {
-            logger.warn('[degram] some local profiles from before scope manifests could not be removed')
+            logger.warn('[degram] ambiguous local profiles were preserved for manual review')
           }
         })
-        .catch(() => logger.warn('[degram] could not clean up local profiles from before scope manifests'))
+        .catch(error => {
+          legacyCleanup = null
+          logger.warn('[degram] could not safely migrate local profiles')
+          throw error
+        })
     }
 
     return legacyCleanup
@@ -432,9 +500,10 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     await selectProject(project)
   }
 
-  const selectProject = async (project: string): Promise<SelectResult> => {
+  const selectProjectInner = async (project: string): Promise<SelectResult> => {
     const me = await session.refresh()
 
+    if (environmentClosed || environmentFrozen) return fail('SUPERSEDED', false)
     if (me.kind === 'unreachable') {
       return { ok: false, code: 'DG_UNREACHABLE', state }
     }
@@ -447,8 +516,13 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       return { ok: false, code: 'NOT_SIGNED_IN', state }
     }
 
-    await runLegacyCleanup(me)
+    try {
+      await runLegacyCleanup(me)
+    } catch {
+      return { ok: false, code: 'PROFILE_FAILED', state }
+    }
 
+    if (environmentClosed || environmentFrozen) return fail('SUPERSEDED', false)
     const membership = me.memberships.find(m => m.project === project)
 
     if (!membership) {
@@ -456,7 +530,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     }
 
     const mine = (epoch += 1)
-    const key: ScopeKey = { user: me.username, company: membership.company, project }
+    const key: ScopeKey = { ...environment, user: me.username, company: membership.company, project }
     const superseded = (): boolean => mine !== epoch
 
     // F-07 (D-48): ask DG for the delegated credential BEFORE the open scope is released. A refusal (no grant,
@@ -594,6 +668,12 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     return { ok: true, state }
   }
 
+  const selectProject = async (project: string): Promise<SelectResult> => {
+    if (environmentClosed || environmentFrozen) return fail('SUPERSEDED', false)
+    selecting += 1
+    try { return await selectProjectInner(project) } finally { selecting -= 1 }
+  }
+
   const signOut = async (): Promise<void> => {
     await runClearing(async () => {
       await session.logout()
@@ -605,7 +685,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   const renew = async (): Promise<void> => {
     const open = current
 
-    if (!open || !open.handle || renewing) {
+    if (environmentClosed || environmentFrozen || !open || !open.handle || renewing) {
       return
     }
 
@@ -642,6 +722,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   }
 
   const handleMe = async (me: MeResult): Promise<void> => {
+    if (environmentClosed || environmentFrozen) return
     if (me.kind === 'unreachable') {
       if (!unreachableReported) {
         unreachableReported = true
@@ -664,7 +745,8 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
       return
     }
 
-    void runLegacyCleanup(me)
+    // Migration failure must not skip membership revocation; selection will retry before opening a profile.
+    await runLegacyCleanup(me).catch(() => undefined)
 
     const target = active
 
@@ -684,7 +766,7 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
   }
 
   const checkAccess = (source: CheckSource): Promise<void> => {
-    if (!live) {
+    if (environmentClosed || environmentFrozen || !live) {
       return Promise.resolve()
     }
 
@@ -760,7 +842,14 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     signOut,
     checkAccess,
     reportOutcome,
+    closeForEnvironmentSwitch,
+    quiesceForEnvironmentSwitch,
+    resumeForEnvironmentSwitch,
     dispose: (): void => {
+      environmentClosed = true
+      epoch += 1
+      unsubscribeAuth()
+      listeners.clear()
       stopHeartbeat()
       stopRenewal()
     },

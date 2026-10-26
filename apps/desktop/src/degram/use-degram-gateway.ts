@@ -11,6 +11,8 @@ import { type GatewayEvent } from '@hermes/shared'
 
 import { $gateway, activeGateway } from '@/store/gateway'
 
+import { $degram, acquireEnvironmentOperation, environmentStamp, isCurrentEnvironment } from './use-degram-state'
+
 export type BridgeApp = 'grasshopper' | 'revit'
 
 /** The bridges, in the order the strip and the picker show them. */
@@ -136,18 +138,40 @@ const asString = (value: unknown): string | undefined => (typeof value === 'stri
 
 const asCount = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
-export function request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
-  if (requestOverride) {
-    return requestOverride<T>(method, params, timeoutMs)
-  }
-
+export async function request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+  const stamp = environmentStamp()
   const gateway = activeGateway()
+  const transport = requestOverride ?? (gateway ? (gateway.request.bind(gateway) as RpcRequest) : null)
 
-  if (!gateway) {
-    return Promise.reject(new Error('gateway not connected'))
+  if (!transport) {
+    throw new Error('gateway not connected')
   }
 
-  return gateway.request<T>(method, params, timeoutMs)
+  if (!$degram.get().environment) {
+    return transport<T>(method, params, timeoutMs)
+  }
+
+  const release = await acquireEnvironmentOperation()
+
+  if (!release) {
+    throw new Error('degram: unavailable environment')
+  }
+
+  try {
+    if (!stamp || !isCurrentEnvironment(stamp)) {
+      throw new Error('degram: obsolete environment')
+    }
+
+    const result = await transport<T>(method, params, timeoutMs)
+
+    if (!isCurrentEnvironment(stamp)) {
+      throw new Error('degram: obsolete environment')
+    }
+
+    return result
+  } finally {
+    await release()
+  }
 }
 
 /** Subscribe to the active gateway's event stream (turn completion and failure). Returns the disposer. */

@@ -2,7 +2,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { DEGRAM_CHANNELS } from './ipc'
-import { createDegramMainWiring } from './main-wiring'
+import { configuredDgTargets, environmentIdForOrigin } from './dg-target-config'
+import { createDegramEnvironmentWiring, createDegramMainWiring } from './main-wiring'
 import type { BackendHandle } from './scope'
 import { createFakeClock, createFakeDg, createFakeViewFactory } from './test-support'
 
@@ -37,6 +38,9 @@ function fakeWindow() {
       },
       on: (event: string, listener: () => void): void => {
         listeners.set(event, [...(listeners.get(event) ?? []), listener])
+      },
+      removeListener: (event: string, listener: () => void): void => {
+        listeners.set(event, (listeners.get(event) ?? []).filter(item => item !== listener))
       }
     },
     webContents,
@@ -68,6 +72,7 @@ function rig() {
     showWindow,
     onTrayLabelsChanged: trayChanged,
     origin: dg.origin,
+    environmentId: environmentIdForOrigin(dg.origin),
     fetch: dg.fetch,
     clock,
     logger,
@@ -77,6 +82,7 @@ function rig() {
       ensure: async () => ({ profile: 'p' }),
       purge: async () => undefined,
       purgeProject: async () => [],
+      migrateLegacy: async () => undefined,
       cleanupLegacy: async () => ({ ran: false, failed: [] })
     },
     backend: { ensure: async () => handle, release: async () => undefined },
@@ -92,6 +98,134 @@ function rig() {
 
   return { dg, wiring, handlers, cookieListeners, fake: viewFactory.fake, logger, showWindow, trayChanged }
 }
+
+describe('environment main composition', () => {
+  function environmentRig() {
+    const targets = configuredDgTargets({})
+    const handlers = new Map<string, Handler>()
+    const registrations = vi.fn((channel: string, handler: Handler) => handlers.set(channel, handler))
+    const clocks: ReturnType<typeof createFakeClock>[] = []
+    const resources: { dg: ReturnType<typeof createFakeDg>; view: ReturnType<typeof createFakeViewFactory>; cookies: Set<any>; partition: string }[] = []
+    const persist = vi.fn()
+    let unavailable = false
+    const wiring = createDegramEnvironmentWiring({
+      targets, selected: targets.developer, persist,
+      ipcMain: { handle: registrations },
+      createDeps: descriptor => {
+        const dg = createFakeDg({ origin: descriptor.origin })
+        const view = createFakeViewFactory()
+        const cookies = new Set<any>()
+        const clock = createFakeClock()
+        clocks.push(clock)
+        dg.setMe(unavailable ? 'network-error' : dg.signedInMe('alpha'))
+        resources.push({ dg, view, cookies, partition: descriptor.partition })
+        return {
+          origin: descriptor.origin, environmentId: descriptor.environmentId,
+          fetch: dg.fetch, clock, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+          createView: view.factory, openExternal: vi.fn(),
+          profiles: { ensure: async () => ({ profile: 'p' }), purge: async () => undefined,
+            purgeProject: async () => [], migrateLegacy: async () => undefined,
+            cleanupLegacy: async () => ({ ran: false, failed: [] }) },
+          backend: { ensure: async () => ({ call: async () => ({}) }), release: async () => undefined },
+          cookieSession: { cookies: { on: (_event, listener) => cookies.add(listener),
+            removeListener: (_event, listener) => cookies.delete(listener) } }
+        }
+      }
+    })
+    const w = fakeWindow()
+    const stamp = () => {
+      const state = wiring.controller.getState()
+      return { environmentId: state.selected.environmentId, generation: state.generation }
+    }
+    const call = (channel: string, payload?: unknown) => handlers.get(channel)!({ sender: w.webContents }, payload)
+    return { wiring, w, stamp, call, handlers, registrations, resources, clocks, persist, targets,
+      setUnavailable: (value: boolean) => { unavailable = value } }
+  }
+
+  it('replaces actual runtime/view/cookie resources A→B→A without reregistering IPC or wiping storage', async () => {
+    const r = environmentRig()
+    r.wiring.attachWindow(r.w.window)
+    await r.wiring.started()
+    const old = r.resources[0]
+    const staleCookie = [...old.cookies][0]
+    const count = r.registrations.mock.calls.length
+    const before = old.dg.meCount()
+    const bounds = { x: 20, y: 30, width: 640, height: 480 }
+    await r.call(DEGRAM_CHANNELS.setDgBounds, bounds)
+    await r.call(DEGRAM_CHANNELS.setLocale, 'en')
+    await r.call(DEGRAM_CHANNELS.setTrayLabels, { signOut: 'Sign out of DG' })
+    await r.call(DEGRAM_CHANNELS.selectTarget, { ...r.stamp(), mode: 'demo' })
+    expect(r.wiring.controller.getState()).toMatchObject({ status: 'ready', selected: r.targets.demo, effectiveRuntime: r.targets.demo })
+    expect(old.cookies.size).toBe(0)
+    expect(old.view.fake.closed()).toBe(true)
+    expect(r.clocks[0].activeIntervals()).toBe(0)
+    expect(r.w.children).toEqual([r.resources[1].view.fake.view])
+    expect(r.resources[1].partition).toBe(r.targets.demo.partition)
+    expect(r.resources[1].view.fake.visible()).toBe(true)
+    expect(r.resources[1].view.fake.loaded.some(url => url.includes('lang=en'))).toBe(true)
+    expect(r.wiring.trayItems()[0].label).toBe('Sign out of DG')
+    expect(r.resources[1].dg.requests.every(request => request.url.startsWith(r.targets.demo.origin))).toBe(true)
+    staleCookie({}, { name: 'dg_session' })
+    r.w.fire('focus')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(old.dg.meCount()).toBe(before)
+    await r.call(DEGRAM_CHANNELS.selectTarget, { ...r.stamp(), mode: 'developer' })
+    expect(r.w.children).toEqual([r.resources[2].view.fake.view])
+    expect(r.registrations.mock.calls.length).toBe(count)
+    expect(r.resources.map(item => item.cookies.size)).toEqual([0, 0, 1])
+    expect(r.resources.flatMap(item => item.dg.requests).some(request => request.url.endsWith('/auth/logout'))).toBe(false)
+  })
+
+  it('stamps composed runtime state and events with each authoritative generation', async () => {
+    const r = environmentRig()
+    r.wiring.attachWindow(r.w.window)
+    await r.wiring.started()
+
+    for (const mode of ['developer', 'demo', 'developer'] as const) {
+      if (r.wiring.controller.getState().selected.mode !== mode) {
+        await r.call(DEGRAM_CHANNELS.selectTarget, { ...r.stamp(), mode })
+      }
+      const stamp = r.stamp()
+      expect(await r.call(DEGRAM_CHANNELS.getState)).toMatchObject({ environment: stamp })
+      const stateMessages = r.w.sent.filter(message => message.channel === DEGRAM_CHANNELS.stateChanged)
+      expect(stateMessages.at(-1)?.payload).toMatchObject({ environment: stamp })
+      const resource = r.resources.at(-1)!
+      resource.view.fake.emit('did-fail-load', {}, -105, 'unreachable', resource.dg.origin, true)
+      const events = r.w.sent.filter(message => message.channel === DEGRAM_CHANNELS.event)
+      expect(events.at(-1)?.payload).toMatchObject({ environment: stamp })
+    }
+  })
+
+  it('retains a failed target, disposes its partial resources and retries only that target', async () => {
+    const r = environmentRig()
+    r.wiring.attachWindow(r.w.window)
+    await r.wiring.started()
+    r.setUnavailable(true)
+    expect(await r.call(DEGRAM_CHANNELS.selectTarget, { ...r.stamp(), mode: 'demo' })).toMatchObject({ ok: false, code: 'START_FAILED' })
+    expect(r.wiring.controller.getState()).toMatchObject({ selected: r.targets.demo, effectiveRuntime: null, status: 'error' })
+    expect(r.w.children).toEqual([])
+    expect(r.resources.map(item => item.cookies.size)).toEqual([0, 0])
+    expect(r.clocks.every(clock => clock.activeIntervals() === 0)).toBe(true)
+    r.setUnavailable(false)
+    expect(await r.call(DEGRAM_CHANNELS.retryTarget, r.stamp())).toMatchObject({ ok: true })
+    expect(r.resources[2].dg.origin).toBe(r.targets.demo.origin)
+  })
+
+  it('rejects forged/stale target calls and keeps a lease busy until explicit release', async () => {
+    const r = environmentRig()
+    r.wiring.attachWindow(r.w.window)
+    await r.wiring.started()
+    const stamp = r.stamp()
+    expect(() => r.handlers.get(DEGRAM_CHANNELS.selectTarget)!({ sender: {} }, { ...stamp, mode: 'demo' })).toThrow(/sender/)
+    expect(() => r.call(DEGRAM_CHANNELS.selectTarget, { ...stamp, generation: -1, mode: 'demo' })).toThrow(/generation/)
+    expect(() => r.call(DEGRAM_CHANNELS.selectTarget, { ...stamp, mode: 'https://other.test' })).toThrow(/target/)
+    const lease = await r.call(DEGRAM_CHANNELS.acquireOperation, stamp)
+    expect(await r.call(DEGRAM_CHANNELS.selectTarget, { ...stamp, mode: 'demo' })).toMatchObject({ ok: false, code: 'BUSY' })
+    await r.call(DEGRAM_CHANNELS.releaseOperation, lease)
+    expect(await r.call(DEGRAM_CHANNELS.selectTarget, { ...stamp, mode: 'demo' })).toMatchObject({ ok: true })
+    expect(() => r.call(DEGRAM_CHANNELS.acquireOperation, stamp)).toThrow(/generation/)
+  })
+})
 
 describe('degram main wiring: tray entry (G-17)', () => {
   it('offers one sign-out entry that shows the window, then asks the renderer to run its sign-out flow', async () => {

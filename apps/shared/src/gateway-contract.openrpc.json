@@ -925,6 +925,60 @@
       }
     },
     {
+      "name": "degram.environment.assert_active",
+      "summary": "Reject a target-bound request while its backend generation is quiesced for an environment switch.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramEnvironmentBarrierParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramEnvironmentBarrierResult"
+        }
+      }
+    },
+    {
+      "name": "degram.environment.quiesce",
+      "summary": "Fail closed unless the local DeGram backend has no active work, then reject new work for this generation.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramEnvironmentBarrierParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramEnvironmentBarrierResult"
+        }
+      }
+    },
+    {
+      "name": "degram.environment.resume",
+      "summary": "Reopen only the exact generation quiesced before an aborted pre-persistence environment switch.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramEnvironmentBarrierParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramEnvironmentBarrierResult"
+        }
+      }
+    },
+    {
       "name": "degram.mapping.answer",
       "summary": "Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID.",
       "params": [
@@ -13240,6 +13294,37 @@
           "status"
         ],
         "title": "DegramDocumentsUnpinResult",
+        "type": "object"
+      },
+      "DegramEnvironmentBarrierParams": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "title": "Environmentid",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environmentId",
+          "generation"
+        ],
+        "title": "DegramEnvironmentBarrierParams",
+        "type": "object"
+      },
+      "DegramEnvironmentBarrierResult": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "DegramEnvironmentBarrierResult",
         "type": "object"
       },
       "DegramMappingAnswerParams": {

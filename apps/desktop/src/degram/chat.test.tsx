@@ -1923,7 +1923,7 @@ describe('stock composer seams (variant degram, one line each)', () => {
 
   it.each([
     ['app/session/hooks/use-prompt-actions/submit.ts', 'degramPromptSubmit<PromptSubmitResult>('],
-    ['app/session/hooks/use-prompt-actions/index.ts', 'degramOnStop()'],
+    ['app/session/hooks/use-prompt-actions/index.ts', 'degramOnStop(degramStop)'],
     ['app/chat/composer/index.tsx', 'useDegramSendBlocked()'],
     ['app/chat/composer/status-stack/index.tsx', '<DegramComposerSections'],
     ['degram/shell-host.tsx', 'registerComposerGate()'],

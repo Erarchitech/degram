@@ -57,6 +57,12 @@ it('exposes a typed degram namespace with exactly the capability bridge and no t
 
   expect(Object.keys(degram).sort()).toEqual(
     [
+      'getEnvironment',
+      'onEnvironment',
+      'selectTarget',
+      'retryTarget',
+      'acquireOperation',
+      'releaseOperation',
       'getState',
       'onState',
       'onEvent',
@@ -114,6 +120,31 @@ it('maps every method to its degram: channel and passes the argument through', a
     [DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED'],
     [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/']
   ])
+})
+
+it('forwards generation-bound target and operation calls without adding an origin', async () => {
+  const bridge = await degramBridge()
+  const stamp = { environmentId: 'environment-a', generation: 3 }
+  const lease = { ...stamp, id: 7 }
+  host.invoke.mockClear()
+  await bridge.getEnvironment()
+  await bridge.selectTarget({ ...stamp, mode: 'demo' })
+  await bridge.retryTarget(stamp)
+  await bridge.acquireOperation(stamp)
+  await bridge.releaseOperation(lease)
+  expect(host.invoke.mock.calls).toEqual([
+    [DEGRAM_CHANNELS.getEnvironment],
+    [DEGRAM_CHANNELS.selectTarget, { ...stamp, mode: 'demo' }],
+    [DEGRAM_CHANNELS.retryTarget, stamp],
+    [DEGRAM_CHANNELS.acquireOperation, stamp],
+    [DEGRAM_CHANNELS.releaseOperation, lease]
+  ])
+  const listener = vi.fn()
+  const off = bridge.onEnvironment(listener)
+  host.handlers.get(DEGRAM_CHANNELS.environmentChanged)?.({}, { generation: 4 })
+  expect(listener).toHaveBeenCalledWith({ generation: 4 })
+  off()
+  expect(host.handlers.has(DEGRAM_CHANNELS.environmentChanged)).toBe(false)
 })
 
 it('subscribes to state and event pushes and returns a working unsubscribe', async () => {
