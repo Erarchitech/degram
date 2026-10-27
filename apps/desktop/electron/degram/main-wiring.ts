@@ -241,6 +241,8 @@ export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
     profiles: deps.profiles,
     backend: deps.backend,
     onTrayLabelsChanged: deps.onTrayLabelsChanged,
+    connectors: deps.connectors,
+    confirmInstall: deps.confirmInstall,
     send: (channel, payload) => live()?.webContents.send(channel, payload)
   })
 

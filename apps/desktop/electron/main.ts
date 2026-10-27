@@ -216,6 +216,7 @@ import {
 } from './dashboard-token'
 import { resolveDashboardWebDist } from './dashboard-web-dist'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
+import { connectorConfirmation, createConnectorInstaller } from './degram/connector-install'
 import { degramBackendEnv, readDegramJson } from './degram/dg-config'
 import { configuredDgTargets, resolveDgTarget, type ResolvedDgTarget } from './degram/dg-target-config'
 import { claimLegacyPartitionOwnership, legacyOriginForAdoption, partitionForTarget, persistDgTargetSettings } from './degram/environment-storage'
@@ -15331,6 +15332,27 @@ function ensureDegramWiring(): DegramEnvironmentWiring | null {
     return configurationFailed(error)
   }
   removeRetiredPairing(app.getPath('userData'), { info: rememberLog, warn: rememberLog, error: rememberLog })
+
+  // Quick 261027-sgc: the Connectors tab installs the bundled Revit/Grasshopper add-ins after a native confirmation.
+  const connectors = createConnectorInstaller({
+    paths: {
+      resourcesPath: process.resourcesPath,
+      appData: app.getPath('appData'),
+      localAppData: process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
+      programData: process.env.ProgramData || process.env.PROGRAMDATA
+    },
+    logger: { info: rememberLog, warn: rememberLog, error: rememberLog }
+  })
+
+  const confirmInstall = async (id: 'revit' | 'grasshopper', locale: 'ru' | 'en'): Promise<boolean> => {
+    const text = connectorConfirmation(id, locale, connectors.targetFor(id))
+    const options = { type: 'question' as const, title: text.title, message: text.message, detail: text.detail, buttons: text.buttons, defaultId: 1, cancelId: 1, noLink: true }
+    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    const { response } = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options)
+
+    return response === 0
+  }
+
   degramWiring = createDegramEnvironmentWiring({
     targets,
     selected: targets[target.mode],
@@ -15411,6 +15433,8 @@ function ensureDegramWiring(): DegramEnvironmentWiring | null {
             scopeGate.release(profile, (): Promise<void> => teardownPoolBackendAndWait(profile))
         },
         cookieSession: dgSession,
+        connectors,
+        confirmInstall,
         showWindow: () => minimizeToTray.restore(),
         onTrayLabelsChanged: () => minimizeToTray.refreshMenu()
       }

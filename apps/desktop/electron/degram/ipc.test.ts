@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 
+import type { ConnectorInstaller, ConnectorInstallState, InstallableConnector } from './connector-install'
 import { createDegramRuntime, DEGRAM_CHANNELS, type DegramRuntime, registerDegramIpc } from './ipc'
 import type { BackendHandle, ScopeKey } from './scope'
 import { environmentIdForOrigin } from './dg-target-config'
@@ -19,6 +20,8 @@ function rig(
     signedIn?: boolean
     generation?: number
     memberships?: { project: string; company?: string | null }[]
+    connectors?: ConnectorInstaller
+    confirmInstall?: (id: InstallableConnector, locale: 'ru' | 'en') => Promise<boolean>
   } = {}
 ) {
   const log = createLog()
@@ -82,6 +85,8 @@ function rig(
     },
     backend: { ensure: async () => handle, release: async () => undefined },
     onTrayLabelsChanged: trayChanged,
+    connectors: options.connectors,
+    confirmInstall: options.confirmInstall,
     send: (channel, payload) => {
       log.push(`send:${channel}${channel === DEGRAM_CHANNELS.event ? `:${(payload as { type: string }).type}` : ''}`)
       sent.push({ channel, payload })
@@ -983,5 +988,110 @@ describe('degram runtime: host to page signals and new-session (D-41, D-42, D-44
     await handlers.get(DEGRAM_CHANNELS.setLocale)!({ sender: 'main' }, 'ru')
     await r.runtime.dgView.showStart()
     expect(r.fake.loaded.at(-1)).toBe(`${r.dg.origin}/?host=degram&lang=ru`)
+  })
+})
+
+describe('connector install from the Connectors tab (quick 261027-sgc)', () => {
+  const HOST = (origin: string) => `${origin}/?host=degram`
+
+  function fakeInstaller(initial: Record<InstallableConnector, ConnectorInstallState>, result: ConnectorInstallState = 'ready') {
+    const states = { ...initial }
+
+    const install = vi.fn(async (id: InstallableConnector) => {
+      if (result === 'ready') {
+        states[id] = 'ready'
+      }
+
+      return result
+    })
+
+    const installer: ConnectorInstaller = {
+      targetFor: id => `/target/${id}`,
+      status: async id => states[id],
+      statusAll: async () => ({ ...states }),
+      install
+    }
+
+    return { installer, install }
+  }
+
+  it('answers a check with the install state of both connectors', async () => {
+    const { installer } = fakeInstaller({ revit: 'install', grasshopper: 'unavailable' })
+    const r = rig({ connectors: installer, confirmInstall: async () => true })
+    await r.runtime.start()
+
+    r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-connectors-check`, true)
+
+    await vi.waitFor(() =>
+      expect(r.fake.loaded).toContain(`${HOST(r.dg.origin)}#degram-installed=revit:install,grasshopper:unavailable`)
+    )
+  })
+
+  it('installs only after the native confirmation, in the DeGram locale, and reports installing then ready', async () => {
+    const { installer, install } = fakeInstaller({ revit: 'install', grasshopper: 'ready' })
+    const confirm = vi.fn(async () => true)
+    const r = rig({ connectors: installer, confirmInstall: confirm })
+    await r.runtime.start()
+    await r.runtime.setLocale('en')
+
+    r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-install=revit`, true)
+
+    await vi.waitFor(() => expect(r.fake.loaded).toContain(`${HOST(r.dg.origin)}#degram-installed=revit:ready,grasshopper:ready`))
+    expect(confirm).toHaveBeenCalledWith('revit', 'en')
+    expect(install).toHaveBeenCalledWith('revit')
+    const installing = r.fake.loaded.indexOf(`${HOST(r.dg.origin)}#degram-installed=revit:installing,grasshopper:ready`)
+    expect(installing).toBeGreaterThan(-1)
+    expect(installing).toBeLessThan(r.fake.loaded.indexOf(`${HOST(r.dg.origin)}#degram-installed=revit:ready,grasshopper:ready`))
+  })
+
+  it('writes nothing when the user cancels, and re-reports the unchanged state', async () => {
+    const { installer, install } = fakeInstaller({ revit: 'install', grasshopper: 'install' })
+    const r = rig({ connectors: installer, confirmInstall: async () => false })
+    await r.runtime.start()
+
+    r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-install=grasshopper`, true)
+
+    await vi.waitFor(() => expect(r.fake.loaded).toContain(`${HOST(r.dg.origin)}#degram-installed=revit:install,grasshopper:install`))
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('keeps a locked result visible instead of re-reading install', async () => {
+    const { installer } = fakeInstaller({ revit: 'ready', grasshopper: 'install' }, 'locked')
+    const r = rig({ connectors: installer, confirmInstall: async () => true })
+    await r.runtime.start()
+
+    r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-install=grasshopper`, true)
+
+    await vi.waitFor(() => expect(r.fake.loaded).toContain(`${HOST(r.dg.origin)}#degram-installed=revit:ready,grasshopper:locked`))
+  })
+
+  it('a page cannot stack dialogs: requests during an open confirmation are ignored', async () => {
+    const { installer, install } = fakeInstaller({ revit: 'install', grasshopper: 'install' })
+    let accept: (value: boolean) => void = () => undefined
+    const confirm = vi.fn(() => new Promise<boolean>(resolve => { accept = resolve }))
+    const r = rig({ connectors: installer, confirmInstall: confirm })
+    await r.runtime.start()
+
+    for (const id of ['revit', 'revit', 'grasshopper']) {
+      r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-install=${id}`, true)
+    }
+
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    accept(true)
+    await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+    expect(install).toHaveBeenCalledWith('revit')
+  })
+
+  it('ignores install requests when this build has no installer', async () => {
+    const r = rig()
+    await r.runtime.start()
+    const before = r.fake.loaded.length
+
+    r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-install=revit`, true)
+    r.fake.emit('did-navigate-in-page', {}, `${HOST(r.dg.origin)}#degram-connectors-check`, true)
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    expect(r.fake.loaded.length).toBe(before)
   })
 })

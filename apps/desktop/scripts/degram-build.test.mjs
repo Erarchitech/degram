@@ -306,12 +306,12 @@ test('degram builder config contains no NousResearch or GitHub release feed', ()
 
 // ---- Plan 1301-15: the revit-mcp adapter ships as a resource, and NSIS is an admitted prepared format ----
 
-test('degram ships the read-only revit-mcp adapter as the revit-mcp resource, without tests, git or caches (D-04)', () => {
+test('degram ships the DG Revit connector as the revit-mcp resource, without tests, git or caches (D-04, D-44)', () => {
   const config = loadConfig('degram')
   const entry = config.extraResources.find(item => item.to === 'revit-mcp')
-  assert.ok(entry, 'degram extraResources must carry the revit-mcp adapter')
-  // The adapter is the sibling submodule of the framework checkout: apps/degram/apps/desktop -> apps/revit-mcp.
-  assert.equal(path.resolve(entry.from), path.resolve(import.meta.dirname, '../../../../revit-mcp'))
+  assert.ok(entry, 'degram extraResources must carry the Revit connector')
+  // The connector is the sibling folder of the framework checkout: apps/degram/apps/desktop -> apps/dg-revit-connector.
+  assert.equal(path.resolve(entry.from), path.resolve(import.meta.dirname, '../../../../dg-revit-connector'))
   assert.ok(Array.isArray(entry.filter), 'the adapter copy must be filtered')
 
   for (const excluded of ['!tests/**', '!.git', '!.git/**', '!**/__pycache__/**', '!.venv/**', '!.pytest_cache/**']) {
@@ -334,6 +334,36 @@ test('DEGRAM_REVIT_MCP_SOURCE overrides where the adapter is read from (builds o
   } finally {
     delete process.env.DEGRAM_REVIT_MCP_SOURCE
   }
+})
+
+// ---- Quick 261027-sgc: the DG Grasshopper plugin ships as resources/dg-grasshopper when a build exists ----
+
+test('degram bundles the DG Grasshopper plugin from DEGRAM_DG_GRASSHOPPER_SOURCE, plugin files only', () => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), 'dg-gha-'))
+  process.env.DEGRAM_DG_GRASSHOPPER_SOURCE = source
+
+  try {
+    assert.ok(!loadConfig('degram').extraResources.some(item => item.to === 'dg-grasshopper'), 'no DG.gha: not bundled')
+    fs.writeFileSync(path.join(source, 'DG.gha'), 'gha')
+    const entry = loadConfig('degram').extraResources.find(item => item.to === 'dg-grasshopper')
+    assert.ok(entry, 'a built DG.gha is bundled')
+    assert.equal(path.resolve(entry.from), path.resolve(source))
+    assert.deepEqual(entry.filter, ['*.gha', '*.dll'])
+    for (const variant of [undefined, 'bundled', 'light', 'store']) {
+      assert.ok(!loadConfig(variant).extraResources.some(item => item.to === 'dg-grasshopper'), `variant ${variant ?? '(default)'}`)
+    }
+  } finally {
+    delete process.env.DEGRAM_DG_GRASSHOPPER_SOURCE
+    fs.rmSync(source, { recursive: true, force: true })
+  }
+})
+
+test('the Grasshopper plugin defaults to the framework net48 Release build', () => {
+  const config = loadConfig('degram')
+  const expected = path.resolve(import.meta.dirname, '../../../../../DG/src/DG.Grasshopper/bin/Release/net48')
+  const entry = config.extraResources.find(item => item.to === 'dg-grasshopper')
+  assert.equal(Boolean(entry), fs.existsSync(path.join(expected, 'DG.gha')))
+  if (entry) assert.equal(path.resolve(entry.from), expected)
 })
 
 test('no other variant ships the revit-mcp adapter', () => {

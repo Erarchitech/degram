@@ -67,9 +67,17 @@ if (!/^\d+\.\d+\.\d+$/.test(electronVersion)) {
   throw new Error(`invalid electron version ${electronVersion} in package.json`)
 }
 
-// The read-only Revit adapter (Phase 1301 D-04): the sibling submodule of the framework checkout
-// (apps/degram/apps/desktop -> apps/revit-mcp), or an explicit path for a build of the fork on its own.
-const revitMcpSource = process.env.DEGRAM_REVIT_MCP_SOURCE || path.resolve(__dirname, '../../../revit-mcp')
+// The DG Revit connector (1303-13, D-44..D-46; it replaced the read-only apps/revit-mcp adapter): the sibling folder of
+// the framework checkout (apps/degram/apps/desktop -> apps/dg-revit-connector), or an explicit path, normally the
+// staged payload of tools/degram/stage_connector_payloads.py.
+const revitMcpSource = process.env.DEGRAM_REVIT_MCP_SOURCE || path.resolve(__dirname, '../../../dg-revit-connector')
+
+// The DG Grasshopper plugin the Connectors tab installs (quick 261027-sgc): the framework's net48 Release build, which
+// Rhino 8 and Rhino.Inside.Revit 2024 both load, or an explicit (staged) path. Without DG.gha it is not bundled and
+// DeGram reports the connector unavailable instead of installing a stale copy.
+const dgGrasshopperSource =
+  process.env.DEGRAM_DG_GRASSHOPPER_SOURCE || path.resolve(__dirname, '../../../../DG/src/DG.Grasshopper/bin/Release/net48')
+const bundleDgGrasshopper = fs.existsSync(path.join(dgGrasshopperSource, 'DG.gha'))
 
 const macFeed = channelRequest ? null : feedContract.darwinFeed(channel === 'canary' || channel === 'light-canary' ? 'canary' : 'stable', light)
 const publicUrl = feedContract.feedBaseUrl(process.env.CLOUDFLARE_R2_PUBLIC_URL)
@@ -168,7 +176,10 @@ module.exports = {
               '!.pytest_cache/**',
               '!.ruff_cache/**'
             ]
-          }
+          },
+          ...(bundleDgGrasshopper
+            ? [{ from: dgGrasshopperSource, to: 'dg-grasshopper', filter: ['*.gha', '*.dll'] }]
+            : [])
         ]
       : []),
     {

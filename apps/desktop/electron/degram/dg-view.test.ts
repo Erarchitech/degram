@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { DEGRAM_DG_PARTITION } from './dg-config'
-import { createDgView, DG_VIEW_WEB_PREFERENCES, dgUrlFor, isAllowedDgUrl } from './dg-view'
+import { createDgView, DG_VIEW_WEB_PREFERENCES, dgUrlFor, installedFragment, isAllowedDgUrl } from './dg-view'
 import type { DegramEvent } from './scope'
 import { createFakeNavigationEvent, createFakeViewFactory, createLog } from './test-support'
 
@@ -13,6 +13,8 @@ function setup(
     log?: ReturnType<typeof createLog>
     onProjectAnnounced?: (name: string) => void
     onNewSessionRequested?: () => void
+    onConnectorStatusRequested?: () => void
+    onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
     targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
     onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
   } = {}
@@ -31,6 +33,8 @@ function setup(
     logger,
     onProjectAnnounced: options.onProjectAnnounced,
     onNewSessionRequested: options.onNewSessionRequested,
+    onConnectorStatusRequested: options.onConnectorStatusRequested,
+    onConnectorInstallRequested: options.onConnectorInstallRequested,
     targetPresentation: options.targetPresentation,
     onTargetRequested: options.onTargetRequested
   })
@@ -597,5 +601,66 @@ describe('new-session request from the DG page (D-41, T-1301-34-01)', () => {
     expect(requested).toHaveBeenCalledTimes(1)
     expect(announced).toHaveBeenCalledTimes(1)
     expect(announced).toHaveBeenCalledWith('Alpha')
+  })
+})
+
+describe('connector install signals (quick 261027-sgc)', () => {
+  const HOST = `${ORIGIN}/?host=degram`
+
+  it('passes exactly the check and the two install requests from the DG main frame', () => {
+    const checked = vi.fn()
+    const install = vi.fn()
+    const { fake } = setup({ onConnectorStatusRequested: checked, onConnectorInstallRequested: install })
+
+    fake.emit('did-navigate-in-page', {}, `${HOST}#degram-connectors-check`, true)
+    fake.emit('did-navigate-in-page', {}, `${HOST}#degram-install=revit`, true)
+    fake.emit('did-navigate-in-page', {}, `${HOST}#degram-install=grasshopper`, true)
+
+    for (const [url, main] of [
+      [`${HOST}#degram-install=dynamo`, true],
+      [`${HOST}#degram-install=revit&x=1`, true],
+      [`${HOST}#degram-install=..%2Frevit`, true],
+      [`${HOST}#degram-install=Revit`, true],
+      [`${HOST}#degram-install=`, true],
+      [`${HOST}#degram-installed=revit:ready`, true],
+      [`${HOST}#degram-connectors-check=1`, true],
+      [`${HOST}#degram-install=revit`, false],
+      ['https://evil.test/#degram-install=revit', true],
+      ['https://evil.test/#degram-connectors-check', true]
+    ] as const) {
+      fake.emit('did-navigate-in-page', {}, url, main)
+    }
+
+    expect(checked).toHaveBeenCalledTimes(1)
+    expect(install.mock.calls).toEqual([['revit'], ['grasshopper']])
+  })
+
+  it('signals the install state in a closed vocabulary only', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showStart()
+    await dgView.signal('#degram-installed=revit:ready,grasshopper:install')
+    await dgView.signal('#degram-installed=grasshopper:locked')
+
+    for (const bad of [
+      '#degram-installed=revit:done',
+      '#degram-installed=dynamo:ready',
+      '#degram-installed=revit:ready,grasshopper:install,revit:ready',
+      '#degram-installed=revit:ready&x=1',
+      '#degram-installed=',
+      '#degram-install=revit'
+    ]) {
+      await expect(dgView.signal(bad)).rejects.toThrow()
+    }
+
+    expect(fake.loaded).toEqual([HOST, `${HOST}#degram-installed=revit:ready,grasshopper:install`, `${HOST}#degram-installed=grasshopper:locked`])
+  })
+
+  it('builds the fragment from known states and refuses anything else', () => {
+    expect(installedFragment({ revit: 'needs-host', grasshopper: 'unavailable' })).toBe(
+      '#degram-installed=revit:needs-host,grasshopper:unavailable'
+    )
+    expect(installedFragment({ revit: 'bogus' })).toBeNull()
+    expect(installedFragment({})).toBeNull()
   })
 })

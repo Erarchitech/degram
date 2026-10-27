@@ -10,13 +10,14 @@
 // validates every payload, and calls the runtime. There is no channel that can read a credential.
 //
 import { DEGRAM_CHANNELS } from './channels'
+import type { ConnectorInstaller, ConnectorInstallState, InstallableConnector } from './connector-install'
 import type { EnvironmentViewState, EnvironmentSwitchResult } from './environment-controller'
 import type { DgTargetMode } from './dg-target-config'
 
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
 import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgView, DgViewDeps, DgViewPage } from './dg-view'
-import { createDgView, DG_REGIONS, projectFragment } from './dg-view'
+import { createDgView, DG_REGIONS, installedFragment, projectFragment } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
@@ -101,6 +102,10 @@ export interface DegramRuntimeDeps {
   onTrayLabelsChanged?: () => void
   targetPresentation?: DgViewDeps['targetPresentation']
   onTargetRequested?: DgViewDeps['onTargetRequested']
+  /** The bundled connector packages (quick 261027-sgc); without it the page's install requests are ignored. */
+  connectors?: ConnectorInstaller
+  /** The native confirmation before a connector is written to disk; resolves false on Cancel. */
+  confirmInstall?: (id: InstallableConnector, locale: DgLocale) => Promise<boolean>
 }
 
 export interface DegramRuntime {
@@ -246,6 +251,54 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
   /** The ring state the DG page was last told (D-44); the page starts idle. */
   let hostState: DgHostState = 'idle'
+  /** The DeGram locale, for the native connector confirmation. */
+  let locale: DgLocale = 'ru'
+  /** One confirmation or install at a time: a page cannot stack dialogs (quick 261027-sgc). */
+  let connectorBusy: InstallableConnector | null = null
+  /** The connector being copied (after the user confirmed). */
+  let connectorInstalling: InstallableConnector | null = null
+
+  /** Tell the page the connector install state; `override` carries an in-flight or a just-failed state. */
+  const reportConnectors = async (override?: Partial<Record<InstallableConnector, ConnectorInstallState>>): Promise<void> => {
+    if (!deps.connectors || !isCurrent()) {
+      return
+    }
+
+    const fragment = installedFragment({ ...(await deps.connectors.statusAll()), ...override })
+
+    if (fragment) {
+      await viewTask(() => dgView.signal(fragment))
+    }
+  }
+
+  const installConnector = async (id: InstallableConnector): Promise<void> => {
+    const { connectors, confirmInstall } = deps
+
+    if (!connectors || !confirmInstall || connectorBusy || !isCurrent()) {
+      return
+    }
+
+    connectorBusy = id
+    let result: ConnectorInstallState | null = null
+
+    try {
+      // A cancelled dialog still gets an answer below, so the page leaves its waiting state.
+      if ((await confirmInstall(id, locale)) && isCurrent()) {
+        connectorInstalling = id
+        await reportConnectors({ [id]: 'installing' })
+        result = await connectors.install(id)
+      }
+    } catch {
+      logger.warn(`[degram] connector ${id}: the install request did not complete`)
+      result = 'failed'
+    } finally {
+      connectorBusy = null
+      connectorInstalling = null
+    }
+
+    // A locked or failed install is reported as such; anything else is re-read from disk.
+    await reportConnectors(result === 'locked' || result === 'failed' ? { [id]: result } : undefined)
+  }
 
   /** Tell the DG page the scope state: remembered at once (loads carry it), signalled in view order. */
   const noteHostState = (next: DgHostState): void => {
@@ -306,6 +359,14 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       if (scope.getState().status === 'ready') {
         onEvent({ type: 'new-session-requested' })
       }
+    },
+    onConnectorStatusRequested: () => {
+      void reportConnectors(connectorInstalling ? { [connectorInstalling]: 'installing' } : undefined).catch(() =>
+        logger.warn('[degram] the connector install state could not be read')
+      )
+    },
+    onConnectorInstallRequested: id => {
+      void installConnector(id).catch(() => logger.warn('[degram] the connector install state could not be reported'))
     }
   })
 
@@ -441,7 +502,13 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     },
     getTrayLabels: (): DegramTrayLabels => trayLabels,
     dgGo: (region: DgRegion): Promise<void> => viewTask(() => dgView.signal(`#degram-go=${region}`)),
-    setLocale: (locale: DgLocale): Promise<void> => viewTask(() => dgView.setLocale(locale)),
+    setLocale: (next: DgLocale): Promise<void> => {
+      if (next === 'ru' || next === 'en') {
+        locale = next
+      }
+
+      return viewTask(() => dgView.setLocale(next))
+    },
     requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
     reportOutcome: async (code: string): Promise<boolean> => {

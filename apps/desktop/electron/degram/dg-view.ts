@@ -36,6 +36,19 @@ const HOST_LANG_FRAGMENT = /^#degram-lang=(ru|en)$/
 const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
 /** The same name grammar the page's announcement is validated with (and ui-v2's 64 character cap). */
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/
+/** `#degram-installed=revit:<state>,grasshopper:<state>` (quick 261027-sgc): the install state of the bundled connectors. */
+const CONNECTOR_STATE = '(?:revit|grasshopper):(?:ready|install|installing|unavailable|needs-host|locked|failed)'
+const HOST_INSTALLED_FRAGMENT = new RegExp(`^#degram-installed=${CONNECTOR_STATE}(?:,${CONNECTOR_STATE})?$`)
+/** The page asks for the install state, or to install one connector (the runtime confirms natively first). */
+const PAGE_CONNECTORS_CHECK = '#degram-connectors-check'
+const PAGE_INSTALL_FRAGMENT = /^#degram-install=(revit|grasshopper)$/
+
+/** The fragment that tells the page the install state; null when a state is outside the vocabulary. */
+export function installedFragment(states: Record<string, string>): string | null {
+  const fragment = `#degram-installed=${Object.entries(states).map(([id, state]) => `${id}:${state}`).join(',')}`
+
+  return HOST_INSTALLED_FRAGMENT.test(fragment) ? fragment : null
+}
 
 /** True for a `#degram-project=` fragment whose decoded value is empty or a valid project name. */
 export function isHostProjectFragment(fragment: unknown): boolean {
@@ -122,6 +135,10 @@ export interface DgViewDeps {
   onProjectAnnounced?: (name: string) => void
   /** The untrusted DG page asked for a fresh chat through the exact `#degram-new-session` hash (D-41). */
   onNewSessionRequested?: () => void
+  /** The page asked for the connector install state (`#degram-connectors-check`). */
+  onConnectorStatusRequested?: () => void
+  /** The page asked to install a bundled connector (`#degram-install=revit|grasshopper`): a request, never an authority. */
+  onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
   targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
   onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
 }
@@ -145,7 +162,8 @@ export interface DgView {
   /**
    * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
    * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors|projects`,
-   * `#degram-lang=ru|en` or `#degram-project=<name>` (empty: no project open). Throws on anything else.
+   * `#degram-lang=ru|en`, `#degram-project=<name>` (empty: no project open) or
+   * `#degram-installed=<connector>:<state>[,...]`. Throws on anything else.
    * Nothing is loaded while the host page is not shown.
    */
   signal: (fragment: string) => Promise<void>
@@ -283,6 +301,20 @@ export function createDgView(deps: DgViewDeps): DgView {
 
       return
     }
+
+    if (hash === PAGE_CONNECTORS_CHECK) {
+      deps.onConnectorStatusRequested?.()
+
+      return
+    }
+
+    const install = PAGE_INSTALL_FRAGMENT.exec(hash)
+
+    if (install) {
+      deps.onConnectorInstallRequested?.(install[1] as 'revit' | 'grasshopper')
+
+      return
+    }
     const match = /^#degram-select=([^&]{1,200})$/.exec(hash)
     if (!match) {
       return
@@ -397,7 +429,7 @@ export function createDgView(deps: DgViewDeps): DgView {
     signal: async (fragment: string): Promise<void> => {
       if (
         typeof fragment !== 'string' ||
-        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
       ) {
         throw new Error('unknown DG signal')
       }
