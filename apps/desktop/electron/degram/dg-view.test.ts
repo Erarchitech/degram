@@ -13,6 +13,8 @@ function setup(
     log?: ReturnType<typeof createLog>
     onProjectAnnounced?: (name: string) => void
     onNewSessionRequested?: () => void
+    targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
+    onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
   } = {}
 ) {
   const log = options.log ?? createLog()
@@ -28,11 +30,31 @@ function setup(
     openExternal,
     logger,
     onProjectAnnounced: options.onProjectAnnounced,
-    onNewSessionRequested: options.onNewSessionRequested
+    onNewSessionRequested: options.onNewSessionRequested,
+    targetPresentation: options.targetPresentation,
+    onTargetRequested: options.onTargetRequested
   })
 
   return { ...viewFactory, dgView, events, openExternal, logger, log }
 }
+
+describe('landing target intent', () => {
+  it('accepts only current-generation main-frame intent from the configured origin', async () => {
+    const requested = vi.fn()
+    const { fake, dgView } = setup({ targetPresentation: { mode: 'developer', generation: 3, locked: false }, onTargetRequested: requested })
+    await dgView.showStart()
+    for (const [url, main] of [
+      [`${ORIGIN}/?host=degram#degram-target=demo:2`, true],
+      [`${ORIGIN}/?host=degram#degram-target=demo:3`, false],
+      ['https://evil.test/#degram-target=demo:3', true],
+      [`${ORIGIN}/#degram-target=other:3`, true],
+      [`${ORIGIN}/#degram-target=demo:3&url=evil`, true]
+    ] as const) fake.emit('did-navigate-in-page', {}, url, main)
+    expect(requested).not.toHaveBeenCalled()
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-target=demo:3`, true)
+    expect(requested).toHaveBeenCalledExactlyOnceWith('demo', 3)
+  })
+})
 
 describe('isAllowedDgUrl (exact origin allowlist, D-07)', () => {
   it('admits only the configured origin: scheme, host and port exact', () => {

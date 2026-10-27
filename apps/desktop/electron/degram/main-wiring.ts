@@ -97,11 +97,21 @@ export function createDegramEnvironmentWiring(deps: {
     overrideActive: deps.overrideActive,
     persist: deps.persist,
     createRuntime: descriptor => {
-      const wiring = createDegramMainWiring({
+      const wiring: DegramMainWiring = createDegramMainWiring({
         ...deps.createDeps(descriptor),
         ipcMain: deps.ipcMain,
         environmentId: descriptor.environmentId,
         generation: descriptor.generation,
+        targetPresentation: { mode: descriptor.mode, generation: descriptor.generation, locked: deps.overrideActive === true },
+        onTargetRequested: (mode, generation) => {
+          const state = controller.getState()
+          if (!descriptor.isCurrent() || state.generation !== generation || state.status !== 'ready' || deps.overrideActive) return
+          void controller.selectTarget(mode).then(result => {
+            if (!result.ok && descriptor.isCurrent()) void wiring.runtime.dgView.signal('#degram-target-refused')
+          }).catch(() => {
+            if (descriptor.isCurrent()) void wiring.runtime.dgView.signal('#degram-target-refused')
+          })
+        },
         origin: descriptor.origin,
         partition: descriptor.partition,
         isCurrent: descriptor.isCurrent,
@@ -219,6 +229,8 @@ export function createDegramMainWiring(deps: DegramMainDeps): DegramMainWiring {
     origin: deps.origin,
     environmentId: deps.environmentId,
     generation: deps.generation,
+    targetPresentation: deps.targetPresentation,
+    onTargetRequested: deps.onTargetRequested,
     partition: deps.partition,
     isCurrent: deps.isCurrent,
     fetch: deps.fetch,

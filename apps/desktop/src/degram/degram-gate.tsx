@@ -20,6 +20,7 @@ function Surface({ children }: { children: React.ReactNode }) {
   // Popovers opened from inside the surface (the project picker) portal into it: a body-level popover would sit
   // below the `--z-setup` rung this surface owns.
   const [node, setNode] = useState<HTMLElement | null>(null)
+  const { bootError, environment, state } = useDegram()
 
   return (
     <div
@@ -30,7 +31,7 @@ function Surface({ children }: { children: React.ReactNode }) {
       {/* Keeps the native window drag handle reachable above the surface. */}
       <div className="h-8 shrink-0 [-webkit-app-region:drag]" />
       <DialogPortalContainerContext.Provider value={node}>
-        <DgTargetSelector />
+        {(bootError || !isEnvironmentReady(environment) || state?.dg.reachable === false) && <DgTargetSelector />}
         <div className="min-h-0 flex-1">{children}</div>
       </DialogPortalContainerContext.Provider>
     </div>

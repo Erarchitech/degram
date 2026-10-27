@@ -99,6 +99,8 @@ export interface DegramRuntimeDeps {
   send: (channel: string, payload: unknown) => void
   /** The tray labels changed: rebuild the native menu. */
   onTrayLabelsChanged?: () => void
+  targetPresentation?: DgViewDeps['targetPresentation']
+  onTargetRequested?: DgViewDeps['onTargetRequested']
 }
 
 export interface DegramRuntime {
@@ -282,6 +284,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
   const dgView: DgView = createDgView({
     origin: deps.origin,
+    targetPresentation: deps.targetPresentation,
+    onTargetRequested: deps.onTargetRequested,
     partition: deps.partition,
     isCurrent,
     createView: deps.createView,

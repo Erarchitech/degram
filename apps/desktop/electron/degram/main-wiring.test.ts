@@ -142,6 +142,27 @@ describe('environment main composition', () => {
       setUnavailable: (value: boolean) => { unavailable = value } }
   }
 
+  it('routes landing toggle through the controller and refuses it while an operation lease is held', async () => {
+    const r = environmentRig()
+    r.wiring.attachWindow(r.w.window)
+    await r.wiring.started()
+    await r.call(DEGRAM_CHANNELS.setDgMode, 'full')
+    const generation = r.stamp().generation
+    const old = r.resources[0]
+    expect(old.view.fake.loaded.some(url => url.includes(`dgTarget=developer&dgGeneration=${generation}`)), JSON.stringify(old.view.fake.loaded)).toBe(true)
+    const lease = await r.call(DEGRAM_CHANNELS.acquireOperation, r.stamp())
+    old.view.fake.emit('did-navigate-in-page', {}, `${old.dg.origin}/?host=degram#degram-target=demo:${generation}`, true)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(r.wiring.controller.getState().selected.mode).toBe('developer')
+    expect(old.view.fake.loaded.some(url => url.endsWith('#degram-target-refused'))).toBe(true)
+    await r.call(DEGRAM_CHANNELS.releaseOperation, lease)
+    old.view.fake.emit('did-navigate-in-page', {}, `${old.dg.origin}/?host=degram#degram-target=demo:${generation}`, true)
+    await vi.waitFor(() => expect(r.wiring.controller.getState()).toMatchObject({ status: 'ready', selected: r.targets.demo }))
+    old.view.fake.emit('did-navigate-in-page', {}, `${old.dg.origin}/#degram-target=developer:${generation}`, true)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(r.wiring.controller.getState().selected.mode).toBe('demo')
+  })
+
   it('replaces actual runtime/view/cookie resources A→B→A without reregistering IPC or wiping storage', async () => {
     const r = environmentRig()
     r.wiring.attachWindow(r.w.window)

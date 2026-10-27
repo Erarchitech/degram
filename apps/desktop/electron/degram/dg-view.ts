@@ -122,6 +122,8 @@ export interface DgViewDeps {
   onProjectAnnounced?: (name: string) => void
   /** The untrusted DG page asked for a fresh chat through the exact `#degram-new-session` hash (D-41). */
   onNewSessionRequested?: () => void
+  targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
+  onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
 }
 
 export interface DgBounds {
@@ -231,6 +233,11 @@ export function createDgView(deps: DgViewDeps): DgView {
   const contents = view.webContents
   let state: DgViewState = { page: 'blank', mode: 'graph' }
   let lang: DgLocale | null = null
+  const pageUrl = (): string => {
+    const base = hostPageUrl(origin, lang)
+    const target = deps.targetPresentation
+    return target ? `${base}&dgTarget=${target.mode}&dgGeneration=${target.generation}&dgTargetLocked=${target.locked ? 1 : 0}` : base
+  }
   let hostState: DgHostState = 'idle'
   /** The host-mode page URL that is currently loaded; a fragment signal is a change of its hash only. */
   let loadedBase: string | null = null
@@ -266,6 +273,11 @@ export function createDgView(deps: DgViewDeps): DgView {
     }
     let hash: string
     try { hash = new URL(url).hash } catch { return }
+    const target = /^#degram-target=(developer|demo):(0|[1-9][0-9]{0,9})$/.exec(hash)
+    if (target && deps.targetPresentation && Number(target[2]) === deps.targetPresentation.generation) {
+      deps.onTargetRequested?.(target[1] as 'developer' | 'demo', Number(target[2]))
+      return
+    }
     if (hash === '#degram-new-session') {
       deps.onNewSessionRequested?.()
 
@@ -340,7 +352,7 @@ export function createDgView(deps: DgViewDeps): DgView {
   const showSignIn = async (): Promise<void> => {
     state = { ...state, page: 'sign-in' }
 
-    const base = hostPageUrl(origin, lang)
+    const base = pageUrl()
 
     await loadPage(base, base)
   }
@@ -352,7 +364,7 @@ export function createDgView(deps: DgViewDeps): DgView {
       return
     }
 
-    const base = hostPageUrl(origin, lang)
+    const base = pageUrl()
 
     await loadPage(base, hostLoadUrl(base))
   }
@@ -385,13 +397,13 @@ export function createDgView(deps: DgViewDeps): DgView {
     signal: async (fragment: string): Promise<void> => {
       if (
         typeof fragment !== 'string' ||
-        !(HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
       ) {
         throw new Error('unknown DG signal')
       }
 
       // Only a loaded host page can take a fragment: not the #degram slice, a blank view or a foreign page.
-      if (state.page === 'dg' && state.mode === 'full' && loadedBase) {
+      if ((state.page === 'dg' && state.mode === 'full' || state.page === 'sign-in' && fragment === '#degram-target-refused') && loadedBase) {
         // Same document, new hash: Chromium treats it as an in-page navigation and does not reload.
         await load(`${loadedBase}${fragment}`)
       }
@@ -425,7 +437,7 @@ export function createDgView(deps: DgViewDeps): DgView {
         return
       }
 
-      const base = hostPageUrl(origin, lang)
+      const base = pageUrl()
       if (state.page === 'dg' && state.mode === 'full' && loadedBase && loadedBase !== base) {
         await loadPage(base, hostLoadUrl(base))
 

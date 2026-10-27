@@ -674,6 +674,7 @@ describe('DG unreachable at start and the revoke toast (G-15, G-16)', () => {
     expect(
       screen.getByText("The DG server can't be reached. Check your network or VPN, then retry the request.")
     ).toBeTruthy()
+    expect(screen.getByTestId('dg-target-header')).toBeTruthy()
     // the native DG view stays hidden while the state is unreachable
     expect(h.bridge.setDgBounds).not.toHaveBeenCalledWith(expect.objectContaining({ width: expect.any(Number) }))
     fireEvent.click(screen.getByRole('button', { name: 'Retry request' }))
