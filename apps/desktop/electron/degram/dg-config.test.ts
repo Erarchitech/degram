@@ -130,6 +130,57 @@ describe('resolveRevitAdapter', () => {
     ).toEqual({ python: `${dir}\\.venv\\Scripts\\python.exe`, mcpDir: dir })
   })
 
+  it('falls back to the interpreter the installer bundles as resources/revit-python', () => {
+    const dir = 'C:\\res\\revit-mcp'
+    const bundled = 'C:\\res\\revit-python\\python.exe'
+
+    expect(
+      resolveRevitAdapter({
+        env: {},
+        home: HOME,
+        readFile: files({}),
+        platform: 'win32',
+        resourcesPath: 'C:\\res',
+        exists: exists(dir, bundled)
+      })
+    ).toEqual({ python: bundled, mcpDir: dir })
+  })
+
+  it('lets env, degram.json and the adapter uv environment win over the bundled interpreter', () => {
+    const dir = 'C:\\res\\revit-mcp'
+    const bundled = 'C:\\res\\revit-python\\python.exe'
+    const venv = `${dir}\\.venv\\Scripts\\python.exe`
+    const base = { home: HOME, platform: 'win32' as const, resourcesPath: 'C:\\res' }
+
+    expect(
+      resolveRevitAdapter({ ...base, env: { DEGRAM_PYTHON: 'C:\\env\\py.exe' }, readFile: files({}), exists: exists(dir, bundled) })
+        .python
+    ).toBe('C:\\env\\py.exe')
+    expect(
+      resolveRevitAdapter({
+        ...base,
+        env: {},
+        readFile: files({ [`${HOME}\\degram.json`]: JSON.stringify({ revitPython: 'C:\\file\\py.exe' }) }),
+        exists: exists(dir, bundled)
+      }).python
+    ).toBe('C:\\file\\py.exe')
+    expect(
+      resolveRevitAdapter({ ...base, env: {}, readFile: files({}), exists: exists(dir, venv, bundled) }).python
+    ).toBe(venv)
+  })
+
+  it('does not look for a bundled interpreter without a resources path', () => {
+    expect(
+      resolveRevitAdapter({
+        env: {},
+        home: HOME,
+        readFile: files({}),
+        platform: 'win32',
+        exists: exists('C:\\res\\revit-python\\python.exe')
+      })
+    ).toEqual({})
+  })
+
   it('leaves the interpreter unset when no mcp 1.x environment exists (setup-incomplete, not a guess)', () => {
     const dir = 'C:\\res\\revit-mcp'
 

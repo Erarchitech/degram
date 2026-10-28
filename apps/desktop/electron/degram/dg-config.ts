@@ -15,6 +15,9 @@ export const DEGRAM_DG_PARTITION = 'persist:degram-dg'
 
 export const DEFAULT_DG_ORIGIN = 'http://localhost:8080'
 
+/** Where the installer puts the Revit adapter's own Python, under the app's resources. */
+const BUNDLED_REVIT_PYTHON_DIR = 'revit-python'
+
 export type DgConfigErrorCode = 'DG_ORIGIN_INVALID' | 'DG_CONFIG_INVALID'
 
 export class DgConfigError extends Error {
@@ -160,8 +163,10 @@ export function relayBaseUrlFor(origin: string): string {
  * The Revit adapter launch inputs. `apps/revit-mcp/main.py` imports `mcp.server.fastmcp`, which the
  * gateway venv's `mcp` 2.x lacks (plan 11 finding), so the interpreter is NEVER derived from the gateway:
  * env DEGRAM_PYTHON, then `degram.json` revitPython, then the adapter's own uv environment under the
- * adapter directory when it exists. When none resolves the variable stays unset and the Revit group
- * reports setup-incomplete instead of launching the wrong interpreter.
+ * adapter directory when it exists, then the interpreter the installer bundles as `resources/revit-python`
+ * (an embeddable CPython 3.11 with `mcp<2` and `httpx`, staged by tools/degram/stage_revit_python.py). When
+ * none resolves the variable stays unset and the Revit group reports setup-incomplete instead of launching
+ * the wrong interpreter.
  */
 export function resolveRevitAdapter(deps: DgConfigDeps): { python?: string; mcpDir?: string } {
   const paths = pathFor(deps.platform)
@@ -185,6 +190,16 @@ export function resolveRevitAdapter(deps: DgConfigDeps): { python?: string; mcpD
         : paths.join(mcpDir, '.venv', 'bin', 'python')
 
     python = exists(venvPython) ? venvPython : undefined
+  }
+
+  // The installer's own interpreter, last: a developer's DEGRAM_PYTHON, degram.json and adapter `.venv` all win.
+  if (!python && deps.resourcesPath) {
+    const bundledPython: string =
+      (deps.platform ?? process.platform) === 'win32'
+        ? paths.join(deps.resourcesPath, BUNDLED_REVIT_PYTHON_DIR, 'python.exe')
+        : paths.join(deps.resourcesPath, BUNDLED_REVIT_PYTHON_DIR, 'bin', 'python3')
+
+    python = exists(bundledPython) ? bundledPython : undefined
   }
 
   return { ...(python ? { python } : {}), ...(mcpDir ? { mcpDir } : {}) }

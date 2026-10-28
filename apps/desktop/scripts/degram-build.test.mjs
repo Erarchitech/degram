@@ -366,6 +366,47 @@ test('the Grasshopper plugin defaults to the framework net48 Release build', () 
   if (entry) assert.equal(path.resolve(entry.from), expected)
 })
 
+// ---- The Revit adapter's own Python ships as resources/revit-python when a staged build exists ----
+
+test('degram bundles the staged Revit Python from DEGRAM_REVIT_PYTHON_SOURCE, without bytecode caches', () => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), 'dg-revit-py-'))
+  process.env.DEGRAM_REVIT_PYTHON_SOURCE = source
+
+  try {
+    assert.ok(!loadConfig('degram').extraResources.some(item => item.to === 'revit-python'), 'no python.exe: not bundled')
+    fs.writeFileSync(path.join(source, 'python.exe'), 'exe')
+    const entry = loadConfig('degram').extraResources.find(item => item.to === 'revit-python')
+    assert.ok(entry, 'a staged python.exe is bundled')
+    assert.equal(path.resolve(entry.from), path.resolve(source))
+    for (const excluded of ['!**/__pycache__/**', '!**/*.pyc']) {
+      assert.ok(entry.filter.includes(excluded), `filter must exclude ${excluded}`)
+    }
+    for (const variant of [undefined, 'bundled', 'light', 'store']) {
+      assert.ok(!loadConfig(variant).extraResources.some(item => item.to === 'revit-python'), `variant ${variant ?? '(default)'}`)
+    }
+  } finally {
+    delete process.env.DEGRAM_REVIT_PYTHON_SOURCE
+    fs.rmSync(source, { recursive: true, force: true })
+  }
+})
+
+test('the packaged resource layout is the one resolveRevitAdapter looks for (resources/revit-python)', async () => {
+  const { resolveRevitAdapter } = await import('../electron/degram/dg-config.ts')
+  const resourcesPath = 'C:\\Users\\x\\AppData\\Local\\Programs\\DeGram\\resources'
+
+  const resolved = resolveRevitAdapter({
+    env: {},
+    home: 'C:\\Users\\x\\AppData\\Local\\DeGram\\home',
+    readFile: () => null,
+    platform: 'win32',
+    resourcesPath,
+    exists: file => file === `${resourcesPath}\\revit-mcp` || file === `${resourcesPath}\\revit-python\\python.exe`
+  })
+
+  assert.equal(resolved.python, `${resourcesPath}\\revit-python\\python.exe`)
+  assert.equal(resolved.mcpDir, `${resourcesPath}\\revit-mcp`)
+})
+
 test('no other variant ships the revit-mcp adapter', () => {
   for (const variant of [undefined, 'bundled', 'light', 'store']) {
     const config = loadConfig(variant)
