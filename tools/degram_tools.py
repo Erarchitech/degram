@@ -158,8 +158,10 @@ PROPERTY_CHECK_LINES = 120
 
 
 def _property_check(args: dict, **_kw) -> str:
-    """1303-15: DG writes the scripts that compute the rule properties, places the check on the Grasshopper canvas
-    and runs it against the live Revit model; violating elements are painted in Revit. Bound project only."""
+    """1303-15: DG writes the scripts that compute the rule properties and runs the check against the live Revit model;
+    violating elements are painted in Revit. Bound project only. F-01 (2026-10-29): with the DG connector signed in
+    in Revit the check runs natively in Revit (no Rhino.Inside, no Grasshopper); the Grasshopper canvas is used only
+    on a local stack without a signed-in Revit connector."""
     from degram_variant import runtime
     from degram_variant.dg_client import DgRefused
 
@@ -199,11 +201,13 @@ registry.register(
     name="degram_property_check", toolset="degram", handler=_property_check, check_fn=_is_degram,
     schema={"name": "degram_property_check",
             "description": "Check the current Design State of the open Revit model against the rules of the current "
-                           "project. 'generate': DG writes the scripts that compute the properties the rules test "
-                           "(stored scripts are reused, new rules get new ones) and places the check on the "
-                           "Grasshopper canvas; 'run': re-generates if the rules changed, re-reads the model, "
-                           "validates and paints violating elements red, passing ones green in the active Revit view; "
-                           "'clear': removes the colours; 'status': the last result. Always the user's current project.",
+                           "project. The check runs in Revit through the DG connector the user signed in with "
+                           "(«Вход» on the DG tab); Grasshopper and Rhino are not needed, never ask the user to start "
+                           "them. 'run': generates the property scripts if the rules changed, re-reads the model, "
+                           "validates every rule and paints violating elements red, elements without data grey and "
+                           "passing ones green in the active Revit view; 'generate': only prepares the scripts; "
+                           "'clear': removes the colours; 'status': the last result. Always the user's current "
+                           "project. A REVIT_NOT_CONNECTED refusal means: ask the user to sign in on the DG tab in Revit.",
             "parameters": {"type": "object", "additionalProperties": False,
                            "properties": {"action": {"type": "string", "enum": list(PROPERTY_CHECK_ACTIONS)}},
                            "required": ["action"]}})
