@@ -437,6 +437,18 @@ class TestRevitStart:
         assert revit.tools() == ["dg_start_mapping"] and revit.calls[0]["arguments"] == {}
         assert gh.commands() == [], "the canvas is not asked to start"
 
+    def test_start_passes_on_a_selection_only_read(self, rt, revit):
+        """F-10: the connector read only the Revit selection; DeGram must be told so it can warn."""
+        revit.handlers["dg_start_mapping"] = {"started": True, "sessionId": "ms-rvt-sel", "message": "DG: 1 element read",
+                                              "scope": "selection", "read": 1}
+        reply = rpc("degram.mapping.start", {"app": "revit"})["result"]
+        assert reply["scope"] == "selection" and reply["read"] == 1
+
+    def test_start_drops_an_unknown_scope_and_a_bad_count(self, rt, revit):
+        revit.handlers["dg_start_mapping"] = {"started": True, "sessionId": "ms-rvt-x", "scope": "all", "read": True}
+        reply = rpc("degram.mapping.start", {"app": "revit"})["result"]
+        assert "scope" not in reply and "read" not in reply
+
     def test_a_start_the_connector_declines_carries_its_message(self, rt, revit):
         revit.handlers["dg_start_mapping"] = {"started": False, "sessionId": None, "message": "DG: sign in first"}
         assert rpc("degram.mapping.start", {"app": "revit"})["result"] == {

@@ -198,9 +198,16 @@ class MappingService:
         if _app(app, "grasshopper") == "revit":
             reply = self._revit.call("dg_start_mapping", {}, cancel=cancel)
             session_id = reply.get("sessionId")
-            return {"started": reply.get("started") is True,
-                    "sessionId": session_id if isinstance(session_id, str) and session_id else None,
-                    "message": str(reply.get("message") or "") or None}
+            # scope "selection": only the elements selected in Revit were read (D-48); DeGram warns about it (F-10)
+            result = {"started": reply.get("started") is True,
+                      "sessionId": session_id if isinstance(session_id, str) and session_id else None,
+                      "message": str(reply.get("message") or "") or None}
+            if reply.get("scope") in ("selection", "view"):
+                result["scope"] = reply["scope"]
+            read = reply.get("read")
+            if isinstance(read, int) and not isinstance(read, bool) and read >= 0:
+                result["read"] = read
+            return result
         reply = self._gh.call("start_mapping", {}, cancel=cancel)
         if not isinstance(reply, dict):
             raise BridgeError(SETUP_INCOMPLETE, "BRIDGE_PROTOCOL", "start_mapping returned no result.")

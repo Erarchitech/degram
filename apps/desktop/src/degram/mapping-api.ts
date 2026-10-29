@@ -419,6 +419,10 @@ export interface StartResult {
   /** Revit only: the session the connector just created. */
   sessionId: null | string
   message: null | string
+  /** Revit only: `selection` when only the elements selected in Revit were read (D-48), `view` for the whole view. */
+  scope: null | 'selection' | 'view'
+  /** Revit only: elements sent to DG. */
+  read: null | number
 }
 
 /** Grasshopper keeps its parameterless call; Revit names itself (the connector's `dg_start_mapping`). */
@@ -430,7 +434,9 @@ export async function startMapping(app: BridgeApp = 'grasshopper'): Promise<Star
     outcome,
     started: !outcome && raw?.started === true,
     sessionId: asString(raw?.sessionId) || null,
-    message: asString(raw?.message) || null
+    message: asString(raw?.message) || null,
+    scope: raw?.scope === 'selection' || raw?.scope === 'view' ? raw.scope : null,
+    read: typeof raw?.read === 'number' && Number.isInteger(raw.read) && raw.read >= 0 ? raw.read : null
   }
 }
 

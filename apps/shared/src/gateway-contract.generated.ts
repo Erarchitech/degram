@@ -1415,6 +1415,8 @@ export interface DegramMappingStartResult {
   bridgeState?: string | null
   started?: boolean | null
   sessionId?: string | null
+  scope?: string | null
+  read?: number | null
 }
 export interface DegramMappingFocusParams {
   app?: string | null

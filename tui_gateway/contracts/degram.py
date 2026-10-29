@@ -224,6 +224,8 @@ class DegramMappingStartParams(Params):
 class DegramMappingStartResult(DegramOutcomeFields):
     started: bool | None = None
     sessionId: str | None = None  # revit only: the session the connector just created
+    scope: str | None = None  # revit only: "selection" (only the selected elements were read) or "view"
+    read: int | None = None  # revit only: elements sent to DG
 
 
 class DegramMappingFocusParams(Params):

@@ -153,6 +153,8 @@ export interface DegramCopy {
     revitSignInFirst: string
     /** The Revit start over an existing session: the connector reads the model again into a new session. */
     startAgain: string
+    /** F-10: a selection left in Revit narrowed the read to the selected elements (D-48 scope). */
+    startedSelectionOnly: (count: number) => string
     notStartedRevit: string
     /** Accessible name of a Revit element-group chip: a click selects its elements in Revit and zooms to them. */
     focusRevit: (name: string) => string
@@ -386,6 +388,8 @@ export const degramEn: DegramCopy = {
     revitSignedIn: 'Signed in to DG in Revit.',
     revitSignInFirst: 'Sign in to DG on the Revit ribbon: DG → Sign in',
     startAgain: 'Read the model again',
+    startedSelectionOnly: count =>
+      `Only the elements selected in Revit were read (${count}). Clear the selection in Revit and click «Read the model again» to read the whole view.`,
     notStartedRevit: "The DG connector in Revit didn't start the mapping.",
     focusRevit: name => `Show ${name} in Revit`,
     notShowableRevit: 'Only element groups can be shown in Revit',
@@ -636,6 +640,8 @@ export const degramRu: DegramCopy = {
     revitSignedIn: 'Вход в DG в Revit выполнен.',
     revitSignInFirst: 'Войдите в DG на ленте Revit: DG → Вход',
     startAgain: 'Прочитать модель заново',
+    startedSelectionOnly: count =>
+      `Прочитаны только выделенные в Revit элементы (${count}). Снимите выделение в Revit и нажмите «Прочитать модель заново», чтобы прочитать весь вид.`,
     notStartedRevit: 'Коннектор DG в Revit не запустил меппинг.',
     focusRevit: name => `Показать ${name} в Revit`,
     notShowableRevit: 'В Revit можно показать только группы элементов',

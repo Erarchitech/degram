@@ -680,7 +680,12 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
       if (result.outcome) {
         setStartNote({ text: mappingFailureText(copy, result.outcome, { app, project }), error: true })
       } else if (result.started) {
-        setStartNote({ text: copy.mapping.started })
+        // F-10: a leftover Revit selection (a row click selects too) narrows the read; say so loudly, not in grey
+        setStartNote(
+          result.scope === 'selection'
+            ? { text: copy.mapping.startedSelectionOnly(result.read ?? 0), error: true }
+            : { text: copy.mapping.started }
+        )
         // Revit reads the model again over an existing session: follow until a new one shows.
         follow(sessionId)
       } else {

@@ -723,6 +723,40 @@ describe('Mapping sub-tab of a Revit model (1303-13)', () => {
     expect(within(tab).queryByRole('button', { name: 'Start mapping' })).toBeNull()
   })
 
+  it('warns when the connector read only the elements selected in Revit (F-10)', async () => {
+    await ready()
+
+    fakeGateway(
+      backend({
+        'degram.mapping.sessions': ({ app }) => ({
+          status: 'ok',
+          document: app === 'revit' ? 'tower' : 'tower-facade',
+          sessions: app === 'revit' ? [ROW(revitSession())] : [],
+          signedIn: true
+        }),
+        'degram.mapping.session': () => ({ status: 'ok', session: revitSession() }),
+        'degram.mapping.start': () => ({
+          status: 'ok',
+          started: true,
+          sessionId: REVIT_SID,
+          message: 'DG mapping session for tower: 1 element read',
+          scope: 'selection',
+          read: 1
+        })
+      })
+    )
+
+    const tab = await openRevit()
+
+    fireEvent.click(await within(tab).findByRole('button', { name: 'Read the model again' }))
+    const warning = await within(tab).findByRole('alert')
+
+    expect(warning.textContent).toBe(
+      'Only the elements selected in Revit were read (1). Clear the selection in Revit and click «Read the model again» to read the whole view.'
+    )
+    expect(within(tab).queryByText('Mapping started — the session appears here in a few seconds.')).toBeNull()
+  })
+
   it('a read-again over an existing session follows until the new session shows', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] })
     await ready()
