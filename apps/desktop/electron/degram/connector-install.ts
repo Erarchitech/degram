@@ -4,7 +4,11 @@
 //
 //   * `resources/revit-mcp`      the DG Revit connector; its pyRevit half is copied to
 //                                `%APPDATA%\pyRevit\Extensions\dg-revit-connector.extension` (the copy set of
-//                                apps/dg-revit-connector/install.py; the MCP half stays where DeGram runs it);
+//                                apps/dg-revit-connector/install.py; the MCP half stays where DeGram runs it).
+//                                The same install sets `[routes]` in `%APPDATA%\pyRevit\pyRevit_config.ini`
+//                                (`enabled = true`, `host = "127.0.0.1"`): the connector registers no routes and
+//                                the agent refuses every read while pyRevit Routes answer on any other address,
+//                                so a user is never asked to edit the file by hand;
 //   * `resources/dg-grasshopper` the DG Grasshopper plugin (`DG.gha` and its DLLs), copied to
 //                                `%APPDATA%\Grasshopper\Libraries\DG`.
 //
@@ -78,6 +82,78 @@ export const REVIT_COPY_ENTRIES = [
   'DG_SharedParameters.txt'
 ] as const
 
+/** The only address pyRevit Routes may listen on (dg_transport.is_loopback_host, spec/SECURITY-BOUNDARY.md). */
+export const ROUTES_HOST = '127.0.0.1'
+
+const SECTION_HEADER = /^\s*\[([^\]]*)\]\s*$/
+const ROUTES_KEY = /^(\s*)(host|enabled)(\s*[=:]\s*)(.*?)\s*$/i
+
+function unquote(value: string): string {
+  return value.trim().replace(/^(["'])(.*)\1$/, '$2').trim()
+}
+
+/**
+ * `pyRevit_config.ini` with `[routes]` made to read `enabled = true` and `host = "127.0.0.1"`; every other line,
+ * the line endings and a BOM stay as they are. `changed` is false (and `text` the input) when nothing had to move.
+ * The quoted host is the form pyRevit itself writes and docs/degram/CLEAN-INSTALL.md shows.
+ */
+export function ensureRoutesLoopback(input: string): { text: string; changed: boolean } {
+  const bom = input.startsWith('﻿') ? '﻿' : ''
+  const body = bom ? input.slice(1) : input
+  const eol = body.includes('\r\n') || body.length === 0 ? '\r\n' : '\n'
+  const lines = body.length > 0 ? body.split(/\r?\n/) : []
+
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+
+  const wanted = { host: `"${ROUTES_HOST}"`, enabled: 'true' } as const
+
+  const isRight = (key: 'host' | 'enabled', value: string): boolean =>
+    key === 'host' ? unquote(value) === ROUTES_HOST : unquote(value).toLowerCase() === 'true'
+
+  const start = lines.findIndex(line => SECTION_HEADER.exec(line)?.[1].trim().toLowerCase() === 'routes')
+  let changed = false
+
+  if (start === -1) {
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
+      lines.push('')
+    }
+
+    lines.push('[routes]', `host = ${wanted.host}`, `enabled = ${wanted.enabled}`)
+    changed = true
+  } else {
+    let end = lines.findIndex((line, index) => index > start && SECTION_HEADER.test(line))
+    end = end === -1 ? lines.length : end
+    const seen = new Set<'host' | 'enabled'>()
+
+    for (let index = start + 1; index < end; index += 1) {
+      const match = ROUTES_KEY.exec(lines[index])
+
+      if (!match) {
+        continue
+      }
+
+      const key = match[2].toLowerCase() as 'host' | 'enabled'
+      seen.add(key)
+
+      if (!isRight(key, match[4])) {
+        lines[index] = `${match[1]}${match[2]}${match[3]}${wanted[key]}`
+        changed = true
+      }
+    }
+
+    const missing = (['host', 'enabled'] as const).filter(key => !seen.has(key)).map(key => `${key} = ${wanted[key]}`)
+
+    if (missing.length > 0) {
+      lines.splice(start + 1, 0, ...missing)
+      changed = true
+    }
+  }
+
+  return changed ? { text: `${bom}${lines.join(eol)}${eol}`, changed } : { text: input, changed }
+}
+
 const SKIP_DIRECTORIES = new Set(['__pycache__', '.git', '.pytest_cache'])
 const SKIP_SUFFIXES = ['.pyc', '.pyo', '.pdb']
 const LOCK_CODES = new Set(['EBUSY', 'EPERM', 'EACCES'])
@@ -92,6 +168,13 @@ interface ConnectorSpec {
   /** Replace the whole folder (stale files go) or overwrite file by file (other files stay). */
   replace: boolean
   hostPresent: () => Promise<boolean>
+  /** Host-side settings the connector needs besides its files (pyRevit Routes); absent when it needs none. */
+  settings?: {
+    /** True when the host already has them. */
+    ok: () => Promise<boolean>
+    /** Set them, saving the previous file below `backupRoot`. */
+    apply: (backupRoot: string) => Promise<void>
+  }
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -182,9 +265,80 @@ async function sameFile(source: string, target: string): Promise<boolean> {
   }
 }
 
+/** True when every file of the package is already in the target with the same content. */
+async function filesCurrent(spec: ConnectorSpec, files: string[]): Promise<boolean> {
+  for (const file of files) {
+    if (!(await sameFile(path.join(spec.source, file), path.join(spec.target, file)))) {
+      return false
+    }
+  }
+
+  return true
+}
+
 export function createConnectorInstaller(deps: ConnectorInstallerDeps): ConnectorInstaller {
   const { paths, logger } = deps
   const now = deps.now ?? ((): Date => new Date())
+
+  const routesConfig = path.join(paths.appData, 'pyRevit', 'pyRevit_config.ini')
+
+  /** The pyRevit settings file ('' when there is none yet); a file that is not UTF-8 is never rewritten. */
+  const readRoutesConfig = async (): Promise<string> => {
+    let bytes: Buffer
+
+    try {
+      bytes = await fsp.readFile(routesConfig)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') {
+        return ''
+      }
+
+      throw error
+    }
+
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      throw new Error('pyRevit_config.ini is not UTF-8; it was left unchanged')
+    }
+  }
+
+  const routesSettings: NonNullable<ConnectorSpec['settings']> = {
+    ok: async () => {
+      try {
+        return !ensureRoutesLoopback(await readRoutesConfig()).changed
+      } catch {
+        return false
+      }
+    },
+    apply: async backupRoot => {
+      const current = await readRoutesConfig()
+      const { text, changed } = ensureRoutesLoopback(current)
+
+      if (!changed) {
+        return
+      }
+
+      if (current.length > 0) {
+        await fsp.mkdir(backupRoot, { recursive: true })
+        await fsp.copyFile(routesConfig, path.join(backupRoot, 'pyRevit_config.ini'))
+      }
+
+      await fsp.mkdir(path.dirname(routesConfig), { recursive: true })
+      const temp = `${routesConfig}.degram-tmp`
+
+      try {
+        await fsp.writeFile(temp, text, 'utf8')
+        await fsp.rename(temp, routesConfig)
+      } catch (error) {
+        await fsp.rm(temp, { force: true })
+
+        throw error
+      }
+
+      logger.info(`[degram] connector revit: pyRevit Routes set to enabled, host ${ROUTES_HOST} in ${routesConfig}`)
+    }
+  }
 
   const specs: Record<InstallableConnector, ConnectorSpec> = {
     revit: {
@@ -196,7 +350,8 @@ export function createConnectorInstaller(deps: ConnectorInstallerDeps): Connecto
       hostPresent: async () =>
         (await exists(path.join(paths.appData, 'pyRevit-Master'))) ||
         (paths.programData ? await exists(path.join(paths.programData, 'pyRevit-Master')) : false) ||
-        (await exists(path.join(paths.appData, 'pyRevit', 'pyRevit_config.ini')))
+        (await exists(routesConfig)),
+      settings: routesSettings
     },
     grasshopper: {
       source: path.join(paths.resourcesPath, 'dg-grasshopper'),
@@ -220,18 +375,16 @@ export function createConnectorInstaller(deps: ConnectorInstallerDeps): Connecto
       return 'needs-host'
     }
 
-    for (const file of files) {
-      if (!(await sameFile(path.join(spec.source, file), path.join(spec.target, file)))) {
-        return 'install'
-      }
+    if (!(await filesCurrent(spec, files))) {
+      return 'install'
     }
 
-    return 'ready'
+    return spec.settings && !(await spec.settings.ok()) ? 'install' : 'ready'
   }
 
   /** A free folder below the backup root: `<stamp>`, then `<stamp>-2`, ... */
-  const backupFolder = async (id: InstallableConnector): Promise<string> => {
-    const base = path.join(paths.localAppData, 'DG', 'connector-backups', id, utcStamp(now()))
+  const backupFolder = async (name: string): Promise<string> => {
+    const base = path.join(paths.localAppData, 'DG', 'connector-backups', name, utcStamp(now()))
     let candidate = base
 
     for (let counter = 2; await exists(candidate); counter += 1) {
@@ -276,6 +429,14 @@ export function createConnectorInstaller(deps: ConnectorInstallerDeps): Connecto
       }
 
       const files = (await packageFiles(spec)) ?? []
+
+      // Files already in place (only the host settings are off): nothing is moved, backed up or overwritten.
+      if (await filesCurrent(spec, files)) {
+        await spec.settings?.apply(await backupFolder(`${id}-settings`))
+
+        return status(id)
+      }
+
       const present = await exists(spec.target)
 
       if (present) {
@@ -330,6 +491,8 @@ export function createConnectorInstaller(deps: ConnectorInstallerDeps): Connecto
 
       logger.info(`[degram] connector ${id}: ${files.length} files installed to ${spec.target}`)
 
+      await spec.settings?.apply(await backupFolder(`${id}-settings`))
+
       return status(id)
     } catch (error) {
       const code = errorCode(error)
@@ -358,7 +521,7 @@ export function connectorConfirmation(
       ? {
           title: 'Установка коннектора',
           message: 'Установить коннектор DG для Revit?',
-          detail: `Расширение pyRevit будет скопировано в ${target}. Прежняя версия сохранится в резервной копии. После установки перезагрузите pyRevit (вкладка pyRevit → Reload) или перезапустите Revit.`,
+          detail: `Расширение pyRevit будет скопировано в ${target}. В настройках pyRevit (pyRevit_config.ini) DeGram сам включит Routes и ограничит их адресом 127.0.0.1. Прежние версии сохранятся в резервных копиях. После установки перезапустите Revit.`,
           buttons: ['Установить', 'Отмена']
         }
       : {
@@ -373,7 +536,7 @@ export function connectorConfirmation(
     ? {
         title: 'Install connector',
         message: 'Install the DG connector for Revit?',
-        detail: `The pyRevit extension is copied to ${target}. The previous version is kept as a backup. Afterwards reload pyRevit (pyRevit tab → Reload) or restart Revit.`,
+        detail: `The pyRevit extension is copied to ${target}. DeGram also turns pyRevit Routes on and limits them to 127.0.0.1 in the pyRevit settings (pyRevit_config.ini). Previous versions are kept as backups. Afterwards restart Revit.`,
         buttons: ['Install', 'Cancel']
       }
     : {

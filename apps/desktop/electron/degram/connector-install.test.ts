@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   connectorConfirmation,
   createConnectorInstaller,
+  ensureRoutesLoopback,
   isInstallableConnector,
   REVIT_COPY_ENTRIES,
   utcStamp
@@ -160,6 +161,96 @@ describe('connector install', () => {
   it('never installs what is not bundled', async () => {
     expect(await installer().install('grasshopper')).toBe('unavailable')
     await expect(fsp.access(ghTarget())).rejects.toThrow()
+  })
+})
+
+describe('pyRevit Routes settings', () => {
+  const iniPath = (): string => path.join(paths.appData, 'pyRevit', 'pyRevit_config.ini')
+  const readIni = (): Promise<string> => fsp.readFile(iniPath(), 'utf8')
+
+  it('adds the whole section when there is none and leaves other sections alone', () => {
+    const { text, changed } = ensureRoutesLoopback('[core]\r\nuserlocale = ru\r\n')
+    expect(changed).toBe(true)
+    expect(text).toBe('[core]\r\nuserlocale = ru\r\n\r\n[routes]\r\nhost = "127.0.0.1"\r\nenabled = true\r\n')
+  })
+
+  it('adds a missing host to the user\'s own section (enabled, no host) and keeps its other keys', () => {
+    const { text } = ensureRoutesLoopback('[core]\nx = 1\n\n[routes]\nenabled = true\ncore_api = false\n\n[other]\ny = 2\n')
+    expect(text).toBe('[core]\nx = 1\n\n[routes]\nhost = "127.0.0.1"\nenabled = true\ncore_api = false\n\n[other]\ny = 2\n')
+  })
+
+  it('replaces a host that is not loopback and a switched-off Routes, whatever the quoting or case', () => {
+    expect(ensureRoutesLoopback('[Routes]\nHost = "0.0.0.0"\nEnabled = false\n').text).toBe(
+      '[Routes]\nHost = "127.0.0.1"\nEnabled = true\n'
+    )
+    expect(ensureRoutesLoopback('[routes]\nhost = localhost\nenabled = True\n').text).toBe(
+      '[routes]\nhost = "127.0.0.1"\nenabled = True\n'
+    )
+  })
+
+  it('changes nothing when the settings are already right', () => {
+    for (const input of ['[routes]\nenabled = true\nhost = "127.0.0.1"\nport = 48884\n', "[routes]\nhost = '127.0.0.1'\nenabled = true"]) {
+      expect(ensureRoutesLoopback(input)).toEqual({ text: input, changed: false })
+    }
+  })
+
+  it('keeps a byte-order mark and makes a file from nothing', () => {
+    expect(ensureRoutesLoopback('﻿[core]\r\n').text.startsWith('﻿[core]\r\n')).toBe(true)
+    expect(ensureRoutesLoopback('').text).toBe('[routes]\r\nhost = "127.0.0.1"\r\nenabled = true\r\n')
+  })
+
+  it('sets Routes during the Revit install and saves the previous file', async () => {
+    await bundleRevit()
+    await write(iniPath(), '[core]\r\nuserlocale = ru\r\n[routes]\r\nenabled = true\r\ncore_api = false\r\n')
+
+    const subject = installer()
+    expect(await subject.status('revit')).toBe('install')
+    expect(await subject.install('revit')).toBe('ready')
+    expect(await readIni()).toBe(
+      '[core]\r\nuserlocale = ru\r\n[routes]\r\nhost = "127.0.0.1"\r\nenabled = true\r\ncore_api = false\r\n'
+    )
+
+    const saved = path.join(paths.localAppData, 'DG', 'connector-backups', 'revit-settings', utcStamp(NOW), 'pyRevit_config.ini')
+    expect(await fsp.readFile(saved, 'utf8')).toBe('[core]\r\nuserlocale = ru\r\n[routes]\r\nenabled = true\r\ncore_api = false\r\n')
+    await expect(fsp.access(`${iniPath()}.degram-tmp`)).rejects.toThrow()
+  })
+
+  it('writes the settings file when pyRevit is installed but has not made one yet', async () => {
+    await bundleRevit()
+    await write(path.join(paths.appData, 'pyRevit-Master', 'pyRevitfile'), '')
+
+    expect(await installer().install('revit')).toBe('ready')
+    expect(await readIni()).toBe('[routes]\r\nhost = "127.0.0.1"\r\nenabled = true\r\n')
+  })
+
+  it('repairs only the settings when the extension files are already current', async () => {
+    await bundleRevit()
+    await pyRevit()
+    const subject = installer()
+    expect(await subject.install('revit')).toBe('ready')
+
+    await fsp.writeFile(iniPath(), '[routes]\nhost = "0.0.0.0"\nenabled = true\n')
+    expect(await subject.status('revit')).toBe('install')
+    expect(await subject.install('revit')).toBe('ready')
+
+    expect(await readIni()).toBe('[routes]\nhost = "127.0.0.1"\nenabled = true\n')
+    await expect(fsp.access(path.join(paths.localAppData, 'DG', 'connector-backups', 'revit'))).rejects.toThrow()
+  })
+
+  it('does not rewrite a settings file that is not UTF-8', async () => {
+    await bundleRevit()
+    const bytes = Buffer.from([0x5b, 0x63, 0x6f, 0x72, 0x65, 0x5d, 0x0a, 0x70, 0x3d, 0xe9, 0x0a])
+    await fsp.mkdir(path.dirname(iniPath()), { recursive: true })
+    await fsp.writeFile(iniPath(), bytes)
+
+    expect(await installer().install('revit')).toBe('failed')
+    expect(Buffer.compare(await fsp.readFile(iniPath()), bytes)).toBe(0)
+  })
+
+  it('leaves Grasshopper without any host settings', async () => {
+    await bundleGrasshopper()
+    expect(await installer().install('grasshopper')).toBe('ready')
+    await expect(fsp.access(path.join(paths.appData, 'pyRevit'))).rejects.toThrow()
   })
 })
 

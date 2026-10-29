@@ -411,9 +411,10 @@ export const degramEn: DegramCopy = {
     limit: time => `The model request limit is reached. Retry after ${time}, or ask the DG operator.`,
     limitUnknown: 'The model request limit is reached. Retry later, or ask the DG operator when it resets.',
     revitOff: "Revit isn't responding. Open Revit 2024 with the DeGram pyRevit extension, then refresh.",
-    routesDisabled: 'pyRevit Routes are turned off. Enable Routes in pyRevit settings, restart Revit, then refresh.',
+    routesDisabled:
+      'pyRevit Routes are turned off. Install the Revit connector again in the Connectors tab (it turns Routes on), restart Revit, then refresh.',
     extensionNotLoaded:
-      'The DeGram extension isn\'t loaded in pyRevit. Follow the install step "pyRevit extension", then reload pyRevit.',
+      "The DeGram extension isn't loaded in pyRevit. Install the Revit connector in the Connectors tab, restart Revit, then refresh.",
     revitBusy: 'Revit is busy (a command or dialog is open). Finish it in Revit, then retry the request.',
     grasshopperOff:
       "Grasshopper isn't responding. Place and enable the DG CANVAS LISTENER component on the canvas, then refresh.",
@@ -433,7 +434,7 @@ export const degramEn: DegramCopy = {
     grasshopperBusy:
       'Grasshopper is busy (a solution is running or a dialog is open). Wait for it, then retry the request.',
     routesNotLoopback:
-      "pyRevit Routes aren't limited to this computer (loopback). Set the Routes host to 127.0.0.1 in pyRevit settings, restart Revit, then refresh.",
+      "pyRevit Routes aren't limited to this computer (loopback). Install the Revit connector again in the Connectors tab (it limits Routes to 127.0.0.1), restart Revit, then refresh.",
     setupIncomplete: "A setup step isn't finished for this application. Check the DeGram install steps, then refresh.",
     lockedAction: "DeGram doesn't allow this action. Nothing was changed.",
     scopeNotSupported: "This context scope isn't available for the selected document. Use the selection instead.",
@@ -661,9 +662,9 @@ export const degramRu: DegramCopy = {
       'Лимит запросов к модели исчерпан. Повторите позже или уточните у оператора DG, когда лимит обновится.',
     revitOff: 'Revit не отвечает. Откройте Revit 2024 с расширением DeGram для pyRevit и обновите список.',
     routesDisabled:
-      'Маршруты pyRevit (Routes) выключены. Включите их в настройках pyRevit, перезапустите Revit и обновите список.',
+      'Маршруты pyRevit (Routes) выключены. Установите коннектор Revit заново на вкладке «Коннекторы» (она включит Routes), перезапустите Revit и обновите список.',
     extensionNotLoaded:
-      'Расширение DeGram не загружено в pyRevit. Выполните шаг установки «Расширение pyRevit» и перезагрузите pyRevit.',
+      'Расширение DeGram не загружено в pyRevit. Установите коннектор Revit на вкладке «Коннекторы», перезапустите Revit и обновите список.',
     revitBusy: 'Revit занят (открыта команда или диалог). Завершите её в Revit и повторите запрос.',
     grasshopperOff:
       'Grasshopper не отвечает. Поставьте на канвас компонент DG CANVAS LISTENER, включите его и обновите список.',
@@ -682,7 +683,7 @@ export const degramRu: DegramCopy = {
     credentialsRefresh: 'Токен доступа DG истёк и обновляется. Повторите запрос.',
     grasshopperBusy: 'Grasshopper занят (идёт расчёт или открыт диалог). Дождитесь его и повторите запрос.',
     routesNotLoopback:
-      'Маршруты pyRevit (Routes) доступны не только с этого компьютера (loopback). Укажите хост Routes 127.0.0.1 в настройках pyRevit, перезапустите Revit и обновите список.',
+      'Маршруты pyRevit (Routes) доступны не только с этого компьютера (loopback). Установите коннектор Revit заново на вкладке «Коннекторы» (она ограничит Routes адресом 127.0.0.1), перезапустите Revit и обновите список.',
     setupIncomplete: 'Для этого приложения не завершена настройка. Проверьте шаги установки DeGram и обновите список.',
     lockedAction: 'DeGram не разрешает это действие. Ничего не изменено.',
     scopeNotSupported: 'Этот объём контекста недоступен для выбранного документа. Используйте выделение.',
