@@ -1087,6 +1087,24 @@
       }
     },
     {
+      "name": "degram.mapping.suggestName",
+      "summary": "DG 1303-31 (D-107): DG's suggested name of the Design State a Revit mapping confirmation records (the LLM from the classes and changes, or a deterministic name); the user confirms or replaces it. Records nothing.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingSuggestNameParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSuggestNameResult"
+        }
+      }
+    },
+    {
       "name": "degram.mapping.undo",
       "summary": "Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND.",
       "params": [
@@ -13405,6 +13423,30 @@
             },
             "title": "Answerids",
             "type": "array"
+          },
+          "designStateName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Designstatename"
+          },
+          "designStateNameSource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Designstatenamesource"
           }
         },
         "required": [
@@ -14038,6 +14080,106 @@
           "status"
         ],
         "title": "DegramMappingStartResult",
+        "type": "object"
+      },
+      "DegramMappingSuggestNameParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "answerIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Answerids",
+            "type": "array"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "title": "DegramMappingSuggestNameParams",
+        "type": "object"
+      },
+      "DegramMappingSuggestNameResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "suggestion": {
+            "default": null,
+            "title": "Suggestion"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingSuggestNameResult",
         "type": "object"
       },
       "DegramMappingUndoParams": {

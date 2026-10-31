@@ -354,6 +354,27 @@ export interface MappingCommitIntent {
   requestId: string
   revision: string
   answerIds: string[]
+  /** DG 1303-31 (D-106): the confirmed name of the Design State a Revit confirmation records. */
+  designStateName?: string
+  designStateNameSource?: 'suggested' | 'edited'
+}
+
+export interface DesignStateNameSuggestion {
+  name: string
+  source: 'llm' | 'fallback'
+}
+
+/** DG 1303-31 (D-107): DG's suggested name of the Design State this confirmation records; null when none came. */
+export async function suggestMappingStateName(
+  sessionId: string,
+  answerIds: string[],
+  language: 'ru' | 'en'
+): Promise<DesignStateNameSuggestion | null> {
+  const raw = await call('degram.mapping.suggestName', { sessionId, answerIds, language }, 60_000)
+  const suggestion = asRecord(asRecord(raw)?.suggestion)
+  const name = asString(suggestion?.name)
+
+  return name ? { name, source: suggestion?.source === 'fallback' ? 'fallback' : 'llm' } : null
 }
 
 /** Never infer acceptance from counters, auto matches, or an empty question list. */

@@ -17,6 +17,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
@@ -27,6 +28,7 @@ import type { DegramCopy } from './i18n'
 import {
   answerMapping,
   applyMapping,
+  suggestMappingStateName,
   focusComponent,
   type MappingAnswer,
   type MappingCommitIntent,
@@ -434,7 +436,50 @@ function SessionView({
     }
   }, [])
 
-  const apply = async () => {
+  // DG 1303-31 (D-106): a Revit confirmation records a Design State, so it first asks for that state's name
+  const [naming, setNaming] = useState<null | {
+    name: string
+    suggestion: string
+    loading: boolean
+    source: 'llm' | 'fallback' | null
+  }>(null)
+
+  const requestApply = () => {
+    if (app !== 'revit') {
+      void apply()
+
+      return
+    }
+
+    if (pending !== null || !answerIds.length) {
+      return
+    }
+
+    setNaming({ name: '', suggestion: '', loading: true, source: null })
+    suggestMappingStateName(session.sessionId, answerIds, ru ? 'ru' : 'en')
+      .then(found => {
+        if (mounted.current) {
+          setNaming(n =>
+            n && { ...n, loading: false, name: n.name || found?.name || '', suggestion: found?.name ?? '', source: found?.source ?? null }
+          )
+        }
+      })
+      .catch(() => {
+        if (mounted.current) {
+          setNaming(n => n && { ...n, loading: false })
+        }
+      })
+  }
+
+  const confirmNamed = () => {
+    const name = (naming?.name ?? '').replace(/\s+/g, ' ').trim()
+
+    if (name) {
+      void apply({ name, source: naming?.suggestion.replace(/\s+/g, ' ').trim() === name ? 'suggested' : 'edited' })
+    }
+  }
+
+  const apply = async (designState?: { name: string; source: 'suggested' | 'edited' }) => {
     if (applying.current || pending || !answerIds.length) {
       return
     }
@@ -450,7 +495,12 @@ function SessionView({
     setErrors(s => ({ ...s, apply: '' }))
 
     try {
-      const result = await applyMapping(session.sessionId, intent.current)
+      const result = await applyMapping(
+        session.sessionId,
+        designState
+          ? { ...intent.current, designStateName: designState.name, designStateNameSource: designState.source }
+          : intent.current
+      )
 
       if (!mounted.current) {
         return
@@ -461,6 +511,8 @@ function SessionView({
         reload()
       } else {
         const ids = new Set(result.batch.answerIds)
+
+        setNaming(null)
 
         adopt({
           ...session,
@@ -507,12 +559,52 @@ function SessionView({
           <Button
             className="justify-self-start"
             data-testid="degram-mapping-apply"
-            disabled={pending !== null || answerIds.length === 0}
-            onClick={() => void apply()}
+            disabled={pending !== null || answerIds.length === 0 || naming !== null}
+            onClick={requestApply}
             size="sm"
           >
             {pending?.kind === 'apply' ? copy.mapping.confirming : copy.mapping.confirm(answerIds.length)}
           </Button>
+          {naming && (
+            <div className="grid gap-1.5" data-testid="degram-mapping-state-name">
+              <Muted>{copy.mapping.stateName.hint}</Muted>
+              <Input
+                aria-label={copy.mapping.stateName.label}
+                data-testid="degram-mapping-state-name-input"
+                maxLength={120}
+                onChange={event => {
+                  const value = event.target.value
+
+                  setNaming(n => n && { ...n, name: value })
+                }}
+                onKeyDown={event => event.key === 'Enter' && confirmNamed()}
+                placeholder={naming.loading ? copy.mapping.stateName.suggesting : copy.mapping.stateName.label}
+                value={naming.name}
+              />
+              <Muted>
+                {naming.loading
+                  ? copy.mapping.stateName.suggesting
+                  : naming.source === 'llm'
+                    ? copy.mapping.stateName.llm
+                    : naming.source === 'fallback'
+                      ? copy.mapping.stateName.fallback
+                      : copy.mapping.stateName.none}
+              </Muted>
+              <div className="flex gap-1.5">
+                <Button
+                  data-testid="degram-mapping-state-name-confirm"
+                  disabled={pending !== null || !naming.name.trim()}
+                  onClick={confirmNamed}
+                  size="sm"
+                >
+                  {pending?.kind === 'apply' ? copy.mapping.confirming : copy.mapping.confirm(answerIds.length)}
+                </Button>
+                <Button disabled={pending !== null} onClick={() => setNaming(null)} size="sm" variant="ghost">
+                  {copy.mapping.stateName.cancel}
+                </Button>
+              </div>
+            </div>
+          )}
           {errors.apply && <Failure text={errors.apply} />}
         </div>
       )}
@@ -798,14 +890,14 @@ export function MappingSubtab({ app, document }: { app: BridgeApp; document: str
         <span className="font-medium">{t.degram.mapping.tab}</span>
       </Disclosure>
       <div id={bodyId}>
-        <MappingBody app={app} document={document} open={open} />
-      </div>
-    </div>
-  )
-}
         {open && (
           <div className="grid gap-0.5 pt-1" data-testid="degram-design-state-intro">
             <span className="text-[0.8125rem] font-medium">{t.degram.mapping.section}</span>
             <span className="text-[0.75rem] text-muted-foreground">{t.degram.mapping.stateHint}</span>
           </div>
         )}
+        <MappingBody app={app} document={document} open={open} />
+      </div>
+    </div>
+  )
+}

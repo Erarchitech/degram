@@ -170,6 +170,32 @@ class TestExplicitCommit:
         assert dg.requests[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
         assert len(dg.requests) == 1 and gh.commands() == []
 
+    def test_a_revit_confirmation_carries_the_design_state_name(self, rt, dg, gh):
+        """DG 1303-31 (D-106): the confirmed name rides with the commit, one line; a GH commit sends none."""
+        intent = {"sessionId": SID, "requestId": "commit-test", "revision": "a" * 24, "answerIds": ["A-1"]}
+        batch = {"batchId": "commit-test", "revision": "a" * 24, "answerIds": ["A-1"], "committedAt": "now",
+                 "delivery": {"state": "queued"}}
+        dg.routes[f"POST {BASE}/{SID}/apply"] = (200, batch)
+        reply = rpc("degram.mapping.apply", {**intent, "designStateName": "  Добавлены   новые отверстия. ",
+                                              "designStateNameSource": "suggested"})["result"]
+        assert reply["status"] == "ok"
+        assert dg.requests[0]["body"]["designStateName"] == "Добавлены новые отверстия."
+        assert dg.requests[0]["body"]["designStateNameSource"] == "suggested"
+        rpc("degram.mapping.apply", intent)
+        assert "designStateName" not in dg.requests[1]["body"]
+        too_long = rpc("degram.mapping.apply", {**intent, "designStateName": "x" * 121})
+        assert too_long["error"]["data"]["code"] == "BAD_REQUEST" and len(dg.requests) == 2
+
+    def test_the_suggested_name_comes_from_dg_and_records_nothing(self, rt, dg, gh):
+        route = f"POST /data-service/designstate/{PROJECT}/name-suggestion"
+        dg.routes[route] = (200, {"name": "Добавлены новые отверстия.", "source": "llm"})
+        reply = rpc("degram.mapping.suggestName", {"sessionId": SID, "answerIds": ["A-2", "A-1", "A-1"],
+                                                    "language": "ru"})["result"]
+        assert reply["status"] == "ok" and reply["suggestion"] == {"name": "Добавлены новые отверстия.", "source": "llm"}
+        assert dg.requests[0]["body"] == {"kind": "mapping", "mappingSessionId": SID,  # project: in the path
+                                          "answerIds": ["A-1", "A-2"], "language": "ru"}
+        assert dg.requests[0]["headers"]["Authorization"] == f"Bearer {TOKEN}" and gh.commands() == []
+
     def test_apply_does_not_bypass_a_delegated_permission_refusal(self, rt, dg, gh):
         dg.routes[f"POST {BASE}/{SID}/apply"] = (403, refusal("PRINCIPAL_NOT_PERMITTED"))
         reply = rpc("degram.mapping.apply", {"sessionId": SID, "requestId": "commit-test",

@@ -380,7 +380,14 @@ def _(rid, params: dict) -> dict:
 @method("degram.mapping.apply")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.apply", lambda m, t: {"batch": m.apply(
-        params.get("sessionId"), params.get("requestId"), params.get("revision"), params.get("answerIds"), t)}, params)
+        params.get("sessionId"), params.get("requestId"), params.get("revision"), params.get("answerIds"), t,
+        params.get("designStateName"), params.get("designStateNameSource"))}, params)
+
+
+@method("degram.mapping.suggestName")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.suggestName", lambda m, t: {"suggestion": m.suggest_name(
+        params.get("sessionId"), params.get("answerIds"), params.get("language"), t)}, params)
 
 
 @method("degram.mapping.start")

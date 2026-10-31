@@ -199,16 +199,25 @@ class DgClient:
         return data
 
     # -- property check of the bound project (1303-15) ------------------------------------------------------
-    def property_check(self, action: str, cancel: CancelToken | None = None) -> dict[str, Any]:
+    def property_check(self, action: str, cancel: CancelToken | None = None, *, check_id: str | None = None,
+                       name: str | None = None, name_source: str | None = None) -> dict[str, Any]:
         """``generate``: DG writes the property scripts for the current rules and places the check on the canvas;
         ``run``: re-places it when the rules' properties changed, then checks the current Design State and paints
-        Revit; ``clear``: removes the colours; ``status``: reads the last result. Always the bound project."""
+        Revit; ``clear``: removes the colours; ``status``: reads the last result; ``name`` (DG 1303-31, D-106): the
+        confirmed name of the new Design State of a pending check, which DG then publishes. Always the bound
+        project."""
         routes = {
             "generate": ("/scripts/property-calculator/place", {}),
             "run": ("/scripts/property-check/run", {}),
             "clear": ("/scripts/property-check/run", {"clear": True}),
             "status": ("/scripts/property-check/status", {}),
         }
+        if action == "name":
+            if not check_id or not (name or "").strip():
+                raise BridgeError(DG_UNAVAILABLE, "BAD_ACTION", "action 'name' needs checkId and designStateName.")
+            routes["name"] = (f"/scripts/property-check/{quote(check_id, safe='')}/name",
+                              {"designStateName": " ".join(name.split()),
+                               "designStateNameSource": "suggested" if name_source == "suggested" else "edited"})
         if action not in routes:
             raise BridgeError(DG_UNAVAILABLE, "BAD_ACTION", f"Unknown property-check action {action!r}.")
         check(cancel)
@@ -219,16 +228,35 @@ class DgClient:
                           refusal_statuses=REFUSAL_STATUSES | {422, 502, 503})
 
     def commit_mapping(self, session_id: str, request_id: str, revision: str, answer_ids: list[str],
-                       cancel: CancelToken | None = None) -> dict[str, Any]:
-        """Explicit intent only; DG still enforces the principal's existing apply permission."""
-        data = self._mapping("POST", session_id, "apply", cancel,
-                             {"requestId": request_id, "revision": revision, "answerIds": list(answer_ids)})
+                       cancel: CancelToken | None = None, design_state_name: str | None = None,
+                       design_state_name_source: str | None = None) -> dict[str, Any]:
+        """Explicit intent only; DG still enforces the principal's existing apply permission. A Revit confirmation
+        records a Design State and carries its confirmed name (DG 1303-31, D-106)."""
+        body: dict[str, Any] = {"requestId": request_id, "revision": revision, "answerIds": list(answer_ids)}
+        if design_state_name:
+            body.update(designStateName=design_state_name, designStateNameSource=design_state_name_source or "edited")
+        data = self._mapping("POST", session_id, "apply", cancel, body)
         if (not isinstance(data, dict) or data.get("batchId") != request_id
                 or data.get("revision") != revision or data.get("answerIds") != answer_ids
                 or not isinstance(data.get("delivery"), dict)
                 or data["delivery"].get("state") not in ("queued", "written", "failed")):
             raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG mapping answer has no confirmed batch.")
         return data
+
+
+    def suggest_design_state_name(self, session_id: str, answer_ids: list[str], language: str,
+                                  cancel: CancelToken | None = None) -> dict[str, Any]:
+        """DG 1303-31 (D-107): DG's suggested name for the Design State a mapping confirmation records
+        ({name, source: llm | fallback}); records nothing."""
+        check(cancel)
+        info, token = self._scope()
+        data = self._send("POST", f"{info.relay_base_url}/designstate/{quote(info.project, safe='')}/name-suggestion",
+                          token, "mapping", cancel, refusals=True, read_timeout_s=60.0,
+                          body={"kind": "mapping", "mappingSessionId": session_id, "answerIds": list(answer_ids),
+                                "language": language})
+        if not isinstance(data, dict) or not isinstance(data.get("name"), str):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG answer has no suggested name.")
+        return {"name": data["name"], "source": data.get("source") or "llm"}
 
 
 def _session_of(data: Any) -> dict[str, Any]:

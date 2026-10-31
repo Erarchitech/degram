@@ -211,6 +211,19 @@ class DegramMappingApplyParams(Params):
     requestId: str
     revision: str
     answerIds: list[str]
+    # DG 1303-31 (D-106): the confirmed name of the Design State a Revit confirmation records
+    designStateName: str | None = None
+    designStateNameSource: str | None = None
+
+
+class DegramMappingSuggestNameParams(Params):
+    sessionId: str
+    answerIds: list[str] = []
+    language: str | None = None
+
+
+class DegramMappingSuggestNameResult(DegramOutcomeFields):
+    suggestion: JsonValue = None  # {name, source: llm | fallback}; DG records nothing
 
 
 class DegramMappingApplyResult(DegramOutcomeFields):
@@ -270,6 +283,10 @@ method("degram.mapping.apply", params=DegramMappingApplyParams, result=DegramMap
        doc="Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. "
            "DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. "
            "Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt.")
+method("degram.mapping.suggestName", params=DegramMappingSuggestNameParams, result=DegramMappingSuggestNameResult,
+       doc="DG 1303-31 (D-107): DG's suggested name of the Design State a Revit mapping confirmation records "
+           "(the LLM from the classes and changes, or a deterministic name); the user confirms or replaces it. "
+           "Records nothing.")
 method("degram.mapping.start", params=DegramMappingStartParams, result=DegramMappingStartResult,
        doc="Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge "
            "start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). "

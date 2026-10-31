@@ -177,8 +177,12 @@ class MappingService:
             _require_id(session_id, "sessionId"), _require_id(answer_id, "answerId"), cancel))
 
     def apply(self, session_id: Any, request_id: Any, revision: Any, answer_ids: Any,
-              cancel: CancelToken | None = None) -> dict[str, Any]:
+              cancel: CancelToken | None = None, design_state_name: Any = None,
+              design_state_name_source: Any = None) -> dict[str, Any]:
         session_id = _require_id(session_id, "sessionId")
+        name = " ".join(str(design_state_name or "").split())
+        if len(name) > 120:
+            raise ValueError("designStateName must have at most 120 characters")
         if not isinstance(request_id, str) or not 3 <= len(request_id) <= 64:
             raise ValueError("requestId must have 3 to 64 characters")
         if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{24}", revision):
@@ -187,9 +191,19 @@ class MappingService:
                 or not all(isinstance(v, str) and v.strip() and len(v) <= _MAX_ID for v in answer_ids)
                 or len(set(answer_ids)) != len(answer_ids)):
             raise ValueError("answerIds must be a nonempty list of unique answer ids")
-        batch = self._dg.commit_mapping(session_id, request_id, revision, sorted(answer_ids), cancel)
+        source = design_state_name_source if design_state_name_source in ("suggested", "edited") else "edited"
+        batch = self._dg.commit_mapping(session_id, request_id, revision, sorted(answer_ids), cancel,
+                                        name or None, source)
         # Do not turn a successful commit into a failure if a subsequent session read fails.
         return {k: batch[k] for k in ("batchId", "revision", "answerIds", "committedAt", "delivery") if k in batch}
+
+    def suggest_name(self, session_id: Any, answer_ids: Any, language: Any = "ru",
+                     cancel: CancelToken | None = None) -> dict[str, Any]:
+        """DG 1303-31 (D-107): the suggested name of the Design State this confirmation records."""
+        session_id = _require_id(session_id, "sessionId")
+        ids = [v for v in answer_ids or [] if isinstance(v, str) and v.strip()] if isinstance(answer_ids, list) else []
+        return self._dg.suggest_design_state_name(session_id, sorted(set(ids)), "en" if language == "en" else "ru",
+                                                  cancel)
 
     # -- CAD side: start and show ---------------------------------------------------------------------
     def start(self, app: Any = "grasshopper", cancel: CancelToken | None = None) -> dict[str, Any]:

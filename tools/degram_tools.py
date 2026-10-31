@@ -153,7 +153,7 @@ def _project_graph(args: dict, **_kw) -> str:
     return _outcome_json(read)
 
 
-PROPERTY_CHECK_ACTIONS = ("generate", "run", "clear", "status")
+PROPERTY_CHECK_ACTIONS = ("generate", "run", "clear", "status", "name")
 PROPERTY_CHECK_LINES = 120
 
 
@@ -172,9 +172,21 @@ def _property_check(args: dict, **_kw) -> str:
 
     def call() -> dict[str, Any]:
         try:
-            data = runtime.get().dg.property_check(action)
+            data = runtime.get().dg.property_check(
+                action, check_id=(args or {}).get("checkId"), name=(args or {}).get("designStateName"),
+                name_source=(args or {}).get("designStateNameSource"))
         except DgRefused as exc:
             return {"status": "refused", "code": exc.code, "message": exc.message}
+        if data.get("nameRequired"):
+            # DG 1303-31 (D-106): the check records a new Design State; nothing is published until it is named
+            suggestion = data.get("suggestion") if isinstance(data.get("suggestion"), dict) else {}
+            return {"status": "ok", "action": action, "nameRequired": True, "checkId": data.get("checkId"),
+                    "suggestedName": suggestion.get("name"), "suggestedBy": suggestion.get("source"),
+                    "instruction": "This check records a new Design State. Show the user the suggested name and ask "
+                                   "them to confirm it or give their own; then call degram_property_check with "
+                                   "action 'name', this checkId, designStateName and designStateNameSource "
+                                   "('suggested' when kept unchanged, else 'edited'). Nothing is published or "
+                                   "painted until then; the check waits 10 minutes."}
         status = data.get("status") if isinstance(data.get("status"), dict) else data
         out: dict[str, Any] = {"status": "ok", "action": action}
         if action == "generate" or data.get("refreshed"):
@@ -207,9 +219,18 @@ registry.register(
                            "validates every rule and paints violating elements red, elements without data grey and "
                            "passing ones green in the active Revit view; 'generate': only prepares the scripts; "
                            "'clear': removes the colours; 'status': the last result. Always the user's current "
-                           "project. A REVIT_NOT_CONNECTED refusal means: ask the user to sign in on the DG tab in Revit.",
+                           "project. A REVIT_NOT_CONNECTED refusal means: ask the user to sign in on the DG tab in Revit. "
+                           "When 'run' answers nameRequired, the check records a new Design State: ask the user to "
+                           "confirm the suggested name or give their own, then call with action 'name', checkId and "
+                           "designStateName.",
             "parameters": {"type": "object", "additionalProperties": False,
-                           "properties": {"action": {"type": "string", "enum": list(PROPERTY_CHECK_ACTIONS)}},
+                           "properties": {"action": {"type": "string", "enum": list(PROPERTY_CHECK_ACTIONS)},
+                                          "checkId": {"type": "string",
+                                                      "description": "action 'name': the checkId 'run' answered"},
+                                          "designStateName": {"type": "string", "maxLength": 120,
+                                                              "description": "action 'name': the confirmed name"},
+                                          "designStateNameSource": {"type": "string",
+                                                                    "enum": ["suggested", "edited"]}},
                            "required": ["action"]}})
 registry.register(
     name="degram_list_documents", toolset="degram", handler=_list_documents, check_fn=_is_degram,

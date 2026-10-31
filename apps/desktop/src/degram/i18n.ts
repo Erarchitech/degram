@@ -110,6 +110,16 @@ export interface DegramCopy {
     waitingApply: string
     confirm: (count: number) => string
     confirming: string
+    /** DG 1303-31 (D-106): the name of the Design State a Revit confirmation records. */
+    stateName: {
+      label: string
+      hint: string
+      suggesting: string
+      llm: string
+      fallback: string
+      none: string
+      cancel: string
+    }
     delivery: { queued: string; written: string; failed: string; unknown: string }
     applied: string
     answers: string
@@ -347,6 +357,15 @@ export const degramEn: DegramCopy = {
     waitingApply: 'Answers are drafts. Confirm once to queue only accepted decisions; other proposals remain open.',
     confirm: n => `Confirm and write (${n})`,
     confirming: 'Confirming…',
+    stateName: {
+      label: 'Design State name',
+      hint: 'Confirming records a new Design State. Confirm the suggested name or type your own.',
+      suggesting: 'Suggesting a name…',
+      llm: 'Suggested by the LLM from the changes and the rules',
+      fallback: 'Suggested from the changes (no LLM answered)',
+      none: 'No suggestion: type a name',
+      cancel: 'Cancel'
+    },
     delivery: {
       queued: 'Confirmed; waiting for the CAD connector to write',
       written: 'Written — confirmed by the CAD connector',
@@ -601,6 +620,15 @@ export const degramRu: DegramCopy = {
       'Ответы — черновики. Одно подтверждение отправит на запись только принятые решения; остальные предложения останутся открытыми.',
     confirm: n => `Подтвердить и записать (${n})`,
     confirming: 'Подтверждение…',
+    stateName: {
+      label: 'Имя Design State',
+      hint: 'Подтверждение записывает новый Design State. Подтвердите предложенное имя или введите своё.',
+      suggesting: 'Подбираю имя…',
+      llm: 'Предложено LLM по изменениям и правилам',
+      fallback: 'Предложено по изменениям (LLM не ответила)',
+      none: 'Предложения нет: введите имя',
+      cancel: 'Отмена'
+    },
     delivery: {
       queued: 'Подтверждено; ожидает записи CAD-коннектором',
       written: 'Записано — подтверждено CAD-коннектором',

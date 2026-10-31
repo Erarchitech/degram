@@ -1395,6 +1395,8 @@ export interface DegramMappingApplyParams {
   requestId: string
   revision: string
   answerIds: string[]
+  designStateName?: string | null
+  designStateNameSource?: string | null
 }
 export interface DegramMappingApplyResult {
   status: string
@@ -1403,6 +1405,19 @@ export interface DegramMappingApplyResult {
   message?: string | null
   bridgeState?: string | null
   batch?: unknown
+}
+export interface DegramMappingSuggestNameParams {
+  sessionId: string
+  answerIds?: string[]
+  language?: string | null
+}
+export interface DegramMappingSuggestNameResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  suggestion?: unknown
 }
 export interface DegramMappingStartParams {
   app?: string | null
@@ -5214,6 +5229,8 @@ export interface RpcMethods {
   'degram.mapping.sessions': { params: DegramMappingSessionsParams; result: DegramMappingSessionsResult }
   /** Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE. */
   'degram.mapping.start': { params: DegramMappingStartParams; result: DegramMappingStartResult }
+  /** DG 1303-31 (D-107): DG's suggested name of the Design State a Revit mapping confirmation records (the LLM from the classes and changes, or a deterministic name); the user confirms or replaces it. Records nothing. */
+  'degram.mapping.suggestName': { params: DegramMappingSuggestNameParams; result: DegramMappingSuggestNameResult }
   /** Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND. */
   'degram.mapping.undo': { params: DegramMappingUndoParams; result: DegramMappingSessionResult }
   /** Restate a Design State of the Model Viewer (1303-29): DG answers the state's recorded placements or ParamState; Revit gets them through the DG Revit connector (dg_restate, one transaction, moves and rotations only), Grasshopper through the canvas bridge (restate_parameters, all or nothing). Errors: RESTATE_NOT_AVAILABLE. Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE, ACCESS_DENIED, DG_UNAVAILABLE. */
@@ -5699,6 +5716,7 @@ export const RPC_METHODS = [
   'degram.mapping.session',
   'degram.mapping.sessions',
   'degram.mapping.start',
+  'degram.mapping.suggestName',
   'degram.mapping.undo',
   'degram.restate',
   'delegation.pause',

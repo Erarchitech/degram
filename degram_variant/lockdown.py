@@ -242,7 +242,7 @@ ALLOWED_RPC_METHODS = frozenset({
     "degram.context.send", "degram.context.cancel",
     # Mapping: explicit user intent is forwarded to DG, whose principal policy remains authoritative.
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
-    "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus",
+    "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus", "degram.mapping.suggestName",
     # 1303-29 (D-97): Restate from the Model Viewer
     "degram.restate",
 })

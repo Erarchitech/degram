@@ -198,7 +198,7 @@ _LONG_HANDLERS = frozenset({
     "degram.documents.list", "degram.documents.pin", "degram.context.preview",
     # variant degram, 1303-10: DG mapping reads/writes and canvas calls (start_mapping reads the whole canvas)
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
-    "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus",
+    "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus", "degram.mapping.suggestName",
     # 1303-29 (D-97): Restate from the Model Viewer
     "degram.restate",
 })

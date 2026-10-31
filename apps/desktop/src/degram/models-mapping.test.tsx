@@ -898,3 +898,70 @@ describe('Mapping sub-tab of a Revit model (1303-13)', () => {
     )
   })
 })
+
+// -- DG 1303-31 (D-106): a Revit confirmation records a Design State and asks for its name ---------------------
+
+describe('Design State name of a Revit confirmation (DG 1303-31)', () => {
+  it('suggests a name, keeps confirm disabled while it is empty and sends the confirmed name', async () => {
+    await ready()
+    const revision = 'b'.repeat(24)
+    const accepted = ['A-r1']
+
+    const draft = {
+      ...revitSession(),
+      revision,
+      pendingAnswerIds: accepted,
+      batches: [] as unknown[],
+      answers: accepted.map(answerId => ({ ...SESSION.answers[0], answerId, undoable: true }))
+    }
+
+    const gw = fakeGateway(
+      backend({
+        'degram.mapping.sessions': ({ app }) => ({
+          status: 'ok',
+          document: app === 'revit' ? 'tower' : 'tower-facade',
+          sessions: app === 'revit' ? [ROW(draft)] : [],
+          signedIn: true
+        }),
+        'degram.mapping.session': () => ({ status: 'ok', session: draft }),
+        'degram.mapping.suggestName': () => ({
+          status: 'ok',
+          suggestion: { name: 'Classified the facade panels.', source: 'llm' }
+        }),
+        'degram.mapping.apply': params => {
+          const batch = { batchId: params.requestId, revision, answerIds: params.answerIds, committedAt: 'now', delivery: { state: 'queued' } }
+
+          draft.batches.push(batch)
+
+          return { status: 'ok', batch }
+        }
+      })
+    )
+
+    const tab = await openRevit()
+
+    fireEvent.click(await within(tab).findByTestId('degram-mapping-apply'))
+    const input = (await within(tab).findByTestId('degram-mapping-state-name-input')) as HTMLInputElement
+
+    await waitFor(() => expect(input.value).toBe('Classified the facade panels.'))
+    expect(gw.last('degram.mapping.suggestName')).toEqual({ sessionId: REVIT_SID, answerIds: accepted, language: 'en' })
+    expect(within(tab).getByText('Suggested by the LLM from the changes and the rules')).toBeTruthy()
+    expect(gw.count('degram.mapping.apply')).toBe(0)
+
+    fireEvent.change(input, { target: { value: '   ' } })
+    const confirm = within(tab).getByTestId('degram-mapping-state-name-confirm') as HTMLButtonElement
+
+    expect(confirm.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: 'Panels  mapped again' } })
+    fireEvent.click(confirm)
+    await waitFor(() => expect(gw.count('degram.mapping.apply')).toBe(1))
+    expect(gw.last('degram.mapping.apply')).toEqual({
+      sessionId: REVIT_SID,
+      requestId: `commit-${revision}`,
+      revision,
+      answerIds: accepted,
+      designStateName: 'Panels mapped again',
+      designStateNameSource: 'edited'
+    })
+  })
+})
