@@ -701,7 +701,7 @@ describe('restate signals (1303-29, D-97)', () => {
 
     for (const bad of [
       '#degram-restated=OS_1;dynamo;ok;1',
-      '#degram-restated=OS_1;revit;ok;1,2,3,4,5,6',
+      '#degram-restated=OS_1;revit;ok;1,2,3,4,5,6,7',
       '#degram-restated=OS_1;revit;oops;1',
       '#degram-restated=OS_1;revit;ok;1&x=1',
       '#degram-restate=OS_1'
@@ -721,9 +721,9 @@ describe('restate signals (1303-29, D-97)', () => {
       restatedFragment('OS_1', {
         status: 'ok',
         connector: 'revit',
-        report: { moved: 3, unchanged: 1, skipped: 2, missing: 0, failed: 0, details: [] }
+        report: { moved: 3, unchanged: 1, skipped: 2, missing: 0, failed: 0, recreated: 1, details: [] }
       })
-    ).toBe('#degram-restated=OS_1;revit;ok;3,1,2,0,0')
+    ).toBe('#degram-restated=OS_1;revit;ok;3,1,2,0,0,1')
     expect(
       restatedFragment('DS_1', { status: 'ok', connector: 'grasshopper', report: { applied: false, parameters: 4 } })
     ).toBe('#degram-restated=DS_1;grasshopper;aborted;4')

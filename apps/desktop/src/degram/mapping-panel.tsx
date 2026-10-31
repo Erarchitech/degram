@@ -773,7 +773,10 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
   )
 }
 
-/** The Mapping sub-tab of one document row: collapsed by default, its own reads only while open. */
+/**
+ * The Design State section of one document row (DG 1303-30, D-101; the Mapping sub-tab before): collapsed by default,
+ * its own reads only while open. A Design State exists only through a confirmed mapping, so the mapping sits under it.
+ */
 export function MappingSubtab({ app, document }: { app: BridgeApp; document: string }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -800,3 +803,9 @@ export function MappingSubtab({ app, document }: { app: BridgeApp; document: str
     </div>
   )
 }
+        {open && (
+          <div className="grid gap-0.5 pt-1" data-testid="degram-design-state-intro">
+            <span className="text-[0.8125rem] font-medium">{t.degram.mapping.section}</span>
+            <span className="text-[0.75rem] text-muted-foreground">{t.degram.mapping.stateHint}</span>
+          </div>
+        )}

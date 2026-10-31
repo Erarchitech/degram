@@ -46,10 +46,11 @@ const PAGE_INSTALL_FRAGMENT = /^#degram-install=(revit|grasshopper)$/
 const PAGE_RESTATE_FRAGMENT = /^#degram-restate=([A-Za-z0-9_.-]{1,128})$/
 /**
  * DeGram's answer: `#degram-restated=<id>;<connector>;<outcome>;<counts>`. Revit counts are moved, unchanged,
- * skipped, missing, failed; Grasshopper counts the parameters. The outcome is ok, aborted or an error code.
+ * skipped, missing, failed, recreated (1303-30); Grasshopper counts the parameters. The outcome is ok, aborted or an
+ * error code.
  */
 const HOST_RESTATED_FRAGMENT =
-  /^#degram-restated=[A-Za-z0-9_.-]{1,128};(?:revit|grasshopper|none);(?:ok|aborted|[A-Z][A-Z0-9_]{0,63});(?:\d{1,6}(?:,\d{1,6}){0,4})?$/
+  /^#degram-restated=[A-Za-z0-9_.-]{1,128};(?:revit|grasshopper|none);(?:ok|aborted|[A-Z][A-Z0-9_]{0,63});(?:\d{1,6}(?:,\d{1,6}){0,5})?$/
 
 function count(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? Math.min(value, 999_999) : 0
@@ -67,7 +68,7 @@ export function restatedFragment(stateId: string, result: unknown, failure?: str
     outcome = failure
   } else if (answer.status === 'ok' && connector === 'revit') {
     outcome = 'ok'
-    counts = ['moved', 'unchanged', 'skipped', 'missing', 'failed'].map(key => count(report[key])).join(',')
+    counts = ['moved', 'unchanged', 'skipped', 'missing', 'failed', 'recreated'].map(key => count(report[key])).join(',')
   } else if (answer.status === 'ok' && connector === 'grasshopper') {
     outcome = report.applied === true ? 'ok' : 'aborted'
     counts = String(count(report.parameters))

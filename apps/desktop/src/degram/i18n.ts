@@ -90,9 +90,14 @@ export interface DegramCopy {
   }
   /** The «Модели» screen (D-43). */
   models: { title: string }
-  /** The Mapping sub-tab under each document of «Модели» (Phase 1303-10). Class and property names stay data. */
+  /**
+   * The Mapping sub-tab under each document of «Модели» (Phase 1303-10). Class and property names stay data.
+   * DG 1303-30 (D-101): the section is titled Design State («Снимок модели»), the mapping sits under it.
+   */
   mapping: {
     tab: string
+    section: string
+    stateHint: string
     reading: string
     refresh: string
     progressLabel: string
@@ -321,7 +326,9 @@ export const degramEn: DegramCopy = {
   },
   models: { title: 'Models' },
   mapping: {
-    tab: 'Mapping',
+    tab: 'Design State',
+    section: 'Mapping',
+    stateHint: 'Confirming the mapping records the Design State; Restate in the Model Viewer returns the model to it.',
     reading: 'Reading the mapping',
     refresh: 'Refresh the mapping',
     progressLabel: 'Mapping progress',
@@ -572,7 +579,9 @@ export const degramRu: DegramCopy = {
   },
   models: { title: 'Модели' },
   mapping: {
-    tab: 'Меппинг',
+    tab: 'Снимок модели',
+    section: 'Меппинг',
+    stateHint: 'Подтверждение меппинга записывает снимок модели; Restate в Model Viewer возвращает к нему модель.',
     reading: 'Чтение меппинга',
     refresh: 'Обновить меппинг',
     progressLabel: 'Прогресс меппинга',

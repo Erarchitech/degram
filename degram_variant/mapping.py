@@ -260,7 +260,8 @@ class MappingService:
             if not isinstance(report, dict):
                 raise BridgeError(SETUP_INCOMPLETE, "BRIDGE_PROTOCOL", "dg_restate returned no report.")
             return {"connector": "revit", "stateId": state_id,
-                    "report": {k: _count(report.get(k)) for k in ("moved", "unchanged", "skipped", "missing", "failed")}
+                    "report": {k: _count(report.get(k))
+                               for k in ("moved", "unchanged", "skipped", "missing", "failed", "recreated")}
                     | {"details": [d for d in report.get("details") or [] if isinstance(d, str)][:20]}}
         reply = self._gh.call("restate_parameters", {"stateId": state_id,
                                                      "statePayloadJson": payload.get("statePayloadJson")},

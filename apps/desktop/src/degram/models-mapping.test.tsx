@@ -410,8 +410,10 @@ describe('Mapping sub-tab on the Models page (1303-10)', () => {
     for (const app of ['grasshopper', 'revit'] as const) {
       const toggle = within(subtab(app)).getByTestId('degram-mapping-toggle')
 
-      expect(toggle.textContent).toContain('Mapping')
+      // DG 1303-30 (D-101): the section is the Design State, the mapping sits under it
+      expect(toggle.textContent).toContain('Design State')
       expect(toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(within(subtab(app)).queryByTestId('degram-design-state-intro')).toBeNull()
     }
 
     expect(gw.calls.filter(c => c.method.startsWith('degram.mapping.'))).toEqual([])
@@ -615,13 +617,14 @@ describe('Mapping sub-tab on the Models page (1303-10)', () => {
     expect(gw.count('degram.mapping.session')).toBe(closed)
   })
 
-  it('reads in Russian: «Меппинг», titles, options and the undo', async () => {
+  it('reads in Russian: «Снимок модели» over «Меппинг», titles, options and the undo', async () => {
     await ready()
     fakeGateway(backend())
     const tab = await openGh('ru')
     const [first] = within(tab).getAllByTestId('degram-mapping-proposal')
 
-    expect(within(tab).getByTestId('degram-mapping-toggle').textContent).toContain('Меппинг')
+    expect(within(tab).getByTestId('degram-mapping-toggle').textContent).toContain('Снимок модели')
+    expect(within(tab).getByTestId('degram-design-state-intro').textContent).toContain('Меппинг')
     expect(first!.textContent).toContain(SESSION.questions[0]!.titleRu)
     expect(
       within(first!).getByRole('button', { name: 'BottomTriangularPanel — нарушения правил — ошибки проекта' })

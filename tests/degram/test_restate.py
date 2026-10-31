@@ -17,7 +17,7 @@ STATE = "OS_0123456789abcdef"
 PATH = f"/data-service/validation/restate/{PROJECT}/{STATE}"
 POINT = {"uniqueId": "box", "kind": "point", "point": [1.0, 2.0, 0.0], "rotation": 0.5}
 LINE = {"uniqueId": "wall", "kind": "curve", "points": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]}
-REPORT = {"moved": 2, "unchanged": 1, "skipped": 0, "missing": 0, "failed": 0, "details": []}
+REPORT = {"moved": 2, "unchanged": 1, "skipped": 0, "missing": 0, "failed": 0, "recreated": 1, "details": []}
 
 
 @pytest.fixture
