@@ -136,7 +136,7 @@ module.exports = {
     // for every installer build and never reuse a number; the shared
     // package.json stays 0.0.0 and scripts/bundles/desktop.py passes no
     // version override for degram.
-    ...(degram ? { author: { name: 'Erarchitech' }, version: '0.1.16' } : {}),
+    ...(degram ? { author: { name: 'Erarchitech' }, version: '0.1.17' } : {}),
     desktopName: appId
   },
   directories: {
