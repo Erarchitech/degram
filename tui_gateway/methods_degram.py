@@ -326,7 +326,7 @@ def _(rid, params: dict) -> dict:
 # failure is an outcome result like degram.documents.*; a request DG refuses for what it is (unknown session or
 # answer, applied session, invalid option: HTTP 400/404/409) is a JSON-RPC error whose data.code is DG's own code.
 
-_REFUSAL_RPC_CODES = {400: 4400, 404: 4404, 409: 4409}
+_REFUSAL_RPC_CODES = {400: 4400, 404: 4404, 409: 4409, 422: 4422}
 
 
 def _mapping_call(rid, name: str, call, params: dict) -> dict:
@@ -393,6 +393,12 @@ def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.focus", lambda m, t: m.focus(
         component_id=params.get("componentId"), app=params.get("app"), session_id=params.get("sessionId"),
         item_id=params.get("itemId"), cancel=t), params)
+
+
+@method("degram.restate")
+def _(rid, params: dict) -> dict:
+    # 1303-29 (D-97): Restate from the Model Viewer, sent to Revit (dg_restate) or Grasshopper (restate_parameters)
+    return _mapping_call(rid, "degram.restate", lambda m, t: m.restate(params.get("stateId"), t), params)
 
 
 def register(server) -> None:

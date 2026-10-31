@@ -34,6 +34,8 @@ export interface ScopeKey {
 /** One RPC channel to a profile's agent backend (the gateway, main side). */
 export interface BackendHandle {
   call: (method: string, params: unknown) => Promise<unknown>
+  /** A call that may wait on a CAD application (Restate, 1303-29): a longer RPC timeout than `call`. */
+  callSlow?: (method: string, params: unknown) => Promise<unknown>
 }
 
 export type DegramEvent = { environment?: { environmentId: string; generation: number } } & (
@@ -144,6 +146,11 @@ export interface ScopeController {
   quiesceForEnvironmentSwitch: (target: { environmentId: string; generation: number }) => Promise<void>
   /** Reopen the exact backend generation after a pre-persistence transaction abort. */
   resumeForEnvironmentSwitch: (target: { environmentId: string; generation: number }) => Promise<void>
+  /**
+   * 1303-29 (D-97): one agent call on the open scope's backend for a request of the DG page (Restate). Throws while
+   * no project scope is ready; the agent's own DG policy decides the rest.
+   */
+  callAgent: (method: string, params: Record<string, unknown>) => Promise<unknown>
   /** Stop every timer. */
   dispose: () => void
 }
@@ -842,6 +849,15 @@ export function createScopeController(deps: ScopeDeps): ScopeController {
     signOut,
     checkAccess,
     reportOutcome,
+    callAgent: async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+      const open = current
+
+      if (state.status !== 'ready' || !open?.handle) {
+        throw new Error('degram: no project scope is ready')
+      }
+
+      return open.handle.callSlow ? open.handle.callSlow(method, params) : open.handle.call(method, params)
+    },
     closeForEnvironmentSwitch,
     quiesceForEnvironmentSwitch,
     resumeForEnvironmentSwitch,

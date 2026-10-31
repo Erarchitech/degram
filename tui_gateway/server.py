@@ -199,6 +199,8 @@ _LONG_HANDLERS = frozenset({
     # variant degram, 1303-10: DG mapping reads/writes and canvas calls (start_mapping reads the whole canvas)
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
     "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus",
+    # 1303-29 (D-97): Restate from the Model Viewer
+    "degram.restate",
 })
 
 _rpc_pool_workers = max(2, env_int("HERMES_TUI_RPC_POOL_WORKERS", 8))

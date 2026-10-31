@@ -243,6 +243,8 @@ ALLOWED_RPC_METHODS = frozenset({
     # Mapping: explicit user intent is forwarded to DG, whose principal policy remains authoritative.
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
     "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus",
+    # 1303-29 (D-97): Restate from the Model Viewer
+    "degram.restate",
 })
 
 # ``config.set`` keys that would re-open provider/model/toolset/MCP/auxiliary selection, the working

@@ -1105,6 +1105,24 @@
       }
     },
     {
+      "name": "degram.restate",
+      "summary": "Restate a Design State of the Model Viewer (1303-29): DG answers the state's recorded placements or ParamState; Revit gets them through the DG Revit connector (dg_restate, one transaction, moves and rotations only), Grasshopper through the canvas bridge (restate_parameters, all or nothing). Errors: RESTATE_NOT_AVAILABLE. Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE, ACCESS_DENIED, DG_UNAVAILABLE.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramRestateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramRestateResult"
+        }
+      }
+    },
+    {
       "name": "delegation.pause",
       "summary": "Block/unblock NEW spawns globally (active children keep running); returns the new state.",
       "params": [
@@ -14039,6 +14057,115 @@
           "answerId"
         ],
         "title": "DegramMappingUndoParams",
+        "type": "object"
+      },
+      "DegramRestateParams": {
+        "additionalProperties": false,
+        "properties": {
+          "stateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stateid"
+          }
+        },
+        "title": "DegramRestateParams",
+        "type": "object"
+      },
+      "DegramRestateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "connector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Connector"
+          },
+          "stateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stateid"
+          },
+          "report": {
+            "default": null,
+            "title": "Report"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramRestateResult",
         "type": "object"
       },
       "DelegationPauseParams": {

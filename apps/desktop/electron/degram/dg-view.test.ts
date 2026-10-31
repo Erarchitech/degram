@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { DEGRAM_DG_PARTITION } from './dg-config'
-import { createDgView, DG_VIEW_WEB_PREFERENCES, dgUrlFor, installedFragment, isAllowedDgUrl } from './dg-view'
+import { createDgView, DG_VIEW_WEB_PREFERENCES, dgUrlFor, installedFragment, isAllowedDgUrl, restatedFragment } from './dg-view'
 import type { DegramEvent } from './scope'
 import { createFakeNavigationEvent, createFakeViewFactory, createLog } from './test-support'
 
@@ -15,6 +15,7 @@ function setup(
     onNewSessionRequested?: () => void
     onConnectorStatusRequested?: () => void
     onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
+    onRestateRequested?: (stateId: string) => void
     targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
     onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
   } = {}
@@ -34,6 +35,7 @@ function setup(
     onProjectAnnounced: options.onProjectAnnounced,
     onNewSessionRequested: options.onNewSessionRequested,
     onConnectorStatusRequested: options.onConnectorStatusRequested,
+    onRestateRequested: options.onRestateRequested,
     onConnectorInstallRequested: options.onConnectorInstallRequested,
     targetPresentation: options.targetPresentation,
     onTargetRequested: options.onTargetRequested
@@ -662,5 +664,74 @@ describe('connector install signals (quick 261027-sgc)', () => {
     )
     expect(installedFragment({ revit: 'bogus' })).toBeNull()
     expect(installedFragment({})).toBeNull()
+  })
+})
+
+describe('restate signals (1303-29, D-97)', () => {
+  const HOST = `${ORIGIN}/?host=degram`
+
+  it('passes only a well-formed state id from the DG main frame', () => {
+    const restate = vi.fn()
+    const { fake } = setup({ onRestateRequested: restate })
+
+    fake.emit('did-navigate-in-page', {}, `${HOST}#degram-restate=OS_0123456789abcdef`, true)
+
+    for (const [url, main] of [
+      [`${HOST}#degram-restate=`, true],
+      [`${HOST}#degram-restate=OS_1&x=1`, true],
+      [`${HOST}#degram-restate=OS_1;revit`, true],
+      [`${HOST}#degram-restate=..%2Fx`, true],
+      [`${HOST}#degram-restate=${'a'.repeat(129)}`, true],
+      [`${HOST}#degram-restate=OS_1`, false],
+      ['https://evil.test/#degram-restate=OS_1', true]
+    ] as const) {
+      fake.emit('did-navigate-in-page', {}, url, main)
+    }
+
+    expect(restate.mock.calls).toEqual([['OS_0123456789abcdef']])
+  })
+
+  it('answers the page in a closed grammar', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.showStart()
+    await dgView.signal('#degram-restated=OS_1;revit;ok;3,1,0,0,0')
+    await dgView.signal('#degram-restated=DS_1;grasshopper;aborted;2')
+    await dgView.signal('#degram-restated=OS_1;none;RESTATE_NOT_AVAILABLE;')
+
+    for (const bad of [
+      '#degram-restated=OS_1;dynamo;ok;1',
+      '#degram-restated=OS_1;revit;ok;1,2,3,4,5,6',
+      '#degram-restated=OS_1;revit;oops;1',
+      '#degram-restated=OS_1;revit;ok;1&x=1',
+      '#degram-restate=OS_1'
+    ]) {
+      await expect(dgView.signal(bad)).rejects.toThrow()
+    }
+
+    expect(fake.loaded.slice(1)).toEqual([
+      `${HOST}#degram-restated=OS_1;revit;ok;3,1,0,0,0`,
+      `${HOST}#degram-restated=DS_1;grasshopper;aborted;2`,
+      `${HOST}#degram-restated=OS_1;none;RESTATE_NOT_AVAILABLE;`
+    ])
+  })
+
+  it('builds the answer from the agent result or its failure code', () => {
+    expect(
+      restatedFragment('OS_1', {
+        status: 'ok',
+        connector: 'revit',
+        report: { moved: 3, unchanged: 1, skipped: 2, missing: 0, failed: 0, details: [] }
+      })
+    ).toBe('#degram-restated=OS_1;revit;ok;3,1,2,0,0')
+    expect(
+      restatedFragment('DS_1', { status: 'ok', connector: 'grasshopper', report: { applied: false, parameters: 4 } })
+    ).toBe('#degram-restated=DS_1;grasshopper;aborted;4')
+    expect(restatedFragment('OS_1', { status: 'unavailable', code: 'BUSY' })).toBe('#degram-restated=OS_1;none;BUSY;')
+    expect(restatedFragment('OS_1', null, 'RESTATE_NOT_AVAILABLE')).toBe(
+      '#degram-restated=OS_1;none;RESTATE_NOT_AVAILABLE;'
+    )
+    expect(restatedFragment('OS_1', null, 'not a code')).toBe('#degram-restated=OS_1;none;FAILED;')
+    expect(restatedFragment('bad id;x', { status: 'ok' })).toBeNull()
   })
 })

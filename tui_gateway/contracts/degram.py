@@ -244,6 +244,17 @@ class DegramMappingFocusResult(DegramOutcomeFields):
     missing: list[str] | None = None  # revit only: UniqueIds the model does not hold
 
 
+class DegramRestateParams(Params):
+    stateId: str | None = None  # the Design State of the Model Viewer tile (model snapshot or computed state id)
+
+
+class DegramRestateResult(DegramOutcomeFields):
+    connector: str | None = None  # revit | grasshopper
+    stateId: str | None = None
+    # revit: {moved, unchanged, skipped, missing, failed, details}; grasshopper: {applied, aborted, parameters, details}
+    report: JsonValue = None
+
+
 method("degram.mapping.sessions", params=DegramMappingSessionsParams, result=DegramMappingSessionsResult,
        doc="Mapping sessions of the bound project, newest first; only those of one document when document is given. "
            "Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING.")
@@ -263,6 +274,12 @@ method("degram.mapping.start", params=DegramMappingStartParams, result=DegramMap
        doc="Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge "
            "start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). "
            "Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.")
+method("degram.restate", params=DegramRestateParams, result=DegramRestateResult,
+       doc="Restate a Design State of the Model Viewer (1303-29): DG answers the state's recorded placements or "
+           "ParamState; Revit gets them through the DG Revit connector (dg_restate, one transaction, moves and "
+           "rotations only), Grasshopper through the canvas bridge (restate_parameters, all or nothing). Errors: "
+           "RESTATE_NOT_AVAILABLE. Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE, ACCESS_DENIED, "
+           "DG_UNAVAILABLE.")
 method("degram.mapping.focus", params=DegramMappingFocusParams, result=DegramMappingFocusResult,
        doc="Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom "
            "to it (bridge focus_component), or with app revit select the elements of one session group in Revit and "

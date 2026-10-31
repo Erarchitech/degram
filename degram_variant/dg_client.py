@@ -183,6 +183,21 @@ class DgClient:
     def undo_mapping_answer(self, session_id: str, answer_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
         return _session_of(self._mapping("POST", session_id, "undo", cancel, {"answerId": answer_id}))
 
+    # -- Restate of a Design State (1303-29, D-97) ----------------------------------------------------------
+    def get_restate(self, state_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """What DeGram sends to put a Design State back into its model: ``{connector: "revit", stateId, label,
+        placements}`` or ``{connector: "grasshopper", stateId, statePayloadJson}``. A state recorded before
+        Restate existed is refused (422 ``RESTATE_NOT_AVAILABLE``)."""
+        check(cancel)
+        info, token = self._scope()
+        url = (f"{info.relay_base_url}/validation/restate/{quote(info.project, safe='')}/"
+               f"{quote(state_id, safe='')}")
+        data = self._send("GET", url, token, "restate", cancel, refusals=True,
+                          refusal_statuses=REFUSAL_STATUSES | {422})
+        if not isinstance(data, dict) or data.get("connector") not in ("revit", "grasshopper"):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG restate answer names no connector.")
+        return data
+
     # -- property check of the bound project (1303-15) ------------------------------------------------------
     def property_check(self, action: str, cancel: CancelToken | None = None) -> dict[str, Any]:
         """``generate``: DG writes the property scripts for the current rules and places the check on the canvas;

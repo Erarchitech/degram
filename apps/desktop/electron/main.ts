@@ -15363,6 +15363,8 @@ function ensureDegramWiring(): DegramEnvironmentWiring | null {
       const origin = descriptor.origin
       const dgSession: Session = session.fromPartition(descriptor.partition)
       const gatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never })
+      // 1303-29: a Restate waits on Revit (MCP tool timeout 40 s) or the Grasshopper canvas
+      const slowGatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never, timeoutMs: 150_000 })
       const profiles = createProfilesCli({
         home: degramHome,
         environment: descriptor,
@@ -15423,6 +15425,11 @@ function ensureDegramWiring(): DegramEnvironmentWiring | null {
             return {
               call: async (method: string, params: unknown): Promise<unknown> =>
                 gatewayRpc(await freshGatewayWsUrl(profile), method, {
+                  ...(params as Record<string, unknown>),
+                  _degram_environment: { environmentId: descriptor.environmentId, generation: descriptor.generation }
+                }),
+              callSlow: async (method: string, params: unknown): Promise<unknown> =>
+                slowGatewayRpc(await freshGatewayWsUrl(profile), method, {
                   ...(params as Record<string, unknown>),
                   _degram_environment: { environmentId: descriptor.environmentId, generation: descriptor.generation }
                 })

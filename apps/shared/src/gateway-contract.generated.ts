@@ -1418,6 +1418,19 @@ export interface DegramMappingStartResult {
   scope?: string | null
   read?: number | null
 }
+export interface DegramRestateParams {
+  stateId?: string | null
+}
+export interface DegramRestateResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  connector?: string | null
+  stateId?: string | null
+  report?: unknown
+}
 export interface DegramMappingFocusParams {
   app?: string | null
   componentId?: string | null
@@ -5203,6 +5216,8 @@ export interface RpcMethods {
   'degram.mapping.start': { params: DegramMappingStartParams; result: DegramMappingStartResult }
   /** Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, MAPPING_ANSWER_NOT_FOUND. */
   'degram.mapping.undo': { params: DegramMappingUndoParams; result: DegramMappingSessionResult }
+  /** Restate a Design State of the Model Viewer (1303-29): DG answers the state's recorded placements or ParamState; Revit gets them through the DG Revit connector (dg_restate, one transaction, moves and rotations only), Grasshopper through the canvas bridge (restate_parameters, all or nothing). Errors: RESTATE_NOT_AVAILABLE. Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE, ACCESS_DENIED, DG_UNAVAILABLE. */
+  'degram.restate': { params: DegramRestateParams; result: DegramRestateResult }
   /** Block/unblock NEW spawns globally (active children keep running); returns the new state. */
   'delegation.pause': { params: DelegationPauseParams; result: DelegationPauseResult }
   /** Running subagent tree plus the spawn pause flag and limits. */
@@ -5685,6 +5700,7 @@ export const RPC_METHODS = [
   'degram.mapping.sessions',
   'degram.mapping.start',
   'degram.mapping.undo',
+  'degram.restate',
   'delegation.pause',
   'delegation.status',
   'diagnostics.share_nous',

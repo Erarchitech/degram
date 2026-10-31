@@ -14,6 +14,7 @@ Owner decision 2026-10-18 (Phase 1303-10) gives DeGram full access to the Grassh
 of ``CanvasBridgeCommands.All``, including the mutating preview commands and the mapping commands
 (``focus_component``, ``start_mapping``, ``get_mapping_status``). It replaces the read-only allowlist of 1301 D-15.
 The context composer still sends only ``GH_READ_COMMANDS``: a context read never changes the canvas.
+Plan 1303-29 (D-97) adds ``restate_parameters``: Restate of a Grasshopper Design State from the Model Viewer.
 """
 
 from __future__ import annotations
@@ -44,7 +45,8 @@ GH_APP = "grasshopper"
 # the context reads use.
 GH_READ_COMMANDS = frozenset({"get_canvas_context", "get_selection", "get_preview_status", "get_document_identity"})
 GH_COMMANDS = GH_READ_COMMANDS | frozenset({
-    "preview_structure", "clear_preview", "focus_component", "start_mapping", "get_mapping_status"})
+    "preview_structure", "clear_preview", "focus_component", "start_mapping", "get_mapping_status",
+    "restate_parameters"})
 CONNECT_TIMEOUT_S = 2.0
 READ_TIMEOUT_S = 30.0  # agent/tool reads
 # The context PREVIEW read (1301-19, G-14): one budget for the whole snapshot (identity + selection + canvas context),

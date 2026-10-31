@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from .cancel import CancelToken
 from .dg_client import DgClient
 from .gh_bridge import GhBridgeClient
-from .outcomes import CANCELLED, SETUP_INCOMPLETE, BridgeError
+from .outcomes import CANCELLED, DG_UNAVAILABLE, SETUP_INCOMPLETE, BridgeError
 
 if TYPE_CHECKING:
     from .revit_bridge import RevitBridgeClient
@@ -241,6 +241,38 @@ class MappingService:
         return {"found": found > 0, "shown": _count(reply.get("shown")),
                 "missing": [m for m in missing if isinstance(m, str)] if isinstance(missing, list) else [],
                 "itemId": item_id}
+
+    # -- Restate (1303-29, D-97) ----------------------------------------------------------------------------
+    def restate(self, state_id: Any, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """Put a Design State of the Model Viewer back into its model. DG answers what to send (the state's recorded
+        placements, or its statePayloadJson); Revit gets them through the DG Revit connector's ``dg_restate`` (one
+        transaction, moves and rotations only), Grasshopper through the listener's ``restate_parameters`` (the canvas
+        sliders and toggles, all or nothing). Answers ``{connector, stateId, report}``."""
+        state_id = _require_id(state_id, "stateId")
+        payload = self._dg.get_restate(state_id, cancel)
+        if payload["connector"] == "revit":
+            placements = payload.get("placements")
+            if not isinstance(placements, list) or not placements:
+                raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG restate answer has no placements.")
+            reply = self._revit.call("dg_restate", {"placements": placements,
+                                                    "label": str(payload.get("label") or state_id)}, cancel=cancel)
+            report = reply.get("report") if isinstance(reply, dict) else None
+            if not isinstance(report, dict):
+                raise BridgeError(SETUP_INCOMPLETE, "BRIDGE_PROTOCOL", "dg_restate returned no report.")
+            return {"connector": "revit", "stateId": state_id,
+                    "report": {k: _count(report.get(k)) for k in ("moved", "unchanged", "skipped", "missing", "failed")}
+                    | {"details": [d for d in report.get("details") or [] if isinstance(d, str)][:20]}}
+        reply = self._gh.call("restate_parameters", {"stateId": state_id,
+                                                     "statePayloadJson": payload.get("statePayloadJson")},
+                              cancel=cancel)
+        if not isinstance(reply, dict):
+            raise BridgeError(SETUP_INCOMPLETE, "BRIDGE_PROTOCOL", "restate_parameters returned no result.")
+        reports = [r for r in reply.get("reports") or [] if isinstance(r, dict)]
+        return {"connector": "grasshopper", "stateId": state_id,
+                "report": {"applied": reply.get("applied") is True, "aborted": reply.get("aborted") is True,
+                           "parameters": len(reports),
+                           "details": ["%s: %s" % (r.get("parameterId"), r.get("status")) for r in reports
+                                       if r.get("status") not in ("Applied", "Unchanged")][:20]}}
 
     # -- connector status -------------------------------------------------------------------------------
     def _mapping_status(self, cancel: CancelToken | None) -> dict[str, Any] | None:

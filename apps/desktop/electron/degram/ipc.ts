@@ -17,7 +17,7 @@ import type { DgTargetMode } from './dg-target-config'
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
 import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgView, DgViewDeps, DgViewPage } from './dg-view'
-import { createDgView, DG_REGIONS, installedFragment, projectFragment } from './dg-view'
+import { createDgView, DG_REGIONS, installedFragment, projectFragment, restatedFragment } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
@@ -367,8 +367,28 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     },
     onConnectorInstallRequested: id => {
       void installConnector(id).catch(() => logger.warn('[degram] the connector install state could not be reported'))
+    },
+    // 1303-29 (D-97): Restate from the Model Viewer; the agent sends it to Revit or Grasshopper through its MCP channels
+    onRestateRequested: stateId => {
+      void restateState(stateId).catch(() => logger.warn('[degram] the restate answer could not be reported'))
     }
   })
+
+  const restateState = async (stateId: string): Promise<void> => {
+    let fragment: string | null
+
+    try {
+      fragment = restatedFragment(stateId, await scope.callAgent('degram.restate', { stateId }))
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code
+      fragment = restatedFragment(stateId, null, typeof code === 'string' && code ? code : 'NO_SCOPE')
+    }
+
+    if (fragment) {
+      const answer = fragment
+      await viewTask(() => dgView.signal(answer))
+    }
+  }
 
   scope = createScopeController({
     session,

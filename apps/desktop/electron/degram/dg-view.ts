@@ -42,6 +42,47 @@ const HOST_INSTALLED_FRAGMENT = new RegExp(`^#degram-installed=${CONNECTOR_STATE
 /** The page asks for the install state, or to install one connector (the runtime confirms natively first). */
 const PAGE_CONNECTORS_CHECK = '#degram-connectors-check'
 const PAGE_INSTALL_FRAGMENT = /^#degram-install=(revit|grasshopper)$/
+/** 1303-29 (D-97): the page asks DeGram to restate one Design State; only its id crosses (`#degram-restate=<id>`). */
+const PAGE_RESTATE_FRAGMENT = /^#degram-restate=([A-Za-z0-9_.-]{1,128})$/
+/**
+ * DeGram's answer: `#degram-restated=<id>;<connector>;<outcome>;<counts>`. Revit counts are moved, unchanged,
+ * skipped, missing, failed; Grasshopper counts the parameters. The outcome is ok, aborted or an error code.
+ */
+const HOST_RESTATED_FRAGMENT =
+  /^#degram-restated=[A-Za-z0-9_.-]{1,128};(?:revit|grasshopper|none);(?:ok|aborted|[A-Z][A-Z0-9_]{0,63});(?:\d{1,6}(?:,\d{1,6}){0,4})?$/
+
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? Math.min(value, 999_999) : 0
+}
+
+/** The answer fragment for a `degram.restate` result (or its failure code); null when the id is not valid. */
+export function restatedFragment(stateId: string, result: unknown, failure?: string | null): string | null {
+  const answer = (result && typeof result === 'object' ? result : {}) as Record<string, any>
+  const report = (answer.report && typeof answer.report === 'object' ? answer.report : {}) as Record<string, unknown>
+  const connector = answer.connector === 'revit' || answer.connector === 'grasshopper' ? answer.connector : 'none'
+  let outcome: string
+  let counts = ''
+
+  if (failure) {
+    outcome = failure
+  } else if (answer.status === 'ok' && connector === 'revit') {
+    outcome = 'ok'
+    counts = ['moved', 'unchanged', 'skipped', 'missing', 'failed'].map(key => count(report[key])).join(',')
+  } else if (answer.status === 'ok' && connector === 'grasshopper') {
+    outcome = report.applied === true ? 'ok' : 'aborted'
+    counts = String(count(report.parameters))
+  } else {
+    outcome = typeof answer.code === 'string' ? answer.code : 'FAILED'
+  }
+
+  if (!/^(?:ok|aborted|[A-Z][A-Z0-9_]{0,63})$/.test(outcome)) {
+    outcome = 'FAILED'
+  }
+
+  const fragment = `#degram-restated=${stateId};${connector};${outcome};${counts}`
+
+  return HOST_RESTATED_FRAGMENT.test(fragment) ? fragment : null
+}
 
 /** The fragment that tells the page the install state; null when a state is outside the vocabulary. */
 export function installedFragment(states: Record<string, string>): string | null {
@@ -139,6 +180,8 @@ export interface DgViewDeps {
   onConnectorStatusRequested?: () => void
   /** The page asked to install a bundled connector (`#degram-install=revit|grasshopper`): a request, never an authority. */
   onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
+  /** The page asked to restate one Design State (`#degram-restate=<id>`, 1303-29): a request, never an authority. */
+  onRestateRequested?: (stateId: string) => void
   targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
   onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
 }
@@ -315,6 +358,14 @@ export function createDgView(deps: DgViewDeps): DgView {
 
       return
     }
+
+    const restate = PAGE_RESTATE_FRAGMENT.exec(hash)
+
+    if (restate) {
+      deps.onRestateRequested?.(restate[1])
+
+      return
+    }
     const match = /^#degram-select=([^&]{1,200})$/.exec(hash)
     if (!match) {
       return
@@ -429,7 +480,7 @@ export function createDgView(deps: DgViewDeps): DgView {
     signal: async (fragment: string): Promise<void> => {
       if (
         typeof fragment !== 'string' ||
-        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || HOST_RESTATED_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
       ) {
         throw new Error('unknown DG signal')
       }
