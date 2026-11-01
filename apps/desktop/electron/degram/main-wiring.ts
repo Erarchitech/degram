@@ -20,6 +20,8 @@ import {
 
 /** The cookie whose change means the DG sign-in started or ended (set by the DG data-service). */
 const DG_SESSION_COOKIE = 'dg_session'
+/** Runtime calls that only set a display preference; the environment wiring replays them on every runtime it starts. */
+const PRESENTATION_KEYS: ReadonlySet<PropertyKey> = new Set(['setDgBounds', 'setLocale', 'setDgMode', 'setTrayLabels'])
 
 export interface DegramWindowLike {
   webContents: {
@@ -126,11 +128,17 @@ export function createDegramEnvironmentWiring(deps: {
         dispose: () => { if (active === wiring) active = null },
         start: async () => {
           if (window) wiring.attachWindow(window)
+          const replayed = { bounds, locale, viewMode, trayLabels }
           wiring.runtime.setDgBounds(bounds)
           await wiring.runtime.setLocale(locale)
           if (viewMode) await wiring.runtime.setDgMode(viewMode)
           if (trayLabels) wiring.runtime.setTrayLabels(trayLabels)
           await wiring.runtime.start()
+          // A preference the renderer sent while this runtime was starting was only stored: apply it before ready.
+          if (bounds !== replayed.bounds) wiring.runtime.setDgBounds(bounds)
+          if (locale !== replayed.locale) await wiring.runtime.setLocale(locale)
+          if (viewMode && viewMode !== replayed.viewMode) await wiring.runtime.setDgMode(viewMode)
+          if (trayLabels && trayLabels !== replayed.trayLabels) wiring.runtime.setTrayLabels(trayLabels)
           if (!wiring.runtime.getState().dg.reachable) throw new Error('DG unavailable')
         }
       }
@@ -142,22 +150,32 @@ export function createDegramEnvironmentWiring(deps: {
     }
   })
   const trusted = (sender: unknown): boolean => Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed() && sender === window.webContents)
+  const remember = (key: PropertyKey, value: unknown): void => {
+    if (key === 'setDgBounds') bounds = value as DgBounds | null
+    if (key === 'setLocale') locale = value as DgLocale
+    if (key === 'setDgMode') viewMode = value as DgMode
+    if (key === 'setTrayLabels') trayLabels = value as DegramTrayLabels
+  }
   const currentRuntime = (): DegramRuntime => {
     if (!active || controller.getState().status !== 'ready') throw new Error('degram: environment not ready')
     return active.runtime
   }
   registerDegramIpc(deps.ipcMain, new Proxy({} as DegramRuntime, {
     get: (_target, key) => (...args: unknown[]) => {
+      // Presentation preferences are kept even while no runtime is ready (startup, a target switch): the renderer
+      // sends its locale once and then only on a change, so a refused call left the DG page in the default 'ru'.
+      // The next runtime's start applies them.
+      if (controller.getState().status !== 'ready' && PRESENTATION_KEYS.has(key)) {
+        remember(key, args[0])
+        return undefined
+      }
       const runtime = currentRuntime()
       const lease = controller.acquireLease()
       if (!lease) throw new Error('degram: environment not ready')
       try {
         const result = (runtime[key as keyof DegramRuntime] as (...args: unknown[]) => unknown)(...args)
         // Only validated calls reach this proxy; presentation preferences survive runtime replacement.
-        if (key === 'setDgBounds') bounds = args[0] as DgBounds | null
-        if (key === 'setLocale') locale = args[0] as DgLocale
-        if (key === 'setDgMode') viewMode = args[0] as DgMode
-        if (key === 'setTrayLabels') trayLabels = args[0] as DegramTrayLabels
+        remember(key, args[0])
         if (result instanceof Promise) return result.finally(lease.release)
         lease.release()
         return result

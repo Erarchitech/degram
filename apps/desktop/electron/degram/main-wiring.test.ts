@@ -197,6 +197,20 @@ describe('environment main composition', () => {
     expect(r.resources.flatMap(item => item.dg.requests).some(request => request.url.endsWith('/auth/logout'))).toBe(false)
   })
 
+  it('keeps the locale the renderer sent before the environment was ready and loads the page in it', async () => {
+    const r = environmentRig()
+    r.wiring.attachWindow(r.w.window)
+    expect(r.wiring.controller.getState().status).not.toBe('ready')
+    await r.call(DEGRAM_CHANNELS.setLocale, 'en')
+    await r.call(DEGRAM_CHANNELS.setTrayLabels, { signOut: 'Sign out of DG' })
+    await r.wiring.started()
+    await r.call(DEGRAM_CHANNELS.setDgMode, 'full')
+    const loaded = r.resources[0].view.fake.loaded
+    expect(loaded.some(url => url.includes('lang=en')), JSON.stringify(loaded)).toBe(true)
+    expect(loaded.some(url => url.includes('lang=ru')), JSON.stringify(loaded)).toBe(false)
+    expect(r.wiring.trayItems()[0].label).toBe('Sign out of DG')
+  })
+
   it('stamps composed runtime state and events with each authoritative generation', async () => {
     const r = environmentRig()
     r.wiring.attachWindow(r.w.window)
