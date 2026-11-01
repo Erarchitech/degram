@@ -90,7 +90,7 @@ afterEach(() => {
 })
 
 describe('the DeGram row set (D-42)', () => {
-  it('is exactly seven rows in the planned order, in both catalogs', () => {
+  it('is exactly eight rows in the planned order, in both catalogs', () => {
     const rows = (nav: typeof degramEn.nav) => degramSidebarNav(nav).map(item => [item.id, item.label])
 
     expect(degramSidebarNav(degramRu.nav).map(item => item.id)).toEqual([...DEGRAM_NAV_IDS])
@@ -101,6 +101,7 @@ describe('the DeGram row set (D-42)', () => {
       'Коннекторы',
       'Модели',
       'Проекты',
+      'Дашборд',
       'Меню'
     ])
     expect(rows(degramEn.nav).map(row => row[1])).toEqual([
@@ -110,11 +111,12 @@ describe('the DeGram row set (D-42)', () => {
       'Connectors',
       'Models',
       'Projects',
+      'Dashboard',
       'Menu'
     ])
   })
 
-  it('renders only those seven rows with a ready scope; upstream rows and contributed rows are not rendered', () => {
+  it('renders only those eight rows with a ready scope; upstream rows and contributed rows are not rendered', () => {
     install(ready('Alpha'))
     $degramEnabled.set(true)
 
@@ -125,7 +127,7 @@ describe('the DeGram row set (D-42)', () => {
 
     renderSidebar(DG_PAGE_PATH)
 
-    expect(navLabels()).toEqual(['New session', 'Graph Viewer', 'Model Viewer', 'Connectors', 'Models', 'Projects', 'Menu'])
+    expect(navLabels()).toEqual(['New session', 'Graph Viewer', 'Model Viewer', 'Connectors', 'Models', 'Projects', 'Dashboard', 'Menu'])
 
     for (const gone of ['Capabilities', 'Messaging', 'Artifacts', 'Scheduled jobs', 'Kanban', 'DG']) {
       expect(screen.queryByRole('button', { name: gone })).toBeNull()
@@ -149,7 +151,7 @@ describe('the DeGram row set (D-42)', () => {
 
     renderSidebar(DG_PAGE_PATH)
 
-    expect(navLabels()).toHaveLength(7)
+    expect(navLabels()).toHaveLength(8)
     expect(navLabels()).toContain('Graph Viewer')
     dispose()
   })
@@ -193,6 +195,7 @@ describe('the DeGram rows route and steer the DG page (D-42)', () => {
       ['Model Viewer', 'dg-model', 'model'],
       ['Connectors', 'dg-connectors', 'connectors'],
       ['Projects', 'dg-projects', 'projects'],
+      ['Dashboard', 'dg-dashboard', 'dashboard'],
       ['Menu', 'dg-menu', 'landing']
     ] as const) {
       fireEvent.click(screen.getByRole('button', { name: label }))
@@ -200,7 +203,7 @@ describe('the DeGram rows route and steer the DG page (D-42)', () => {
       expect(h.bridge.dgGo).toHaveBeenLastCalledWith(region)
     }
 
-    expect(h.bridge.dgGo).toHaveBeenCalledTimes(5)
+    expect(h.bridge.dgGo).toHaveBeenCalledTimes(6)
   })
 
   it('Новая сессия is the stock new-session action and sends no region; Модели opens its own route', () => {

@@ -23,14 +23,14 @@ export type DgViewPage = 'blank' | 'sign-in' | 'dg'
 /** What the host tells the page about the scope (D-44), exactly the vocabulary of ui-v2/src/lib/hostMode.js. */
 export type DgHostState = 'connecting' | 'ready' | 'idle'
 /** The regions the host may steer the page to (D-42). */
-export type DgRegion = 'landing' | 'graph' | 'model' | 'connectors' | 'projects'
+export type DgRegion = 'landing' | 'graph' | 'model' | 'connectors' | 'projects' | 'dashboard'
 export type DgLocale = 'ru' | 'en'
 
 export const DG_HOST_STATES: readonly DgHostState[] = ['connecting', 'ready', 'idle']
-export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'connectors', 'projects']
+export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'connectors', 'projects', 'dashboard']
 
 const HOST_STATE_FRAGMENT = /^#degram-state=(connecting|ready|idle)$/
-const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors|projects)$/
+const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors|projects|dashboard)$/
 const HOST_LANG_FRAGMENT = /^#degram-lang=(ru|en)$/
 /** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
 const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
@@ -205,7 +205,7 @@ export interface DgView {
   showStart: () => Promise<void>
   /**
    * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
-   * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors|projects`,
+   * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors|projects|dashboard`,
    * `#degram-lang=ru|en`, `#degram-project=<name>` (empty: no project open) or
    * `#degram-installed=<connector>:<state>[,...]`. Throws on anything else.
    * Nothing is loaded while the host page is not shown.
