@@ -30,6 +30,9 @@ export const DEGRAM_CHANNELS = {
   setLocale: 'degram:set-locale',
   // DeGram's resolved light/dark mode for the page (the landing's toggle and DeGram Settings stay in step).
   setTheme: 'degram:set-theme',
+  // The onboarding tour (quick 261101-dzj): start or resume the DG page's part; a picture of the page for DeGram's part.
+  tourSignal: 'degram:tour-signal',
+  captureDg: 'degram:capture-dg',
   stateChanged: 'degram:state-changed',
   event: 'degram:event'
 } as const

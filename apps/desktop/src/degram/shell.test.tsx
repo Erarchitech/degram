@@ -13,6 +13,7 @@ import type { DegramState } from '../../electron/degram/ipc'
 
 import { DegramGate } from './degram-gate'
 import { DgPage } from './dg-page'
+import { degramFirstRunLocale } from './first-run-locale'
 import { IsolationBootFailure } from './isolation-boot-failure'
 import { ProjectPicker } from './project-picker'
 import { ScopeStrip } from './scope-strip'
@@ -196,9 +197,11 @@ describe('project picker (UI E2)', () => {
       { project: 'Beta', role: 'member', company: null }
     ])
 
-    // the last row is the separated Sign out of DG command (G-17), not a project
-    const rows = screen.getAllByRole('option').slice(0, -1)
+    // the last two rows are the separated Show the tour (quick 261101-dzj) and Sign out of DG (G-17) commands
+    const options = screen.getAllByRole('option')
+    const rows = options.slice(0, -2)
 
+    expect(options.at(-2)!.textContent).toBe('Show the tour')
     expect(rows).toHaveLength(2)
     expect(within(rows[0]).getByText('Alpha')).toBeTruthy()
     expect(within(rows[0]).getByText('Acme')).toBeTruthy()
@@ -506,7 +509,7 @@ describe('persistent start-screen notices (G-18, G-20, D-35)', () => {
   })
 })
 
-describe('Russian is the first-run locale of variant degram (DGCL-02, UI-SPEC)', () => {
+describe('the first-run locale of variant degram follows Windows (quick 261101-dzj; was always ru, DGCL-02)', () => {
   function Probe() {
     const { t } = useI18n()
 
@@ -514,9 +517,37 @@ describe('Russian is the first-run locale of variant degram (DGCL-02, UI-SPEC)',
   }
 
   const configClient = { getConfig: async () => ({}), saveConfig: async () => ({ ok: true }) }
+  const desktop = window as unknown as { hermesDesktop?: unknown }
+  let previousDesktop: unknown
 
-  it('starts in ru when no language was ever saved', async () => {
+  beforeEach(() => {
+    previousDesktop = desktop.hermesDesktop
+  })
+  afterEach(() => {
+    desktop.hermesDesktop = previousDesktop
+  })
+
+  const withWindowsLocale = (locale: string) => {
+    desktop.hermesDesktop = {
+      ...(previousDesktop as object | undefined),
+      getMachineProfile: async () => ({ locale })
+    }
+  }
+
+  it('maps the Windows display language: Russian to ru, anything else to en, other variants untouched', () => {
     $degramEnabled.set(true)
+    expect(degramFirstRunLocale('ru-RU')).toBe('ru')
+    expect(degramFirstRunLocale('ru')).toBe('ru')
+    expect(degramFirstRunLocale('en-US')).toBe('en')
+    expect(degramFirstRunLocale('de-DE')).toBe('en')
+    expect(degramFirstRunLocale('rue')).toBe('en')
+    $degramEnabled.set(false)
+    expect(degramFirstRunLocale('ru-RU')).toBeNull()
+  })
+
+  it('starts in ru on a Russian Windows when no language was ever saved', async () => {
+    $degramEnabled.set(true)
+    withWindowsLocale('ru-RU')
     render(
       <I18nProvider configClient={configClient}>
         <Probe />
@@ -524,6 +555,19 @@ describe('Russian is the first-run locale of variant degram (DGCL-02, UI-SPEC)',
     )
 
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('Выбрать проект'))
+  })
+
+  it('starts in en on any other Windows when no language was ever saved', async () => {
+    $degramEnabled.set(true)
+    withWindowsLocale('de-DE')
+    render(
+      <I18nProvider configClient={configClient}>
+        <Probe />
+      </I18nProvider>
+    )
+
+    await act(async () => undefined)
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('Choose project'))
   })
 
   it('keeps a saved language and leaves other variants on the standard resolution', async () => {

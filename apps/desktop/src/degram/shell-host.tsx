@@ -15,7 +15,7 @@
 import './fonts.css'
 
 import { useStore } from '@nanostores/react'
-import { type ReactNode, useEffect, useMemo } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router'
 
 import { navigateToWorkspacePage, NEW_CHAT_ROUTE } from '@/app/routes'
@@ -30,6 +30,7 @@ import { registerComposerGate } from './composer-seam'
 import { ConnectedScopeStrip } from './connected-scope-strip'
 import { DegramGate } from './degram-gate'
 import { stopActiveResponse } from './host-actions'
+import { requestDegramTourTail, useDegramTour } from './onboarding-tour'
 import { registerDgPage } from './register-dg-page'
 import { startTurnEventSync } from './request-lifecycle'
 import { handleNewScope, startRouteReconcile } from './scope-route'
@@ -96,7 +97,9 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
           onThemePicked: theme => setMode(theme),
           // The page's language selector: the same setting as Settings → Appearance → Language (stored, whole window).
           onLocalePicked: locale => void setLocale(locale),
-          onModelsRequested: () => navigateToWorkspacePage(navigate, DEGRAM_MODELS_PATH)
+          onModelsRequested: () => navigateToWorkspacePage(navigate, DEGRAM_MODELS_PATH),
+          // Quick 261101-dzj: the page showed its part of the onboarding tour; DeGram shows its own steps.
+          onTourHandoff: requestDegramTourTail
         }
       ),
     [actions, navigate, setLocale, setMode]
@@ -124,6 +127,10 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
   useEffect(() => registerDgPage(), [])
   useEffect(() => registerComposerGate(), [])
   useEffect(() => startTurnEventSync(), [])
+  // Quick 261101-dzj: the onboarding tour starts on the first run, as soon as the DG page is on screen.
+  const showDgPage = useCallback(() => navigateToWorkspacePage(navigate, DG_PAGE_PATH), [navigate])
+
+  useDegramTour(showDgPage)
 
   // A refusal that reached the renderer through the boot state (plan 04: HOME_OVERLAP) is shown by the gate,
   // with the full path and no continue action, instead of the stock recovery overlay.

@@ -85,6 +85,8 @@ export function install(initial: DegramState): Harness {
     dgGo: vi.fn(async () => undefined),
     setLocale: vi.fn(async () => undefined),
     setTheme: vi.fn(async () => undefined),
+    tourSignal: vi.fn(async () => undefined),
+    captureDg: vi.fn(async () => null),
     onRequestSignOut: vi.fn(cb => {
       signOutListener = cb
 

@@ -516,6 +516,8 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.dgGo,
         DEGRAM_CHANNELS.setLocale,
         DEGRAM_CHANNELS.setTheme,
+        DEGRAM_CHANNELS.tourSignal,
+        DEGRAM_CHANNELS.captureDg,
         DEGRAM_CHANNELS.reportOutcome,
         DEGRAM_CHANNELS.openExternalConfirmed
       ].sort()

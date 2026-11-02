@@ -54,6 +54,8 @@ export type DegramEvent = { environment?: { environmentId: string; generation: n
   | { type: 'locale-picked'; locale: 'ru' | 'en' }
   /** The ring's «Модели» region: the renderer opens DeGram's models screen. */
   | { type: 'models-requested' }
+  /** The DG page finished its part of the onboarding tour: the renderer shows DeGram's own steps. */
+  | { type: 'tour-handoff' }
 )
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'

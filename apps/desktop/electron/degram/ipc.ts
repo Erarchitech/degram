@@ -16,7 +16,7 @@ import type { DgTargetMode } from './dg-target-config'
 
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
-import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgTheme, DgView, DgViewDeps, DgViewPage } from './dg-view'
+import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgTheme, DgTourSignal, DgView, DgViewDeps, DgViewPage } from './dg-view'
 import { createDgView, DG_REGIONS, installedFragment, projectFragment, restatedFragment } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
@@ -77,6 +77,10 @@ export interface DegramBridge {
   setLocale: (locale: DgLocale) => Promise<void>
   /** DeGram's resolved light/dark mode; signal the open DG page in place and carry `&theme=` on later loads. */
   setTheme: (theme: DgTheme) => Promise<void>
+  /** Start the DG page's part of the onboarding tour, or return to its last step (`#degram-tour=start|resume`). */
+  tourSignal: (kind: DgTourSignal) => Promise<void>
+  /** A PNG data URL of the painted DG page (null when none is shown): it stands in for the view during DeGram's steps. */
+  captureDg: () => Promise<string | null>
   /** The tray's sign-out entry was clicked: the renderer shows its confirmation or signs out (G-17). */
   onRequestSignOut: (callback: () => void) => () => void
   /** Forward an operational outcome code the agent reported (for example CREDENTIALS_EXPIRED). */
@@ -127,6 +131,8 @@ export interface DegramRuntime {
   dgGo: (region: DgRegion) => Promise<void>
   setLocale: (locale: DgLocale) => Promise<void>
   setTheme: (theme: DgTheme) => Promise<void>
+  tourSignal: (kind: DgTourSignal) => Promise<void>
+  captureDg: () => Promise<string | null>
   getTrayLabels: () => DegramTrayLabels
   /** Ask the renderer to run its sign-out flow (the tray entry). */
   requestSignOut: () => void
@@ -379,7 +385,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     onThemePicked: theme => onEvent({ type: 'theme-picked', theme }),
     // The page's language selector switches DeGram's interface language; the renderer answers with setLocale.
     onLocalePicked: next => onEvent({ type: 'locale-picked', locale: next }),
-    onModelsRequested: () => onEvent({ type: 'models-requested' })
+    onModelsRequested: () => onEvent({ type: 'models-requested' }),
+    onTourHandoff: () => onEvent({ type: 'tour-handoff' })
   })
 
   const restateState = async (stateId: string): Promise<void> => {
@@ -538,6 +545,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
       return viewTask(() => dgView.setLocale(next))
     },
     setTheme: (next: DgTheme): Promise<void> => viewTask(() => dgView.setTheme(next)),
+    tourSignal: (kind: DgTourSignal): Promise<void> => viewTask(() => dgView.signal(`#degram-tour=${kind}`)),
+    captureDg: (): Promise<string | null> => dgView.capture(),
     requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
     reportOutcome: async (code: string): Promise<boolean> => {
@@ -651,6 +660,14 @@ function asRegion(value: unknown): DgRegion {
   return value as DgRegion
 }
 
+function asTourSignal(value: unknown): DgTourSignal {
+  if (value !== 'start' && value !== 'resume') {
+    throw invalid('tour signal')
+  }
+
+  return value
+}
+
 function asTheme(value: unknown): DgTheme {
   if (value !== 'light' && value !== 'dark') {
     throw invalid('theme')
@@ -750,6 +767,14 @@ export function registerDegramIpc(
   ipc.handle(
     DEGRAM_CHANNELS.setTheme,
     guarded((theme: unknown) => runtime.setTheme(asTheme(theme)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.tourSignal,
+    guarded((kind: unknown) => runtime.tourSignal(asTourSignal(kind)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.captureDg,
+    guarded(() => runtime.captureDg())
   )
   ipc.handle(
     DEGRAM_CHANNELS.setDgBounds,

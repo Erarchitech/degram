@@ -6,6 +6,7 @@
 // (visibility is not lifecycle), so leaving the page only hides it. Before sign-in or a project choice the page
 // shows the same project EmptyState as the gate, never a blank view.
 
+import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -13,6 +14,7 @@ import { useI18n } from '@/i18n'
 import { RefreshCw } from '@/lib/icons'
 
 import { FirstScreen, OpenProjectNotices } from './degram-gate'
+import { $degramTourActive, $degramTourSnapshot } from './onboarding-tour'
 import { DgConnecting, DgUnreachable } from './sign-in-state'
 import { degramBridge, isEnvironmentReady, useDegram } from './use-degram-state'
 import { useDgBounds } from './use-dg-bounds'
@@ -23,6 +25,8 @@ export function DgPage() {
   const { environment, painted, state } = useDegram()
   const bridge = degramBridge()
   const hostRef = useRef<HTMLDivElement>(null)
+  const touring = useStore($degramTourActive)
+  const snapshot = useStore($degramTourSnapshot)
 
   const signedIn = state?.auth.kind === 'signed-in'
   const ready = signedIn && state.scope.status === 'ready' && isEnvironmentReady(environment)
@@ -41,7 +45,9 @@ export function DgPage() {
     }
   }, [bridge, mode, page, ready])
 
-  useDgBounds(hostRef, ready && painted && !unreachable)
+  // The native view sits above the renderer: hidden while DeGram's onboarding steps run, or it would cover them; a
+  // picture of the page stands in for it.
+  useDgBounds(hostRef, ready && painted && !unreachable && !touring)
 
   if (!ready) {
     return (
@@ -74,6 +80,8 @@ export function DgPage() {
           <div className="grid h-full place-items-center">
             <DgConnecting label={copy.signIn.connecting} />
           </div>
+        ) : touring && snapshot ? (
+          <img alt="" className="pointer-events-none absolute inset-0 size-full select-none" data-testid="dg-tour-snapshot" src={snapshot} />
         ) : null}
       </div>
     </section>

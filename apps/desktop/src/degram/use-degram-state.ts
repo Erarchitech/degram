@@ -331,6 +331,11 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
       hostRequestHandlers?.onModelsRequested?.()
 
       return
+
+    case 'tour-handoff':
+      hostRequestHandlers?.onTourHandoff?.()
+
+      return
   }
 }
 
@@ -339,6 +344,8 @@ export interface DegramHostRequestHandlers {
   onThemePicked?: (theme: 'light' | 'dark') => void
   onLocalePicked?: (locale: 'ru' | 'en') => void
   onModelsRequested?: () => void
+  /** The page finished its part of the onboarding tour (quick 261101-dzj): DeGram shows its own steps. */
+  onTourHandoff?: () => void
 }
 
 /**

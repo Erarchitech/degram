@@ -206,7 +206,7 @@ export function I18nProvider({
           const machineProfile = await window.hermesDesktop?.getMachineProfile?.().catch(() => null)
 
           if (!cancelled && !userLocaleRef.current) {
-            setLocaleState(degramFirstRunLocale() ?? resolveInitialLocale(undefined, machineProfile?.locale))
+            setLocaleState(degramFirstRunLocale(machineProfile?.locale) ?? resolveInitialLocale(undefined, machineProfile?.locale))
           }
         })
         .catch(error => {

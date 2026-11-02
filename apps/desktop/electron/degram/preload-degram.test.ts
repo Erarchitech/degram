@@ -76,6 +76,8 @@ it('exposes a typed degram namespace with exactly the capability bridge and no t
       'dgGo',
       'setLocale',
       'setTheme',
+      'tourSignal',
+      'captureDg',
       'onRequestSignOut',
       'reportOutcome',
       'openExternalConfirmed'
@@ -104,6 +106,8 @@ it('maps every method to its degram: channel and passes the argument through', a
   await degram.dgGo('graph')
   await degram.setLocale('ru')
   await degram.setTheme('dark')
+  await degram.tourSignal('start')
+  await degram.captureDg()
   await degram.reportOutcome('CREDENTIALS_EXPIRED')
   await degram.openExternalConfirmed('https://example.test/')
 
@@ -120,6 +124,8 @@ it('maps every method to its degram: channel and passes the argument through', a
     [DEGRAM_CHANNELS.dgGo, 'graph'],
     [DEGRAM_CHANNELS.setLocale, 'ru'],
     [DEGRAM_CHANNELS.setTheme, 'dark'],
+    [DEGRAM_CHANNELS.tourSignal, 'start'],
+    [DEGRAM_CHANNELS.captureDg],
     [DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED'],
     [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/']
   ])

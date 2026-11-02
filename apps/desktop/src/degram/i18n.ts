@@ -259,6 +259,20 @@ export interface DegramCopy {
     isolationTitle: string
   }
   notice: { dismiss: string; grantRequired: (project: string) => string }
+  /**
+   * DeGram's own steps of the onboarding tour (quick 261101-dzj): steps 12–14 of 14, after the DG page has shown its
+   * eleven over the main menu (welcome, sign-in, the ring, the corner controls, Models).
+   */
+  tour: {
+    steps: Record<'sessions' | 'bottomBar' | 'topBar', TitledCopy>
+    next: string
+    back: string
+    done: string
+    /** The progress line of one step: `step` of the whole tour's `total`. */
+    progress: (step: number, total: number) => string
+    /** The project-menu item that shows the tour again. */
+    replay: string
+  }
 }
 
 export const degramEn: DegramCopy = {
@@ -514,6 +528,24 @@ export const degramEn: DegramCopy = {
     dismiss: 'Dismiss notice',
     grantRequired: project =>
       `DeGram access to ${project} has not been granted yet. Request it under Connectors or ask the project owner.`
+  },
+  tour: {
+    steps: {
+      sessions: {
+        title: 'Sessions',
+        body: 'Your DeGram session history. The DeGram mark at the top brings you back to the main menu.'
+      },
+      bottomBar: {
+        title: 'Bottom bar',
+        body: 'The current project and the state of connected models. Click the project to switch it or replay the tour.'
+      },
+      topBar: { title: 'Top bar', body: 'Hide or show the sidebar, swap sides and open settings.' }
+    },
+    next: 'Next',
+    back: 'Back',
+    done: 'Done',
+    progress: (step, total) => `${step} of ${total}`,
+    replay: 'Show the tour'
   }
 }
 
@@ -770,5 +802,20 @@ export const degramRu: DegramCopy = {
     dismiss: 'Закрыть уведомление',
     grantRequired: project =>
       `Доступ DeGram к проекту ${project} ещё не выдан. Запросите его в разделе «Коннекторы» или у владельца проекта.`
+  },
+  tour: {
+    steps: {
+      sessions: { title: 'Сессии', body: 'История ваших сессий с DeGram. Знак DeGram наверху возвращает в главное меню.' },
+      bottomBar: {
+        title: 'Нижняя панель',
+        body: 'Текущий проект и состояние подключенных моделей. Нажмите на проект, чтобы сменить его или снова открыть тур.'
+      },
+      topBar: { title: 'Верхняя панель', body: 'Скрыть или показать боковую панель, поменять стороны и открыть настройки.' }
+    },
+    next: 'Далее',
+    back: 'Назад',
+    done: 'Готово',
+    progress: (step, total) => `${step} из ${total}`,
+    replay: 'Показать тур'
   }
 }

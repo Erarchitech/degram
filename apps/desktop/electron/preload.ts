@@ -755,6 +755,8 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     dgGo: region => ipcRenderer.invoke(DEGRAM_CHANNELS.dgGo, region),
     setLocale: locale => ipcRenderer.invoke(DEGRAM_CHANNELS.setLocale, locale),
     setTheme: theme => ipcRenderer.invoke(DEGRAM_CHANNELS.setTheme, theme),
+    tourSignal: kind => ipcRenderer.invoke(DEGRAM_CHANNELS.tourSignal, kind),
+    captureDg: () => ipcRenderer.invoke(DEGRAM_CHANNELS.captureDg),
     reportOutcome: code => ipcRenderer.invoke(DEGRAM_CHANNELS.reportOutcome, code),
     openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url)
   }

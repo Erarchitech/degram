@@ -19,6 +19,7 @@ function setup(
     onThemePicked?: (theme: 'light' | 'dark') => void
     onLocalePicked?: (locale: 'ru' | 'en') => void
     onModelsRequested?: () => void
+    onTourHandoff?: () => void
     targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
     onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
   } = {}
@@ -43,6 +44,7 @@ function setup(
     onThemePicked: options.onThemePicked,
     onLocalePicked: options.onLocalePicked,
     onModelsRequested: options.onModelsRequested,
+    onTourHandoff: options.onTourHandoff,
     targetPresentation: options.targetPresentation,
     onTargetRequested: options.onTargetRequested
   })
@@ -652,6 +654,68 @@ describe('the page language selector asks DeGram to switch its interface languag
     }
 
     expect(picked).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('onboarding tour handshake (quick 261101-dzj)', () => {
+  const HOST = `${ORIGIN}/?host=degram`
+
+  it('starts or resumes the page part on the sign-in page and the host page, never on the #degram slice', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.signal('#degram-tour=start')
+    expect(fake.loaded).toEqual([])
+    await dgView.showSignIn()
+    await dgView.signal('#degram-tour=start')
+    await dgView.showStart()
+    await dgView.signal('#degram-tour=resume')
+    await dgView.setMode('graph')
+    await dgView.signal('#degram-tour=start')
+
+    expect(fake.loaded).toEqual([HOST, `${HOST}#degram-tour=start`, HOST, `${HOST}#degram-tour=resume`, `${ORIGIN}/#degram`])
+    await expect(dgView.signal('#degram-tour=skip')).rejects.toThrow()
+    await expect(dgView.signal('#degram-tour-next')).rejects.toThrow()
+  })
+
+  it('takes the hand-off only as the exact fragment from the DG origin main frame', () => {
+    const handoff = vi.fn()
+    const { fake } = setup({ onTourHandoff: handoff })
+
+    fake.emit('did-navigate-in-page', {}, `${HOST}#degram-tour-next`, true)
+    expect(handoff).toHaveBeenCalledTimes(1)
+
+    for (const [url, main] of [
+      [`${HOST}#degram-tour-next`, false],
+      ['https://evil.test/#degram-tour-next', true],
+      [`${HOST}#degram-tour-next&x`, true],
+      // The host's own signal is not a hand-off.
+      [`${HOST}#degram-tour=start`, true]
+    ] as const) {
+      fake.emit('did-navigate-in-page', {}, url, main)
+    }
+
+    expect(handoff).toHaveBeenCalledTimes(1)
+  })
+
+  it('pictures the painted host page and nothing else', async () => {
+    const { dgView, fake } = setup()
+
+    const capturePage = vi.fn(async (): Promise<{ isEmpty: () => boolean; toDataURL: () => string }> => ({
+      isEmpty: () => false,
+      toDataURL: () => 'data:image/png;base64,AAAA'
+    }))
+
+    fake.view.webContents.capturePage = capturePage
+    expect(await dgView.capture()).toBeNull()
+    await dgView.showStart()
+    expect(await dgView.capture()).toBe('data:image/png;base64,AAAA')
+    capturePage.mockResolvedValueOnce({ isEmpty: () => true, toDataURL: () => 'data:,' })
+    expect(await dgView.capture()).toBeNull()
+    capturePage.mockRejectedValueOnce(new Error('gone'))
+    expect(await dgView.capture()).toBeNull()
+    await dgView.setMode('graph')
+    expect(await dgView.capture()).toBeNull()
+    expect(capturePage).toHaveBeenCalledTimes(3)
   })
 })
 

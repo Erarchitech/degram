@@ -41,6 +41,14 @@ const PAGE_THEME_FRAGMENT = /^#degram-theme-pick=(light|dark)$/
 const PAGE_LANG_FRAGMENT = /^#degram-lang-pick=(ru|en)$/
 /** The ring's «Models» region asks DeGram to open its own models screen. */
 const PAGE_OPEN_MODELS = '#degram-open=models'
+/**
+ * The onboarding tour (quick 261101-dzj): DeGram starts the page's part (`start`) or returns to its last step after
+ * Back on DeGram's first one (`resume`); the page hands the tour over after its last step (`#degram-tour-next`).
+ * Paired with parseHostSignal / announceTourHandoff in ui-v2/src/lib/hostMode.js.
+ */
+const HOST_TOUR_FRAGMENT = /^#degram-tour=(start|resume)$/
+export type DgTourSignal = 'start' | 'resume'
+const PAGE_TOUR_NEXT = '#degram-tour-next'
 /** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
 const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
 /** The same name grammar the page's announcement is validated with (and ui-v2's 64 character cap). */
@@ -157,6 +165,8 @@ export interface DgWebContentsLike {
   setWindowOpenHandler: (handler: (details: { url: string }) => { action: 'deny' }) => void
   isDestroyed: () => boolean
   close?: () => void
+  /** A picture of the painted page: stands in for the hidden view while DeGram's own tour steps run. */
+  capturePage?: () => Promise<{ isEmpty?: () => boolean; toDataURL: () => string }>
   session: {
     clearStorageData: (options?: { storages?: string[] }) => Promise<void>
     clearCache: () => Promise<void>
@@ -198,6 +208,8 @@ export interface DgViewDeps {
   onLocalePicked?: (locale: DgLocale) => void
   /** The ring's «Models» region (`#degram-open=models`). */
   onModelsRequested?: () => void
+  /** The page finished its part of the onboarding tour (`#degram-tour-next`); DeGram shows its own steps. */
+  onTourHandoff?: () => void
   targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
   onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
 }
@@ -222,10 +234,13 @@ export interface DgView {
    * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
    * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors|projects|dashboard`,
    * `#degram-lang=ru|en`, `#degram-theme=light|dark`, `#degram-project=<name>` (empty: no project open) or
-   * `#degram-installed=<connector>:<state>[,...]`. Throws on anything else.
+   * `#degram-installed=<connector>:<state>[,...]`, or `#degram-tour=start|resume` (also on the sign-in page, where
+   * the tour begins). Throws on anything else.
    * Nothing is loaded while the host page is not shown.
    */
   signal: (fragment: string) => Promise<void>
+  /** A PNG data URL of the painted host page, or null when no host page is shown or it cannot be captured. */
+  capture: () => Promise<string | null>
   /**
    * Remember the scope state synchronously (the caller serializes `signal`): every later full page load carries it
    * in its initial hash, so a reload or a sign-in round trip never shows a stale ring.
@@ -386,6 +401,12 @@ export function createDgView(deps: DgViewDeps): DgView {
       return
     }
 
+    if (hash === PAGE_TOUR_NEXT) {
+      deps.onTourHandoff?.()
+
+      return
+    }
+
     if (hash === PAGE_CONNECTORS_CHECK) {
       deps.onConnectorStatusRequested?.()
 
@@ -521,15 +542,31 @@ export function createDgView(deps: DgViewDeps): DgView {
     signal: async (fragment: string): Promise<void> => {
       if (
         typeof fragment !== 'string' ||
-        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_THEME_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || HOST_RESTATED_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_THEME_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || HOST_RESTATED_FRAGMENT.test(fragment) || HOST_TOUR_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
       ) {
         throw new Error('unknown DG signal')
       }
 
-      // Only a loaded host page can take a fragment: not the #degram slice, a blank view or a foreign page.
-      if ((state.page === 'dg' && state.mode === 'full' || state.page === 'sign-in' && fragment === '#degram-target-refused') && loadedBase) {
+      // Only a loaded host page can take a fragment: not the #degram slice, a blank view or a foreign page. The
+      // sign-in page is the same host page: it takes a refused target switch and the onboarding tour.
+      const onSignIn = state.page === 'sign-in' && (fragment === '#degram-target-refused' || HOST_TOUR_FRAGMENT.test(fragment))
+
+      if ((state.page === 'dg' && state.mode === 'full' || onSignIn) && loadedBase) {
         // Same document, new hash: Chromium treats it as an in-page navigation and does not reload.
         await load(`${loadedBase}${fragment}`)
+      }
+    },
+    capture: async (): Promise<string | null> => {
+      if (!((state.page === 'dg' && state.mode === 'full' || state.page === 'sign-in') && loadedBase) || !contents.capturePage) {
+        return null
+      }
+
+      try {
+        const image = await contents.capturePage()
+
+        return image.isEmpty?.() ? null : image.toDataURL()
+      } catch {
+        return null
       }
     },
     setHostState: (next: DgHostState): void => {

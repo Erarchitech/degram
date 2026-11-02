@@ -26,6 +26,7 @@ import { OverflowTip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { $busy } from '@/store/session'
 
+import { replayDegramTour } from './onboarding-tour'
 import { requestDegramSignOut } from './sign-out-confirm'
 import { degramBridge, refreshDegramState, useDegram, useDegramActions } from './use-degram-state'
 
@@ -122,6 +123,17 @@ export function ProjectPicker({ children }: { children: ReactNode }) {
                 {/* G-17, DGCL-05: the user can leave DG from DeGram itself. forceMount keeps it out of the search. */}
                 <CommandSeparator />
                 <CommandGroup forceMount>
+                  {/* Quick 261101-dzj: the whole onboarding tour again, from the DG page's main menu. */}
+                  <CommandItem
+                    forceMount
+                    onSelect={() => {
+                      setOpen(false)
+                      window.setTimeout(replayDegramTour, 0)
+                    }}
+                    value="degram-show-tour"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] leading-[1.4]">{copy.tour.replay}</span>
+                  </CommandItem>
                   <CommandItem
                     forceMount
                     onSelect={() => {

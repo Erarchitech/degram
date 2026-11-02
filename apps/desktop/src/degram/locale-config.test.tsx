@@ -59,6 +59,8 @@ describe('I18nProvider in variant degram', () => {
 
     ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = { api, degramEnabled: true }
     $degramEnabled.set(true)
+    // A Russian Windows, so the first run starts in ru and the click is a real change (quick 261101-dzj).
+    const language = vi.spyOn(navigator, 'language', 'get').mockReturnValue('ru-RU')
 
     const first = render(
       <I18nProvider>
@@ -82,5 +84,6 @@ describe('I18nProvider in variant degram', () => {
     )
     await act(async () => {})
     expect(screen.getByTestId('locale').textContent).toBe('en')
+    language.mockRestore()
   })
 })

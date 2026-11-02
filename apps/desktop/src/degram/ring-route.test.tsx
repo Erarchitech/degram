@@ -193,11 +193,12 @@ describe('the ring requests to the shell (owner redesign 2026-11-02)', () => {
     await act(async () => undefined)
     vi.mocked(h.bridge.setLocale).mockClear()
 
-    h.emitEvent({ type: 'locale-picked', locale: 'en' })
-    await waitFor(() => expect(h.bridge.setLocale).toHaveBeenLastCalledWith('en'))
-
+    // Nothing saved: the first run follows the system language (jsdom: en-US, quick 261101-dzj), so pick ru first.
     h.emitEvent({ type: 'locale-picked', locale: 'ru' })
     await waitFor(() => expect(h.bridge.setLocale).toHaveBeenLastCalledWith('ru'))
+
+    h.emitEvent({ type: 'locale-picked', locale: 'en' })
+    await waitFor(() => expect(h.bridge.setLocale).toHaveBeenLastCalledWith('en'))
     expect(where()).toBe(DG_PAGE_PATH)
   })
 })
