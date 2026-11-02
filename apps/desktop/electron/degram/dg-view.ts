@@ -37,6 +37,8 @@ const HOST_LANG_FRAGMENT = /^#degram-lang=(ru|en)$/
 const HOST_THEME_FRAGMENT = /^#degram-theme=(light|dark)$/
 /** The page's light/dark toggle asks DeGram to switch the whole window (`#degram-theme-pick=`), a request only. */
 const PAGE_THEME_FRAGMENT = /^#degram-theme-pick=(light|dark)$/
+/** The page's language selector asks DeGram to switch its interface language (`#degram-lang-pick=`), a request only. */
+const PAGE_LANG_FRAGMENT = /^#degram-lang-pick=(ru|en)$/
 /** The ring's «Models» region asks DeGram to open its own models screen. */
 const PAGE_OPEN_MODELS = '#degram-open=models'
 /** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
@@ -192,6 +194,8 @@ export interface DgViewDeps {
   onRestateRequested?: (stateId: string) => void
   /** The page's light/dark toggle (`#degram-theme-pick=light|dark`): a request to switch DeGram's mode. */
   onThemePicked?: (theme: DgTheme) => void
+  /** The page's language selector (`#degram-lang-pick=ru|en`): a request to switch DeGram's interface language. */
+  onLocalePicked?: (locale: DgLocale) => void
   /** The ring's «Models» region (`#degram-open=models`). */
   onModelsRequested?: () => void
   targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
@@ -364,6 +368,14 @@ export function createDgView(deps: DgViewDeps): DgView {
 
     if (themePick) {
       deps.onThemePicked?.(themePick[1] as DgTheme)
+
+      return
+    }
+
+    const langPick = PAGE_LANG_FRAGMENT.exec(hash)
+
+    if (langPick) {
+      deps.onLocalePicked?.(langPick[1] as DgLocale)
 
       return
     }

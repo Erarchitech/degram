@@ -50,6 +50,8 @@ export type DegramEvent = { environment?: { environmentId: string; generation: n
   | { type: 'new-session-requested' }
   /** The DG page's light/dark toggle: the renderer switches DeGram's whole window to this mode. */
   | { type: 'theme-picked'; theme: 'light' | 'dark' }
+  /** The DG page's language selector: the renderer switches DeGram's interface language. */
+  | { type: 'locale-picked'; locale: 'ru' | 'en' }
   /** The ring's «Модели» region: the renderer opens DeGram's models screen. */
   | { type: 'models-requested' }
 )

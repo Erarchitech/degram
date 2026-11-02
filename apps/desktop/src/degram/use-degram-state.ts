@@ -75,7 +75,7 @@ let activeBridge: DegramBridge | null = null
 let handledEpoch: null | string | undefined
 // The shell host's reaction to the DG page's «Новая сессия» pill (D-41).
 let newSessionHandler: (() => void) | undefined
-// The shell host's reactions to the DG page's light/dark toggle and the ring's «Модели» region.
+// The shell host's reactions to the DG page's light/dark toggle, its language selector and the ring's «Модели» region.
 let hostRequestHandlers: DegramHostRequestHandlers | undefined
 let stateRevision = 0
 let takeRuntimeState: ((state: DegramState) => void) | undefined
@@ -320,6 +320,13 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
 
       return
 
+    case 'locale-picked':
+      if (event.locale === 'ru' || event.locale === 'en') {
+        hostRequestHandlers?.onLocalePicked?.(event.locale)
+      }
+
+      return
+
     case 'models-requested':
       hostRequestHandlers?.onModelsRequested?.()
 
@@ -330,6 +337,7 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
 /** What the DG page may ask of the shell besides a new session: both are requests, the shell decides. */
 export interface DegramHostRequestHandlers {
   onThemePicked?: (theme: 'light' | 'dark') => void
+  onLocalePicked?: (locale: 'ru' | 'en') => void
   onModelsRequested?: () => void
 }
 

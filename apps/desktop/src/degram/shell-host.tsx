@@ -9,7 +9,8 @@
 // A newly ready scope stays on the DG page (`/dg`) showing the ring (D-41): the draft is reset with the route
 // preserved, and a chat opens only from the DG page's «Новая сессия» pill, Ctrl+N or the history.
 //
-// The DG page's light/dark toggle switches the whole window, and the window's mode reaches the page: one theme.
+// The DG page's light/dark toggle and language selector switch the whole window, and the window's mode and language
+// reach the page: one theme, one language.
 
 import './fonts.css'
 
@@ -19,6 +20,7 @@ import { useNavigate } from 'react-router'
 
 import { navigateToWorkspacePage, NEW_CHAT_ROUTE } from '@/app/routes'
 import { registry } from '@/contrib'
+import { useI18n } from '@/i18n'
 import { getRuntimeI18nLocale, subscribeRuntimeI18nLocale } from '@/i18n/runtime'
 import { $desktopBoot } from '@/store/boot'
 import { requestFreshSession } from '@/store/profile'
@@ -61,6 +63,7 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
   const navigate = useNavigate()
   const boot = useStore($desktopBoot)
   const { resolvedMode, setMode } = useTheme()
+  const { setLocale } = useI18n()
 
   const actions = useMemo<DegramActions>(
     () => ({
@@ -91,10 +94,12 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
         {
           // The landing's toggle: the whole window switches, and the effect below tells the page.
           onThemePicked: theme => setMode(theme),
+          // The page's language selector: the same setting as Settings → Appearance → Language (stored, whole window).
+          onLocalePicked: locale => void setLocale(locale),
           onModelsRequested: () => navigateToWorkspacePage(navigate, DEGRAM_MODELS_PATH)
         }
       ),
-    [actions, navigate, setMode]
+    [actions, navigate, setLocale, setMode]
   )
   // The DG page renders in the DeGram locale: main appends it to the page URL (next load).
   useEffect(() => {

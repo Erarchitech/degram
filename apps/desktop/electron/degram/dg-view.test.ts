@@ -17,6 +17,7 @@ function setup(
     onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
     onRestateRequested?: (stateId: string) => void
     onThemePicked?: (theme: 'light' | 'dark') => void
+    onLocalePicked?: (locale: 'ru' | 'en') => void
     onModelsRequested?: () => void
     targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
     onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
@@ -40,6 +41,7 @@ function setup(
     onRestateRequested: options.onRestateRequested,
     onConnectorInstallRequested: options.onConnectorInstallRequested,
     onThemePicked: options.onThemePicked,
+    onLocalePicked: options.onLocalePicked,
     onModelsRequested: options.onModelsRequested,
     targetPresentation: options.targetPresentation,
     onTargetRequested: options.onTargetRequested
@@ -626,6 +628,30 @@ describe('one light/dark mode for DeGram and the DG page (owner request 2026-11-
     expect(themePicked).toHaveBeenCalledTimes(2)
     expect(modelsRequested).toHaveBeenCalledTimes(1)
     expect(newSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('the page language selector asks DeGram to switch its interface language (owner request 2026-11-02)', () => {
+  it('accepts exactly #degram-lang-pick=ru|en from the DG origin main frame; the host answer is not a pick', () => {
+    const picked = vi.fn()
+    const { fake } = setup({ onLocalePicked: picked })
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-lang-pick=en`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-lang-pick=ru`, true)
+    expect(picked.mock.calls).toEqual([['en'], ['ru']])
+
+    for (const [url, main] of [
+      [`${ORIGIN}/#degram-lang-pick=en`, false],
+      ['https://evil.test/#degram-lang-pick=en', true],
+      [`${ORIGIN}/#degram-lang-pick=de`, true],
+      [`${ORIGIN}/#degram-lang-pick=EN`, true],
+      [`${ORIGIN}/#degram-lang-pick=en&x`, true],
+      [`${ORIGIN}/#degram-lang=en`, true]
+    ] as const) {
+      fake.emit('did-navigate-in-page', {}, url, main)
+    }
+
+    expect(picked).toHaveBeenCalledTimes(2)
   })
 })
 

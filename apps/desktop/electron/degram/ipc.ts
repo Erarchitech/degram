@@ -377,6 +377,8 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     },
     // The landing's light/dark toggle switches the whole window; the renderer answers with setTheme.
     onThemePicked: theme => onEvent({ type: 'theme-picked', theme }),
+    // The page's language selector switches DeGram's interface language; the renderer answers with setLocale.
+    onLocalePicked: next => onEvent({ type: 'locale-picked', locale: next }),
     onModelsRequested: () => onEvent({ type: 'models-requested' })
   })
 

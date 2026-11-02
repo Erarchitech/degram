@@ -7,6 +7,7 @@ import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NEW_CHAT_ROUTE } from '@/app/routes'
+import { I18nProvider } from '@/i18n'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $activeGatewayProfile, $freshSessionPreserveRoute, $freshSessionRequest } from '@/store/profile'
 import { ThemeProvider } from '@/themes/context'
@@ -173,6 +174,30 @@ describe('the ring requests to the shell (owner redesign 2026-11-02)', () => {
 
     h.emitEvent({ type: 'theme-picked', theme: 'light' })
     await waitFor(() => expect(h.bridge.setTheme).toHaveBeenLastCalledWith('light'))
+    expect(where()).toBe(DG_PAGE_PATH)
+  })
+
+  it('the page language selector switches the DeGram interface, and the new language reaches the page', async () => {
+    const h = install(makeState({ scope: { ...noScope } }))
+
+    render(
+      <I18nProvider configClient={{ getConfig: async () => ({}), saveConfig: async () => ({ ok: true }) }} initialLocale="ru">
+        <MemoryRouter initialEntries={[DG_PAGE_PATH]}>
+          <DegramShellHost>
+            <Where />
+          </DegramShellHost>
+        </MemoryRouter>
+      </I18nProvider>
+    )
+
+    await act(async () => undefined)
+    vi.mocked(h.bridge.setLocale).mockClear()
+
+    h.emitEvent({ type: 'locale-picked', locale: 'en' })
+    await waitFor(() => expect(h.bridge.setLocale).toHaveBeenLastCalledWith('en'))
+
+    h.emitEvent({ type: 'locale-picked', locale: 'ru' })
+    await waitFor(() => expect(h.bridge.setLocale).toHaveBeenLastCalledWith('ru'))
     expect(where()).toBe(DG_PAGE_PATH)
   })
 })
