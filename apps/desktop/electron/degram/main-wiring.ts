@@ -8,7 +8,7 @@
 import { DEGRAM_CHANNELS } from './channels'
 import { createEnvironmentController, type EnvironmentController, type EnvironmentRuntimeDescriptor, type EnvironmentState } from './environment-controller'
 import type { DgTargetDescriptor, DgTargetMode } from './dg-target-config'
-import type { DgBounds, DgLocale, DgMode } from './dg-view'
+import type { DgBounds, DgLocale, DgMode, DgTheme } from './dg-view'
 import type { DegramTrayLabels } from './ipc'
 import {
   createDegramRuntime,
@@ -21,7 +21,7 @@ import {
 /** The cookie whose change means the DG sign-in started or ended (set by the DG data-service). */
 const DG_SESSION_COOKIE = 'dg_session'
 /** Runtime calls that only set a display preference; the environment wiring replays them on every runtime it starts. */
-const PRESENTATION_KEYS: ReadonlySet<PropertyKey> = new Set(['setDgBounds', 'setLocale', 'setDgMode', 'setTrayLabels'])
+const PRESENTATION_KEYS: ReadonlySet<PropertyKey> = new Set(['setDgBounds', 'setLocale', 'setTheme', 'setDgMode', 'setTrayLabels'])
 
 export interface DegramWindowLike {
   webContents: {
@@ -90,6 +90,7 @@ export function createDegramEnvironmentWiring(deps: {
   let boot: Promise<unknown> = Promise.resolve()
   let bounds: DgBounds | null = null
   let locale: DgLocale = 'ru'
+  let theme: DgTheme | null = null
   let viewMode: DgMode | null = null
   let trayLabels: DegramTrayLabels | null = null
   const operations = new Map<number, ReturnType<EnvironmentController['acquireLease']>>()
@@ -128,15 +129,17 @@ export function createDegramEnvironmentWiring(deps: {
         dispose: () => { if (active === wiring) active = null },
         start: async () => {
           if (window) wiring.attachWindow(window)
-          const replayed = { bounds, locale, viewMode, trayLabels }
+          const replayed = { bounds, locale, theme, viewMode, trayLabels }
           wiring.runtime.setDgBounds(bounds)
           await wiring.runtime.setLocale(locale)
+          if (theme) await wiring.runtime.setTheme(theme)
           if (viewMode) await wiring.runtime.setDgMode(viewMode)
           if (trayLabels) wiring.runtime.setTrayLabels(trayLabels)
           await wiring.runtime.start()
           // A preference the renderer sent while this runtime was starting was only stored: apply it before ready.
           if (bounds !== replayed.bounds) wiring.runtime.setDgBounds(bounds)
           if (locale !== replayed.locale) await wiring.runtime.setLocale(locale)
+          if (theme && theme !== replayed.theme) await wiring.runtime.setTheme(theme)
           if (viewMode && viewMode !== replayed.viewMode) await wiring.runtime.setDgMode(viewMode)
           if (trayLabels && trayLabels !== replayed.trayLabels) wiring.runtime.setTrayLabels(trayLabels)
           if (!wiring.runtime.getState().dg.reachable) throw new Error('DG unavailable')
@@ -153,6 +156,7 @@ export function createDegramEnvironmentWiring(deps: {
   const remember = (key: PropertyKey, value: unknown): void => {
     if (key === 'setDgBounds') bounds = value as DgBounds | null
     if (key === 'setLocale') locale = value as DgLocale
+    if (key === 'setTheme') theme = value as DgTheme
     if (key === 'setDgMode') viewMode = value as DgMode
     if (key === 'setTrayLabels') trayLabels = value as DegramTrayLabels
   }

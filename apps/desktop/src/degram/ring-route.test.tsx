@@ -9,9 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NEW_CHAT_ROUTE } from '@/app/routes'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $activeGatewayProfile, $freshSessionPreserveRoute, $freshSessionRequest } from '@/store/profile'
+import { ThemeProvider } from '@/themes/context'
 
 import { DegramShellHost } from './shell-host'
-import { DG_PAGE_PATH } from './sidebar-nav'
+import { DEGRAM_MODELS_PATH, DG_PAGE_PATH } from './sidebar-nav'
 import { install, makeState, noScope } from './test-harness'
 import { resetDegramStore } from './use-degram-state'
 
@@ -138,5 +139,40 @@ describe('the DG page pill opens a chat in the active scope (D-41, T-1301-34-01)
 
     await act(async () => undefined)
     expect(h.bridge.setLocale).toHaveBeenCalledWith(expect.stringMatching(/^(ru|en)$/))
+  })
+})
+
+describe('the ring requests to the shell (owner redesign 2026-11-02)', () => {
+  it('models-requested opens the DeGram models screen', async () => {
+    const h = mount(DG_PAGE_PATH)
+
+    await act(async () => undefined)
+    h.emitEvent({ type: 'models-requested' })
+
+    await waitFor(() => expect(where()).toBe(DEGRAM_MODELS_PATH))
+  })
+
+  it('the landing toggle switches the whole window, and the window mode reaches the page', async () => {
+    const h = install(makeState({ scope: { ...noScope } }))
+
+    render(
+      <ThemeProvider>
+        <MemoryRouter initialEntries={[DG_PAGE_PATH]}>
+          <DegramShellHost>
+            <Where />
+          </DegramShellHost>
+        </MemoryRouter>
+      </ThemeProvider>
+    )
+
+    await act(async () => undefined)
+    vi.mocked(h.bridge.setTheme).mockClear()
+
+    h.emitEvent({ type: 'theme-picked', theme: 'dark' })
+    await waitFor(() => expect(h.bridge.setTheme).toHaveBeenLastCalledWith('dark'))
+
+    h.emitEvent({ type: 'theme-picked', theme: 'light' })
+    await waitFor(() => expect(h.bridge.setTheme).toHaveBeenLastCalledWith('light'))
+    expect(where()).toBe(DG_PAGE_PATH)
   })
 })

@@ -48,6 +48,10 @@ export type DegramEvent = { environment?: { environmentId: string; generation: n
   | { type: 'backend-start-failed'; project: string }
   /** The DG page's «Новая сессия» pill, forwarded only while a scope is ready (D-41); the renderer starts a fresh chat. */
   | { type: 'new-session-requested' }
+  /** The DG page's light/dark toggle: the renderer switches DeGram's whole window to this mode. */
+  | { type: 'theme-picked'; theme: 'light' | 'dark' }
+  /** The ring's «Модели» region: the renderer opens DeGram's models screen. */
+  | { type: 'models-requested' }
 )
 
 export type ScopeStatus = 'no-project' | 'opening' | 'ready' | 'error'

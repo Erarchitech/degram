@@ -84,6 +84,7 @@ export function install(initial: DegramState): Harness {
     setTrayLabels: vi.fn(async () => undefined),
     dgGo: vi.fn(async () => undefined),
     setLocale: vi.fn(async () => undefined),
+    setTheme: vi.fn(async () => undefined),
     onRequestSignOut: vi.fn(cb => {
       signOutListener = cb
 

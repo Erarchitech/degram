@@ -35,16 +35,10 @@ export interface DegramCopy {
   brand: string
   target: { label: string; selected: string; effective: string; none: string; connecting: string; switching: string; busy: string; locked: string; failed: string; config: string; retry: string }
   /** The DeGram sidebar rows (D-42, DG D-111): exactly these eight, in this order. */
+  /** The sidebar's one control: the DeGram mark that brings back the DG page's main menu (owner redesign 2026-11-02). */
   nav: {
     dg: string
-    newSession: string
-    graph: string
-    validator: string
-    connectors: string
-    models: string
-    projects: string
-    dashboard: string
-    menu: string
+    mainMenu: string
   }
   /** Commands that leave the current session (the project menu and the tray menu). */
   actions: { signOut: string }
@@ -272,14 +266,7 @@ export const degramEn: DegramCopy = {
   brand: 'DeGram',
   nav: {
     dg: 'DG',
-    newSession: 'New session',
-    graph: 'Graph Viewer',
-    validator: 'Model Viewer',
-    connectors: 'Connectors',
-    models: 'Models',
-    projects: 'Projects',
-    dashboard: 'Dashboard',
-    menu: 'Menu'
+    mainMenu: 'Main menu'
   },
   actions: { signOut: 'Sign out of DG' },
   cta: {
@@ -535,14 +522,7 @@ export const degramRu: DegramCopy = {
   brand: 'DeGram',
   nav: {
     dg: 'DG',
-    newSession: 'Новая сессия',
-    graph: 'Граф проекта',
-    validator: 'Валидатор',
-    connectors: 'Коннекторы',
-    models: 'Модели',
-    projects: 'Проекты',
-    dashboard: 'Дашборд',
-    menu: 'Меню'
+    mainMenu: 'Главное меню'
   },
   actions: { signOut: 'Выйти из DG' },
   cta: {

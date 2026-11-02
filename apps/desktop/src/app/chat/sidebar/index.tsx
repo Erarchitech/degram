@@ -23,13 +23,8 @@ import {
 } from '@/components/ui/sidebar'
 import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
 import { useContributions } from '@/contrib/react/use-contributions'
-import {
-  $degramNavRegion,
-  activateDegramNavItem,
-  degramSidebarNav,
-  isDegramNavActive,
-  isDgRegionRow
-} from '@/degram/sidebar-nav'
+import { DegramSidebarMenuButton } from '@/degram/sidebar-menu-button'
+import { DG_PAGE_PATH } from '@/degram/sidebar-nav'
 import { searchSessions, type SessionInfo, type SessionSearchResult } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { comboTokens } from '@/lib/keybinds/combo'
@@ -455,17 +450,17 @@ export function ChatSidebar({
   // disposes its contribution and the rows come straight back.
   const navPrefs = useContributions(SIDEBAR_NAV_PREFS_AREA)
 
-  // Variant DeGram (D-42): exactly the six DeGram rows. The stock rows and every contributed row are not shown, and
-  // `sidebarNav.prefs` cannot bring them back (the branch skips both). Other variants are unchanged.
+  // Variant DeGram (owner redesign 2026-11-02): no nav rows, only the DeGram mark that brings back the DG page's main
+  // menu; the stock rows and every contributed row are not shown, and `sidebarNav.prefs` cannot bring them back (the
+  // branch skips both). Other variants are unchanged.
   const degramEnabled = useStore($degramEnabled)
-  const degramRegion = useStore($degramNavRegion)
 
   const navItems = useMemo(
     () =>
       degramEnabled
-        ? degramSidebarNav(t.degram.nav)
+        ? []
         : applySidebarNavPrefs([...SIDEBAR_NAV, ...contributedNav].filter(shownInMode(interfaceMode)), navPrefs),
-    [contributedNav, degramEnabled, interfaceMode, navPrefs, t.degram.nav]
+    [contributedNav, degramEnabled, interfaceMode, navPrefs]
   )
 
   const panesFlipped = useStore($panesFlipped)
@@ -1616,12 +1611,12 @@ export function ChatSidebar({
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
           <SidebarGroupContent>
             <SidebarMenu className="gap-px">
+              {degramEnabled && <DegramSidebarMenuButton active={pathname === DG_PAGE_PATH} onNavigate={onNavigate} />}
               {navItems.map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)
 
-                const active = degramEnabled
-                  ? isDegramNavActive(item.id, pathname, degramRegion)
-                  : (item.id === 'capabilities' && currentView === 'capabilities') ||
+                const active =
+                  (item.id === 'capabilities' && currentView === 'capabilities') ||
                   (item.id === 'messaging' && currentView === 'messaging') ||
                   (item.id === 'artifacts' && currentView === 'artifacts') ||
                   (item.id === 'cron' && currentView === 'cron') ||
@@ -1629,9 +1624,7 @@ export function ChatSidebar({
                   (currentView === 'extension' && Boolean(item.route) && pathname === item.route)
 
                 const isNewSession = item.id === 'new-session'
-                // The DeGram rows carry their own (locale-following) copy; a stock row's label is empty and comes
-                // from the sidebar catalog.
-                const navLabel = degramEnabled ? item.label : (s.nav[item.id] ?? item.label)
+                const navLabel = s.nav[item.id] ?? item.label
 
                 const button = (
                   <SidebarMenuButton
@@ -1664,10 +1657,6 @@ export function ChatSidebar({
 
                       if (item.keybindActionId) {
                         recordAction(item.keybindActionId, 'click')
-                      }
-
-                      if (degramEnabled && isDgRegionRow(item.id)) {
-                        activateDegramNavItem(item.id)
                       }
 
                       onNavigate(item)

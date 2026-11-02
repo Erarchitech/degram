@@ -16,7 +16,7 @@ import type { DgTargetMode } from './dg-target-config'
 
 import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } from './dg-session'
 import { createDgSession } from './dg-session'
-import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgView, DgViewDeps, DgViewPage } from './dg-view'
+import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgTheme, DgView, DgViewDeps, DgViewPage } from './dg-view'
 import { createDgView, DG_REGIONS, installedFragment, projectFragment, restatedFragment } from './dg-view'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
@@ -75,6 +75,8 @@ export interface DegramBridge {
   dgGo: (region: DgRegion) => Promise<void>
   /** The DeGram locale; signal the open DG page in place and carry `&lang=` on later loads. */
   setLocale: (locale: DgLocale) => Promise<void>
+  /** DeGram's resolved light/dark mode; signal the open DG page in place and carry `&theme=` on later loads. */
+  setTheme: (theme: DgTheme) => Promise<void>
   /** The tray's sign-out entry was clicked: the renderer shows its confirmation or signs out (G-17). */
   onRequestSignOut: (callback: () => void) => () => void
   /** Forward an operational outcome code the agent reported (for example CREDENTIALS_EXPIRED). */
@@ -124,6 +126,7 @@ export interface DegramRuntime {
   setTrayLabels: (labels: DegramTrayLabels) => void
   dgGo: (region: DgRegion) => Promise<void>
   setLocale: (locale: DgLocale) => Promise<void>
+  setTheme: (theme: DgTheme) => Promise<void>
   getTrayLabels: () => DegramTrayLabels
   /** Ask the renderer to run its sign-out flow (the tray entry). */
   requestSignOut: () => void
@@ -371,7 +374,10 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     // 1303-29 (D-97): Restate from the Model Viewer; the agent sends it to Revit or Grasshopper through its MCP channels
     onRestateRequested: stateId => {
       void restateState(stateId).catch(() => logger.warn('[degram] the restate answer could not be reported'))
-    }
+    },
+    // The landing's light/dark toggle switches the whole window; the renderer answers with setTheme.
+    onThemePicked: theme => onEvent({ type: 'theme-picked', theme }),
+    onModelsRequested: () => onEvent({ type: 'models-requested' })
   })
 
   const restateState = async (stateId: string): Promise<void> => {
@@ -529,6 +535,7 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
       return viewTask(() => dgView.setLocale(next))
     },
+    setTheme: (next: DgTheme): Promise<void> => viewTask(() => dgView.setTheme(next)),
     requestSignOut: (): void => deps.send(DEGRAM_CHANNELS.requestSignOut, null),
     openExternalConfirmed: (url: string): boolean => dgView.openExternalConfirmed(url),
     reportOutcome: async (code: string): Promise<boolean> => {
@@ -642,6 +649,14 @@ function asRegion(value: unknown): DgRegion {
   return value as DgRegion
 }
 
+function asTheme(value: unknown): DgTheme {
+  if (value !== 'light' && value !== 'dark') {
+    throw invalid('theme')
+  }
+
+  return value
+}
+
 function asLocale(value: unknown): DgLocale {
   if (value !== 'ru' && value !== 'en') {
     throw invalid('locale')
@@ -729,6 +744,10 @@ export function registerDegramIpc(
   ipc.handle(
     DEGRAM_CHANNELS.setLocale,
     guarded((locale: unknown) => runtime.setLocale(asLocale(locale)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.setTheme,
+    guarded((theme: unknown) => runtime.setTheme(asTheme(theme)))
   )
   ipc.handle(
     DEGRAM_CHANNELS.setDgBounds,

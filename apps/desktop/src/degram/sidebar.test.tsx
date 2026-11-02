@@ -21,7 +21,7 @@ import { SIDEBAR_NAV_AREA } from '../app/routes'
 import type { SidebarNavItem } from '../app/types'
 
 import { degramEn, degramRu } from './i18n'
-import { $degramNavRegion, DEGRAM_MODELS_PATH, DEGRAM_NAV_IDS, degramSidebarNav, DG_PAGE_PATH } from './sidebar-nav'
+import { $degramNavRegion, DEGRAM_MODELS_PATH, DG_PAGE_PATH } from './sidebar-nav'
 import { install, makeState, noScope } from './test-harness'
 import { resetDegramStore } from './use-degram-state'
 
@@ -89,34 +89,8 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-describe('the DeGram row set (D-42)', () => {
-  it('is exactly eight rows in the planned order, in both catalogs', () => {
-    const rows = (nav: typeof degramEn.nav) => degramSidebarNav(nav).map(item => [item.id, item.label])
-
-    expect(degramSidebarNav(degramRu.nav).map(item => item.id)).toEqual([...DEGRAM_NAV_IDS])
-    expect(rows(degramRu.nav).map(row => row[1])).toEqual([
-      'Новая сессия',
-      'Граф проекта',
-      'Валидатор',
-      'Коннекторы',
-      'Модели',
-      'Проекты',
-      'Дашборд',
-      'Меню'
-    ])
-    expect(rows(degramEn.nav).map(row => row[1])).toEqual([
-      'New session',
-      'Graph Viewer',
-      'Model Viewer',
-      'Connectors',
-      'Models',
-      'Projects',
-      'Dashboard',
-      'Menu'
-    ])
-  })
-
-  it('renders only those eight rows with a ready scope; upstream rows and contributed rows are not rendered', () => {
+describe('the DeGram sidebar holds only the history, the pins and the main-menu mark (owner redesign 2026-11-02)', () => {
+  it('renders no nav rows: upstream, contributed and the former DG rows are all gone', () => {
     install(ready('Alpha'))
     $degramEnabled.set(true)
 
@@ -127,9 +101,24 @@ describe('the DeGram row set (D-42)', () => {
 
     renderSidebar(DG_PAGE_PATH)
 
-    expect(navLabels()).toEqual(['New session', 'Graph Viewer', 'Model Viewer', 'Connectors', 'Models', 'Projects', 'Dashboard', 'Menu'])
+    // The mark is the only nav-namespace handle left.
+    expect(navLabels()).toEqual(['DeGram'])
 
-    for (const gone of ['Capabilities', 'Messaging', 'Artifacts', 'Scheduled jobs', 'Kanban', 'DG']) {
+    for (const gone of [
+      'Capabilities',
+      'Messaging',
+      'Artifacts',
+      'Scheduled jobs',
+      'Kanban',
+      'DG',
+      'Graph Viewer',
+      'Model Viewer',
+      'Connectors',
+      'Models',
+      'Projects',
+      'Dashboard',
+      'Menu'
+    ]) {
       expect(screen.queryByRole('button', { name: gone })).toBeNull()
     }
 
@@ -139,24 +128,23 @@ describe('the DeGram row set (D-42)', () => {
     dispose()
   })
 
-  it('a sidebarNav.prefs contribution cannot bring a stock row back or hide a DeGram row', () => {
+  it('a sidebarNav.prefs contribution cannot bring a stock row back', () => {
     install(ready('Alpha'))
     $degramEnabled.set(true)
 
     const dispose = registry.register({
       area: SIDEBAR_NAV_PREFS_AREA,
       id: 'prefs',
-      data: { hide: ['dg-graph'], show: ['capabilities'] }
+      data: { show: ['capabilities', 'new-session'] }
     })
 
     renderSidebar(DG_PAGE_PATH)
 
-    expect(navLabels()).toHaveLength(8)
-    expect(navLabels()).toContain('Graph Viewer')
+    expect(navLabels()).toEqual(['DeGram'])
     dispose()
   })
 
-  it('has no «New project» button, blank state or messaging/cron section even with no sessions', () => {
+  it('has no «New session» control, «New project» button, blank state or messaging/cron section even with no sessions', () => {
     install(ready('Alpha'))
     $degramEnabled.set(true)
     $sessions.set([])
@@ -165,91 +153,55 @@ describe('the DeGram row set (D-42)', () => {
 
     expect(screen.queryByText('New project')).toBeNull()
     expect(screen.queryByRole('button', { name: 'New project' })).toBeNull()
-    // The nav row is the only «New session» control: the list header's «+» is not rendered.
-    expect(screen.getAllByRole('button', { name: /New session/ })).toHaveLength(1)
+    // A new session starts from the ring's pill or Ctrl+N: neither a row nor the list header's «+» is rendered.
+    expect(screen.queryByRole('button', { name: /New session/ })).toBeNull()
     expect(screen.getByText('Pinned')).toBeTruthy()
   })
 
-  it('outside variant degram the stock rows are unchanged and no DeGram row appears', () => {
+  it('both catalogs name the mark «Main menu»', () => {
+    expect(degramEn.nav.mainMenu).toBe('Main menu')
+    expect(degramRu.nav.mainMenu).toBe('Главное меню')
+  })
+
+  it('outside variant degram the stock rows are unchanged and no DeGram mark appears', () => {
     $sessions.set([])
     renderSidebar('/capabilities')
 
     expect(navLabels()).toEqual(expect.arrayContaining(['New session', 'Capabilities', 'Messaging']))
-    expect(screen.queryByText('Graph Viewer')).toBeNull()
-    expect(screen.queryByText('Menu')).toBeNull()
+    expect(navLabels()).not.toContain('DeGram')
+    expect(screen.queryByRole('button', { name: 'Main menu' })).toBeNull()
     // Positive control for the degram assertions: the stock list header carries its own «New session» «+».
     expect(screen.getAllByRole('button', { name: /New session/ }).length).toBeGreaterThan(1)
   })
 })
 
-describe('the DeGram rows route and steer the DG page (D-42)', () => {
-  it('Граф проекта / Валидатор / Коннекторы / Проекты / Меню navigate to /dg and send the matching region', () => {
+describe('the mark brings back the DG page main menu', () => {
+  it('navigates to /dg and steers the page to its landing', () => {
     const h = install(ready('Alpha'))
     const onNavigate = vi.fn()
 
+    $degramNavRegion.set('graph')
     $degramEnabled.set(true)
-    renderSidebar(DG_PAGE_PATH, onNavigate)
+    renderSidebar(DEGRAM_MODELS_PATH, onNavigate)
 
-    for (const [label, id, region] of [
-      ['Graph Viewer', 'dg-graph', 'graph'],
-      ['Model Viewer', 'dg-model', 'model'],
-      ['Connectors', 'dg-connectors', 'connectors'],
-      ['Projects', 'dg-projects', 'projects'],
-      ['Dashboard', 'dg-dashboard', 'dashboard'],
-      ['Menu', 'dg-menu', 'landing']
-    ] as const) {
-      fireEvent.click(screen.getByRole('button', { name: label }))
-      expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ id, route: DG_PAGE_PATH }))
-      expect(h.bridge.dgGo).toHaveBeenLastCalledWith(region)
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'Main menu' }))
 
-    expect(h.bridge.dgGo).toHaveBeenCalledTimes(6)
+    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'dg-menu', route: DG_PAGE_PATH }))
+    expect(h.bridge.dgGo).toHaveBeenCalledTimes(1)
+    expect(h.bridge.dgGo).toHaveBeenLastCalledWith('landing')
+    expect($degramNavRegion.get()).toBe('landing')
   })
 
-  it('Новая сессия is the stock new-session action and sends no region; Модели opens its own route', () => {
-    const h = install(ready('Alpha'))
-    const onNavigate = vi.fn()
-
-    $degramEnabled.set(true)
-    renderSidebar(DG_PAGE_PATH, onNavigate)
-
-    fireEvent.click(screen.getByRole('button', { name: /New session/ }))
-    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'new-session', action: 'new-session' }))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'models', route: DEGRAM_MODELS_PATH }))
-
-    expect(h.bridge.dgGo).not.toHaveBeenCalled()
-  })
-
-  it('highlights the row of the last region sent while the DG page is shown', () => {
+  it('is marked current on the DG page only', () => {
     install(ready('Alpha'))
     $degramEnabled.set(true)
+
     renderSidebar(DG_PAGE_PATH)
+    expect(screen.getByRole('button', { name: 'Main menu' }).getAttribute('aria-current')).toBe('page')
+    cleanup()
 
-    const active = () =>
-      screen
-        .getAllByRole('button')
-        .filter(button => button.classList.contains('bg-(--ui-control-active-background)'))
-        .map(button => button.textContent?.trim())
-
-    expect(active()).toEqual(['Menu'])
-
-    fireEvent.click(screen.getByRole('button', { name: 'Connectors' }))
-    expect(active()).toEqual(['Connectors'])
-  })
-
-  it('highlights Модели on its own route and no DG row there', () => {
-    install(ready('Alpha'))
-    $degramEnabled.set(true)
     renderSidebar(DEGRAM_MODELS_PATH)
-
-    const active = screen
-      .getAllByRole('button')
-      .filter(button => button.classList.contains('bg-(--ui-control-active-background)'))
-      .map(button => button.textContent?.trim())
-
-    expect(active).toEqual(['Models'])
+    expect(screen.getByRole('button', { name: 'Main menu' }).getAttribute('aria-current')).toBeNull()
   })
 })
 
@@ -314,7 +266,8 @@ describe('variant gates are pinned at their source', () => {
   it('the sidebar gates messaging, cron, blank state and profile rail under $degramEnabled', () => {
     const sidebar = read('app/chat/sidebar/index.tsx')
 
-    expect(sidebar).toContain('degramSidebarNav(t.degram.nav)')
+    expect(sidebar).toContain('degramEnabled\n        ? []')
+    expect(sidebar).toContain('{degramEnabled && <DegramSidebarMenuButton')
     expect(sidebar).toContain('!degramEnabled &&\n              messagingGroups.map')
     expect(sidebar).toMatch(/!worktreeGroupingActive && !degramEnabled && showsAdvancedChrome && cronJobs\.length > 0/)
     expect(sidebar).toContain('!showSessionSections && !degramEnabled && <SidebarBlankState')

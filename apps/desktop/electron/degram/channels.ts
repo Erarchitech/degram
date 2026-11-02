@@ -28,6 +28,8 @@ export const DEGRAM_CHANNELS = {
   // Phase 1301-34 (D-41, D-42): steer the DG page to a region from the sidebar; the DeGram locale for the page.
   dgGo: 'degram:dg-go',
   setLocale: 'degram:set-locale',
+  // DeGram's resolved light/dark mode for the page (the landing's toggle and DeGram Settings stay in step).
+  setTheme: 'degram:set-theme',
   stateChanged: 'degram:state-changed',
   event: 'degram:event'
 } as const

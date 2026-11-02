@@ -515,6 +515,7 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.setDgBounds,
         DEGRAM_CHANNELS.dgGo,
         DEGRAM_CHANNELS.setLocale,
+        DEGRAM_CHANNELS.setTheme,
         DEGRAM_CHANNELS.reportOutcome,
         DEGRAM_CHANNELS.openExternalConfirmed
       ].sort()

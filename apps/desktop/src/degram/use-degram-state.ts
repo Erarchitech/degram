@@ -75,6 +75,8 @@ let activeBridge: DegramBridge | null = null
 let handledEpoch: null | string | undefined
 // The shell host's reaction to the DG page's «Новая сессия» pill (D-41).
 let newSessionHandler: (() => void) | undefined
+// The shell host's reactions to the DG page's light/dark toggle and the ring's «Модели» region.
+let hostRequestHandlers: DegramHostRequestHandlers | undefined
 let stateRevision = 0
 let takeRuntimeState: ((state: DegramState) => void) | undefined
 
@@ -84,6 +86,7 @@ export function resetDegramStore(): void {
   activeBridge = null
   handledEpoch = undefined
   newSessionHandler = undefined
+  hostRequestHandlers = undefined
   takeRuntimeState = undefined
   stateRevision++
   setConnectionScopeTag(null)
@@ -309,7 +312,25 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
       }
 
       return
+
+    case 'theme-picked':
+      if (event.theme === 'light' || event.theme === 'dark') {
+        hostRequestHandlers?.onThemePicked?.(event.theme)
+      }
+
+      return
+
+    case 'models-requested':
+      hostRequestHandlers?.onModelsRequested?.()
+
+      return
   }
+}
+
+/** What the DG page may ask of the shell besides a new session: both are requests, the shell decides. */
+export interface DegramHostRequestHandlers {
+  onThemePicked?: (theme: 'light' | 'dark') => void
+  onModelsRequested?: () => void
 }
 
 /**
@@ -319,7 +340,8 @@ function handleEvent(event: DegramEvent, bridge: DegramBridge): void {
 export function startDegramSync(
   bridge: DegramBridge | undefined = degramBridge(),
   onNewScope?: NewScopeHandler,
-  onNewSession?: () => void
+  onNewSession?: () => void,
+  onHostRequest?: DegramHostRequestHandlers
 ): () => void {
   if (!bridge) {
     return () => undefined
@@ -327,6 +349,7 @@ export function startDegramSync(
 
   activeBridge = bridge
   newSessionHandler = onNewSession
+  hostRequestHandlers = onHostRequest
   let disposed = false
 
   let stateEventSeen = false
@@ -467,6 +490,7 @@ export function startDegramSync(
     if (activeBridge === bridge) {
       activeBridge = null
       newSessionHandler = undefined
+      hostRequestHandlers = undefined
       takeRuntimeState = undefined
     }
   }

@@ -16,6 +16,8 @@ function setup(
     onConnectorStatusRequested?: () => void
     onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
     onRestateRequested?: (stateId: string) => void
+    onThemePicked?: (theme: 'light' | 'dark') => void
+    onModelsRequested?: () => void
     targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
     onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
   } = {}
@@ -37,6 +39,8 @@ function setup(
     onConnectorStatusRequested: options.onConnectorStatusRequested,
     onRestateRequested: options.onRestateRequested,
     onConnectorInstallRequested: options.onConnectorInstallRequested,
+    onThemePicked: options.onThemePicked,
+    onModelsRequested: options.onModelsRequested,
     targetPresentation: options.targetPresentation,
     onTargetRequested: options.onTargetRequested
   })
@@ -564,6 +568,64 @@ describe('host to page fragments (D-41, D-44)', () => {
     await dgView.signal('#degram-state=ready')
 
     expect(fake.loaded).toEqual([`${ORIGIN}/#degram`])
+  })
+})
+
+describe('one light/dark mode for DeGram and the DG page (owner request 2026-11-02)', () => {
+  const HOST = `${ORIGIN}/?host=degram`
+
+  it('carries the mode in the next load and signals a change in-page, like the locale', async () => {
+    const { dgView, fake } = setup()
+
+    await dgView.setTheme('dark')
+    expect(fake.loaded).toEqual([])
+    await dgView.showStart()
+    await dgView.setTheme('light')
+    await dgView.setTheme('light')
+    await dgView.signal('#degram-theme=dark')
+    await dgView.showSignIn()
+
+    expect(fake.loaded).toEqual([
+      `${HOST}&theme=dark`,
+      `${HOST}&theme=dark#degram-theme=light`,
+      `${HOST}&theme=dark#degram-theme=dark`,
+      `${HOST}&theme=light`
+    ])
+    expect(fake.reloads()).toBe(0)
+    await expect(dgView.setTheme('system' as never)).rejects.toThrow()
+    await expect(dgView.signal('#degram-theme=system')).rejects.toThrow()
+  })
+
+  it('the page toggle and the ring’s «Модели» are requests from the DG origin main frame only', () => {
+    const themePicked = vi.fn()
+    const modelsRequested = vi.fn()
+    const newSession = vi.fn()
+    const { fake } = setup({ onThemePicked: themePicked, onModelsRequested: modelsRequested, onNewSessionRequested: newSession })
+
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-theme-pick=dark`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-theme-pick=light`, true)
+    fake.emit('did-navigate-in-page', {}, `${ORIGIN}/?host=degram#degram-open=models`, true)
+    expect(themePicked.mock.calls).toEqual([['dark'], ['light']])
+    expect(modelsRequested).toHaveBeenCalledTimes(1)
+
+    for (const [url, main] of [
+      [`${ORIGIN}/#degram-theme-pick=dark`, false],
+      ['https://evil.test/#degram-theme-pick=dark', true],
+      [`${ORIGIN}/#degram-theme-pick=system`, true],
+      [`${ORIGIN}/#degram-theme-pick=dark&x`, true],
+      // The host's own answer is not a request: an in-page signal never echoes back as a pick.
+      [`${ORIGIN}/#degram-theme=dark`, true],
+      [`${ORIGIN}/#degram-open=models`, false],
+      ['https://evil.test/#degram-open=models', true],
+      [`${ORIGIN}/#degram-open=settings`, true],
+      [`${ORIGIN}/#degram-open=models&x`, true]
+    ] as const) {
+      fake.emit('did-navigate-in-page', {}, url, main)
+    }
+
+    expect(themePicked).toHaveBeenCalledTimes(2)
+    expect(modelsRequested).toHaveBeenCalledTimes(1)
+    expect(newSession).not.toHaveBeenCalled()
   })
 })
 

@@ -7,7 +7,9 @@
 // is signed in with a project chosen.
 //
 // A newly ready scope stays on the DG page (`/dg`) showing the ring (D-41): the draft is reset with the route
-// preserved, and a chat opens only from the DG page's «Новая сессия» pill, the sidebar row or the history.
+// preserved, and a chat opens only from the DG page's «Новая сессия» pill, Ctrl+N or the history.
+//
+// The DG page's light/dark toggle switches the whole window, and the window's mode reaches the page: one theme.
 
 import './fonts.css'
 
@@ -20,6 +22,7 @@ import { registry } from '@/contrib'
 import { getRuntimeI18nLocale, subscribeRuntimeI18nLocale } from '@/i18n/runtime'
 import { $desktopBoot } from '@/store/boot'
 import { requestFreshSession } from '@/store/profile'
+import { useTheme } from '@/themes/context'
 
 import { registerComposerGate } from './composer-seam'
 import { ConnectedScopeStrip } from './connected-scope-strip'
@@ -28,7 +31,7 @@ import { stopActiveResponse } from './host-actions'
 import { registerDgPage } from './register-dg-page'
 import { startTurnEventSync } from './request-lifecycle'
 import { handleNewScope, startRouteReconcile } from './scope-route'
-import { $degramNavRegion, DG_PAGE_PATH } from './sidebar-nav'
+import { $degramNavRegion, DEGRAM_MODELS_PATH, DG_PAGE_PATH } from './sidebar-nav'
 import { DegramSignOutConfirm } from './sign-out-confirm'
 import {
   $degram,
@@ -57,6 +60,7 @@ export function registerScopeStrip(): () => void {
 export function DegramShellHost({ children }: { children?: ReactNode }) {
   const navigate = useNavigate()
   const boot = useStore($desktopBoot)
+  const { resolvedMode, setMode } = useTheme()
 
   const actions = useMemo<DegramActions>(
     () => ({
@@ -83,9 +87,14 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
       startDegramSync(
         undefined,
         (state, opts) => void handleNewScope(state, opts, actions.showRing),
-        actions.startNewChat
+        actions.startNewChat,
+        {
+          // The landing's toggle: the whole window switches, and the effect below tells the page.
+          onThemePicked: theme => setMode(theme),
+          onModelsRequested: () => navigateToWorkspacePage(navigate, DEGRAM_MODELS_PATH)
+        }
       ),
-    [actions]
+    [actions, navigate, setMode]
   )
   // The DG page renders in the DeGram locale: main appends it to the page URL (next load).
   useEffect(() => {
@@ -99,6 +108,10 @@ export function DegramShellHost({ children }: { children?: ReactNode }) {
 
     return subscribeRuntimeI18nLocale(send)
   }, [])
+  // The DG page follows the window's light/dark mode (Settings, the OS when «system», or the page's own toggle).
+  useEffect(() => {
+    void degramBridge()?.setTheme?.(resolvedMode)
+  }, [resolvedMode])
   // The boot adopts the primary profile after the shell mounted: a route moved away from the ready scope's profile
   // is brought back, instead of leaving the composer blocked.
   useEffect(() => startRouteReconcile(() => $degram.get().state), [])

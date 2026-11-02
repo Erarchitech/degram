@@ -25,6 +25,8 @@ export type DgHostState = 'connecting' | 'ready' | 'idle'
 /** The regions the host may steer the page to (D-42). */
 export type DgRegion = 'landing' | 'graph' | 'model' | 'connectors' | 'projects' | 'dashboard'
 export type DgLocale = 'ru' | 'en'
+/** DeGram's resolved light/dark mode; the page follows it, and its toggle asks DeGram to switch. */
+export type DgTheme = 'light' | 'dark'
 
 export const DG_HOST_STATES: readonly DgHostState[] = ['connecting', 'ready', 'idle']
 export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'connectors', 'projects', 'dashboard']
@@ -32,6 +34,11 @@ export const DG_REGIONS: readonly DgRegion[] = ['landing', 'graph', 'model', 'co
 const HOST_STATE_FRAGMENT = /^#degram-state=(connecting|ready|idle)$/
 const HOST_GO_FRAGMENT = /^#degram-go=(landing|graph|model|connectors|projects|dashboard)$/
 const HOST_LANG_FRAGMENT = /^#degram-lang=(ru|en)$/
+const HOST_THEME_FRAGMENT = /^#degram-theme=(light|dark)$/
+/** The page's light/dark toggle asks DeGram to switch the whole window (`#degram-theme-pick=`), a request only. */
+const PAGE_THEME_FRAGMENT = /^#degram-theme-pick=(light|dark)$/
+/** The ring's «Models» region asks DeGram to open its own models screen. */
+const PAGE_OPEN_MODELS = '#degram-open=models'
 /** `#degram-project=<encodeURIComponent(name)>`; an empty value means no project is open (1301-37, F-07). */
 const HOST_PROJECT_FRAGMENT = /^#degram-project=([^&#]{0,200})$/
 /** The same name grammar the page's announcement is validated with (and ui-v2's 64 character cap). */
@@ -183,6 +190,10 @@ export interface DgViewDeps {
   onConnectorInstallRequested?: (id: 'revit' | 'grasshopper') => void
   /** The page asked to restate one Design State (`#degram-restate=<id>`, 1303-29): a request, never an authority. */
   onRestateRequested?: (stateId: string) => void
+  /** The page's light/dark toggle (`#degram-theme-pick=light|dark`): a request to switch DeGram's mode. */
+  onThemePicked?: (theme: DgTheme) => void
+  /** The ring's «Models» region (`#degram-open=models`). */
+  onModelsRequested?: () => void
   targetPresentation?: { mode: 'developer' | 'demo'; generation: number; locked: boolean }
   onTargetRequested?: (mode: 'developer' | 'demo', generation: number) => void
 }
@@ -206,7 +217,7 @@ export interface DgView {
   /**
    * Tell the page something through a fragment of the URL it already shows (never a reload): exactly
    * `#degram-state=connecting|ready|idle`, `#degram-go=landing|graph|model|connectors|projects|dashboard`,
-   * `#degram-lang=ru|en`, `#degram-project=<name>` (empty: no project open) or
+   * `#degram-lang=ru|en`, `#degram-theme=light|dark`, `#degram-project=<name>` (empty: no project open) or
    * `#degram-installed=<connector>:<state>[,...]`. Throws on anything else.
    * Nothing is loaded while the host page is not shown.
    */
@@ -218,6 +229,8 @@ export interface DgView {
   setHostState: (next: DgHostState) => void
   /** The DeGram locale: signal the open host page in-place and use `&lang=ru|en` on the next load. */
   setLocale: (locale: DgLocale) => Promise<void>
+  /** DeGram's light/dark mode: signal the open host page in-place and use `&theme=light|dark` on the next load. */
+  setTheme: (theme: DgTheme) => Promise<void>
   reload: () => Promise<void>
   /** Blank the view so no tenant page stays painted. */
   reset: () => Promise<void>
@@ -260,9 +273,9 @@ export function dgUrlFor(origin: string, mode: DgMode): string {
   return mode === 'graph' ? `${origin}/#degram` : `${origin}/?host=degram`
 }
 
-/** The host-mode page URL (the whole V2 app); the locale rides in the query so the page renders in it. */
-function hostPageUrl(origin: string, lang: DgLocale | null): string {
-  return lang ? `${dgUrlFor(origin, 'full')}&lang=${lang}` : dgUrlFor(origin, 'full')
+/** The host-mode page URL (the whole V2 app); the locale and the theme ride in the query so the page renders in them. */
+function hostPageUrl(origin: string, lang: DgLocale | null, theme: DgTheme | null = null): string {
+  return `${dgUrlFor(origin, 'full')}${lang ? `&lang=${lang}` : ''}${theme ? `&theme=${theme}` : ''}`
 }
 
 const ABORTED = -3
@@ -295,8 +308,9 @@ export function createDgView(deps: DgViewDeps): DgView {
   const contents = view.webContents
   let state: DgViewState = { page: 'blank', mode: 'graph' }
   let lang: DgLocale | null = null
+  let theme: DgTheme | null = null
   const pageUrl = (): string => {
-    const base = hostPageUrl(origin, lang)
+    const base = hostPageUrl(origin, lang, theme)
     const target = deps.targetPresentation
     return target ? `${base}&dgTarget=${target.mode}&dgGeneration=${target.generation}&dgTargetLocked=${target.locked ? 1 : 0}` : base
   }
@@ -342,6 +356,20 @@ export function createDgView(deps: DgViewDeps): DgView {
     }
     if (hash === '#degram-new-session') {
       deps.onNewSessionRequested?.()
+
+      return
+    }
+
+    const themePick = PAGE_THEME_FRAGMENT.exec(hash)
+
+    if (themePick) {
+      deps.onThemePicked?.(themePick[1] as DgTheme)
+
+      return
+    }
+
+    if (hash === PAGE_OPEN_MODELS) {
+      deps.onModelsRequested?.()
 
       return
     }
@@ -481,7 +509,7 @@ export function createDgView(deps: DgViewDeps): DgView {
     signal: async (fragment: string): Promise<void> => {
       if (
         typeof fragment !== 'string' ||
-        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || HOST_RESTATED_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
+        !(fragment === '#degram-target-refused' || HOST_STATE_FRAGMENT.test(fragment) || HOST_GO_FRAGMENT.test(fragment) || HOST_LANG_FRAGMENT.test(fragment) || HOST_THEME_FRAGMENT.test(fragment) || HOST_INSTALLED_FRAGMENT.test(fragment) || HOST_RESTATED_FRAGMENT.test(fragment) || isHostProjectFragment(fragment))
       ) {
         throw new Error('unknown DG signal')
       }
@@ -509,6 +537,18 @@ export function createDgView(deps: DgViewDeps): DgView {
 
       if (changed && state.page === 'dg' && state.mode === 'full' && loadedBase) {
         await load(`${loadedBase}#degram-lang=${locale}`)
+      }
+    },
+    setTheme: async (next: DgTheme): Promise<void> => {
+      if (next !== 'light' && next !== 'dark') {
+        throw new Error('unknown DG theme')
+      }
+
+      const changed = theme !== next
+      theme = next
+
+      if (changed && state.page === 'dg' && state.mode === 'full' && loadedBase) {
+        await load(`${loadedBase}#degram-theme=${next}`)
       }
     },
     showSignIn,
