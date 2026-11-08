@@ -1421,6 +1421,9 @@ export interface DegramMappingSuggestNameResult {
 }
 export interface DegramMappingStartParams {
   app?: string | null
+  filters?: unknown
+  limit?: number | null
+  after?: number | null
 }
 export interface DegramMappingStartResult {
   status: string
@@ -1432,6 +1435,21 @@ export interface DegramMappingStartResult {
   sessionId?: string | null
   scope?: string | null
   read?: number | null
+  matched?: number | null
+  remaining?: number | null
+  lastElementId?: number | null
+}
+export interface DegramMappingFiltersParams {
+  app?: string | null
+}
+export interface DegramMappingFiltersResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  categories?: unknown
+  views?: unknown
 }
 export interface DegramRestateParams {
   stateId?: string | null
@@ -5221,6 +5239,8 @@ export interface RpcMethods {
   'degram.mapping.answer': { params: DegramMappingAnswerParams; result: DegramMappingSessionResult }
   /** Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt. */
   'degram.mapping.apply': { params: DegramMappingApplyParams; result: DegramMappingApplyResult }
+  /** DG 1303-33 (D-123): the model categories that can hold DG_Class (with counts) and the views a View filter can name, read from the open Revit model through the DG Revit connector. Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE. */
+  'degram.mapping.filters': { params: DegramMappingFiltersParams; result: DegramMappingFiltersResult }
   /** Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements). */
   'degram.mapping.focus': { params: DegramMappingFocusParams; result: DegramMappingFocusResult }
   /** One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND. */
@@ -5712,6 +5732,7 @@ export const RPC_METHODS = [
   'degram.environment.resume',
   'degram.mapping.answer',
   'degram.mapping.apply',
+  'degram.mapping.filters',
   'degram.mapping.focus',
   'degram.mapping.session',
   'degram.mapping.sessions',

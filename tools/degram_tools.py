@@ -10,6 +10,9 @@ Four tools, no parameters that could widen what they read, no write capability:
 * ``degram_project_graph``: graph nodes, relationships and rules of the *bound* project, read with the delegated token.
   No project argument: another project cannot be named.
 
+Two act for the user in the bound project: ``degram_property_check`` (1303-15) and ``degram_mapping`` (1303-33, D-119),
+which starts a mapping session and proposes answers; only the user's confirmation in the chat card commits it.
+
 Every failure is a structured outcome from the closed vocabulary (``spec/degram/OPERATIONAL-OUTCOMES.md``), never free
 text and never a retry. The tools are unavailable outside variant degram (``check_fn``)."""
 
@@ -258,3 +261,146 @@ registry.register(
             "description": "Read the Design Grammar graph (nodes, relationships) and the rules of the current project, "
                            "bounded in size. Read-only; always the user's current project.",
             "parameters": _NO_ARGS})
+
+
+# -- mapping from the chat (DG 1303-33, D-118..D-121) -----------------------------------------------------------
+# The agent starts a session and proposes answers; the chat shows the session as the same mapping card as
+# «Модели → Mapping», and only the user's click on its confirmation commits the batch. No apply action exists.
+
+MAPPING_ACTIONS = ("filters", "sessions", "start", "session", "answer", "undo")
+MAPPING_QUESTION_LIMIT = 60
+MAPPING_INSTRUCTION = ("The chat shows this mapping session as a card with the same questions, class options, "
+                       "«show in the model» and confirmation as Models → Mapping. You may propose answers with "
+                       "action 'answer'; the card marks them as proposed by the agent and the user can undo them. "
+                       "You cannot apply the mapping: ask the user to review the card and press its confirmation, "
+                       "and never say the mapping is applied before the user confirmed it.")
+MAPPING_REMAINING = ("More elements pass the filters than the limit allows: tell the user how many were read and how "
+                     "many remain, and offer to continue; on yes call 'start' again with the same filters and limit "
+                     "and after = lastElementId.")
+
+
+def _session_brief(session: dict[str, Any]) -> dict[str, Any]:
+    """What the agent needs to propose answers; the card reads the full session itself."""
+    mine = set(session.get("agentAnswerIds") or [])
+    questions = [q for q in session.get("questions") or [] if isinstance(q, dict)]
+    brief = {
+        "sessionId": session.get("sessionId"), "label": session.get("label"), "document": session.get("document"),
+        "appliedAt": session.get("appliedAt"), "summary": session.get("summary"),
+        "questions": [{"questionId": q.get("questionId"), "title": q.get("title"), "text": q.get("text"),
+                       "groups": len(q.get("items") or []),
+                       "elements": sum(i.get("count") or 0 for i in q.get("items") or [] if isinstance(i, dict)),
+                       "options": [{"optionId": o.get("optionId"), "label": o.get("label")}
+                                   for o in q.get("options") or [] if isinstance(o, dict)]}
+                      for q in questions[:MAPPING_QUESTION_LIMIT]],
+        "answers": [{"answerId": a.get("answerId"), "questionId": a.get("questionId"), "optionId": a.get("optionId"),
+                     "title": a.get("title"), "proposedByAgent": a.get("answerId") in mine}
+                    for a in session.get("answers") or [] if isinstance(a, dict)],
+    }
+    if len(questions) > MAPPING_QUESTION_LIMIT:
+        brief["questionsNotListed"] = len(questions) - MAPPING_QUESTION_LIMIT
+    return brief
+
+
+def _card(app: Any, session: dict[str, Any] | None, session_id: Any, project: str) -> dict[str, Any]:
+    """What the chat card reads: the session and the project it belongs to (a card of another project stays inert)."""
+    platform = (session or {}).get("platform")
+    return {"app": platform if platform in ("revit", "grasshopper") else (app or "revit"), "sessionId": session_id,
+            "project": project}
+
+
+def _mapping(args: dict, **_kw) -> str:
+    from degram_variant import runtime
+    from degram_variant.dg_client import DgRefused
+    from degram_variant.mapping import latest_answer_id
+
+    args = args or {}
+    action = str(args.get("action") or "")
+    if action not in MAPPING_ACTIONS:
+        return json.dumps({"status": "refused", "code": "BAD_ACTION",
+                           "message": f"action must be one of {', '.join(MAPPING_ACTIONS)}"})
+    app = args.get("app")
+
+    def call() -> dict[str, Any]:
+        rt = runtime.get()
+        mapping = rt.mapping
+        sid = args.get("sessionId")
+        try:
+            if action == "filters":
+                return {"status": "ok", "action": action, **mapping.filter_lists()}
+            if action == "sessions":
+                return {"status": "ok", "action": action, **mapping.sessions(args.get("document"), app)}
+            if action == "start":
+                started = mapping.start(app or "revit", filters=args.get("filters"), limit=args.get("limit"),
+                                        after=args.get("after"))
+                out = {"status": "ok", "action": action, **started}
+                if started.get("sessionId"):
+                    out.update(card=_card(app, None, started["sessionId"], rt.dg.bound_project()),
+                               instruction=MAPPING_INSTRUCTION)
+                if started.get("remaining"):
+                    out["continue"] = MAPPING_REMAINING
+                    if "card" in out and started.get("lastElementId") is not None:
+                        # D-124: the card offers the same continuation as the Models → Mapping sub-tab
+                        out["card"]["next"] = {
+                            "filters": args.get("filters") or {}, "limit": args.get("limit") or 5000,
+                            "after": started["lastElementId"], "read": started.get("read"),
+                            "matched": started.get("matched"), "remaining": started["remaining"]}
+                return out
+            if action == "session":
+                session = mapping.session(sid)
+            elif action == "answer":
+                session = mapping.answer(sid, args.get("questionId"), args.get("optionId"), by_agent=True)
+            else:
+                session = mapping.undo(sid, args.get("answerId"))
+        except ValueError as exc:
+            return {"status": "refused", "code": "BAD_REQUEST", "message": str(exc)}
+        except DgRefused as exc:
+            return {"status": "refused", "code": exc.code, "message": exc.message}
+        out = {"status": "ok", "action": action, "session": _session_brief(session),
+               "card": _card(app, session, sid, rt.dg.bound_project()), "instruction": MAPPING_INSTRUCTION}
+        if action == "answer":
+            out["answerId"] = latest_answer_id(session, args.get("questionId"))
+        return out
+
+    return _outcome_json(call)
+
+
+registry.register(
+    name="degram_mapping", toolset="degram", handler=_mapping, check_fn=_is_degram,
+    schema={"name": "degram_mapping",
+            "description": "Map the elements of the open Revit model or Grasshopper definition to the DG classes of the "
+                           "current project, from this chat. 'start' creates a mapping session. In Revit the elements "
+                           "are chosen by filters, each one narrowing the read: view ('active', a view name or a view "
+                           "id), selection (true: the current Revit selection), categories (BuiltInCategory names such "
+                           "as ['OST_Rooms']); filters {} reads the whole model, no filters reads the selection, else "
+                           "the active view. 'filters' lists the model's categories and views for them. limit (1..5000, "
+                           "default 5000) caps a session; when 'start' answers remaining > 0, offer to continue with "
+                           "after = lastElementId. 'session' reads its questions (one per group of similar "
+                           "elements, with class options) and answers; 'answer' proposes an option for one question; "
+                           "'undo' takes an answer back; 'sessions' lists the sessions of a document. The chat shows "
+                           "the session as a mapping card where the user reviews, shows groups in the model and "
+                           "confirms. There is no way for you to apply the mapping: only the user's confirmation in "
+                           "the card writes DG_Class into the model.",
+            "parameters": {"type": "object", "additionalProperties": False,
+                           "properties": {
+                               "action": {"type": "string", "enum": list(MAPPING_ACTIONS)},
+                               "app": {"type": "string", "enum": ["revit", "grasshopper"],
+                                       "description": "the CAD application (start, sessions); default revit"},
+                               "filters": {"type": "object", "additionalProperties": False,
+                                           "description": "start, Revit only: the filters that are on (intersected)",
+                                           "properties": {
+                                               "view": {"type": ["string", "integer"],
+                                                        "description": "'active', a view name or a view id"},
+                                               "selection": {"type": "boolean"},
+                                               "categories": {"type": "array", "items": {"type": "string"},
+                                                              "maxItems": 200,
+                                                              "description": "BuiltInCategory names (OST_Rooms, ...)"}}},
+                               "limit": {"type": "integer", "minimum": 1, "maximum": 5000,
+                                         "description": "start: elements per session (default 5000)"},
+                               "after": {"type": "integer", "minimum": 0,
+                                         "description": "start: continue after this lastElementId"},
+                               "document": {"type": "string", "description": "sessions: the document name"},
+                               "sessionId": {"type": "string"},
+                               "questionId": {"type": "string", "description": "answer: the question to answer"},
+                               "optionId": {"type": "string", "description": "answer: one of the question's options"},
+                               "answerId": {"type": "string", "description": "undo: the answer to take back"}},
+                           "required": ["action"]}})

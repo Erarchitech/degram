@@ -89,6 +89,8 @@ export interface MappingSession {
   summary: MappingSummary
   questions: MappingQuestion[]
   answers: MappingAnswer[]
+  /** DG 1303-33 (D-121): ids of the current answers the DeGram agent proposed from a chat. */
+  agentAnswerIds: string[]
   /** The background LLM proposal: `pending` while it runs. */
   llmStatus: null | string
 }
@@ -281,7 +283,8 @@ export function parseSession(raw: unknown): MappingSession | null {
 
       return answer ? [answer] : []
     }),
-    llmStatus: asString(asRecord(s.llm)?.status) || null
+    llmStatus: asString(asRecord(s.llm)?.status) || null,
+    agentAnswerIds: asList(s.agentAnswerIds).filter((v): v is string => typeof v === 'string' && Boolean(v))
   }
 }
 
@@ -440,24 +443,84 @@ export interface StartResult {
   /** Revit only: the session the connector just created. */
   sessionId: null | string
   message: null | string
-  /** Revit only: `selection` when only the elements selected in Revit were read (D-48), `view` for the whole view. */
-  scope: null | 'selection' | 'view'
+  /** Revit only: `selection` when only the elements selected in Revit were read (D-48), `view` for the whole view,
+   *  `filters` for a filtered start (DG 1303-33, D-123). */
+  scope: null | 'filters' | 'selection' | 'view'
   /** Revit only: elements sent to DG. */
   read: null | number
+  /** Revit, filtered start (D-124): elements passing the filters, those left beyond the limit, and the ElementId the
+   *  next session continues after. */
+  matched: null | number
+  remaining: null | number
+  lastElementId: null | number
 }
 
-/** Grasshopper keeps its parameterless call; Revit names itself (the connector's `dg_start_mapping`). */
-export async function startMapping(app: BridgeApp = 'grasshopper'): Promise<StartResult> {
-  const raw = asRecord(await call('degram.mapping.start', app === 'revit' ? { app } : {}, START_RPC_TIMEOUT_MS))
+/** DG 1303-33 (D-123, D-124): the Revit mapping filters that are on, the element limit and the continuation. */
+export interface MappingStartOptions {
+  /** `{}` reads the whole model; `view` is `'active'`, a view id, or (from the agent) a view name. */
+  filters: { view?: number | string; selection?: true; categories?: string[] }
+  limit: number
+  after?: number
+}
+
+const count = (value: unknown): null | number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
+
+/** Grasshopper keeps its parameterless call; Revit names itself (the connector's `dg_start_mapping`), with the
+ *  filters, limit and continuation when they are given. */
+export async function startMapping(app: BridgeApp = 'grasshopper', options?: MappingStartOptions): Promise<StartResult> {
+  const params = app === 'revit' ? { app, ...(options ?? {}) } : {}
+  const raw = asRecord(await call('degram.mapping.start', params, START_RPC_TIMEOUT_MS))
   const outcome = outcomeOf(raw)
+  const scope = raw?.scope
 
   return {
     outcome,
     started: !outcome && raw?.started === true,
     sessionId: asString(raw?.sessionId) || null,
     message: asString(raw?.message) || null,
-    scope: raw?.scope === 'selection' || raw?.scope === 'view' ? raw.scope : null,
-    read: typeof raw?.read === 'number' && Number.isInteger(raw.read) && raw.read >= 0 ? raw.read : null
+    scope: scope === 'selection' || scope === 'view' || scope === 'filters' ? scope : null,
+    read: count(raw?.read),
+    matched: count(raw?.matched),
+    remaining: count(raw?.remaining),
+    lastElementId: count(raw?.lastElementId)
+  }
+}
+
+export interface MappingCategoryChoice {
+  name: string
+  label: string
+  count: number
+}
+
+export interface MappingViewChoice {
+  id: number
+  name: string
+  type: string
+}
+
+/** D-123: what the Revit filters offer, read from the open model through the DG Revit connector. */
+export async function readMappingFilters(): Promise<{
+  outcome: null | OutcomeInfo
+  categories: MappingCategoryChoice[]
+  views: MappingViewChoice[]
+}> {
+  const raw = asRecord(await call('degram.mapping.filters', { app: 'revit' }, START_RPC_TIMEOUT_MS))
+
+  return {
+    outcome: outcomeOf(raw),
+    categories: asList(raw?.categories).flatMap(entry => {
+      const c = asRecord(entry)
+      const name = asString(c?.name)
+
+      return name ? [{ name, label: asString(c?.label) || name, count: asCount(c?.count) }] : []
+    }),
+    views: asList(raw?.views).flatMap(entry => {
+      const v = asRecord(entry)
+      const id = count(v?.id)
+
+      return id ? [{ id, name: asString(v?.name) || String(id), type: asString(v?.type) }] : []
+    })
   }
 }
 

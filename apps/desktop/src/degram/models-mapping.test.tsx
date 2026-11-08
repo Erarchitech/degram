@@ -10,6 +10,7 @@ import { $activeGatewayProfile } from '@/store/profile'
 import { stubMenuDomApis } from '@/test/jsdom'
 
 import { resetDocuments } from './documents-store'
+import { resetMappingFiltersForTests } from './mapping-filters'
 import { ModelsPage } from './models-page'
 import { install, makeState, withActions } from './test-harness'
 import { setDegramGatewayForTests } from './use-degram-gateway'
@@ -232,6 +233,7 @@ afterEach(() => {
   cleanup()
   resetDegramStore()
   resetDocuments()
+  resetMappingFiltersForTests()
   setDegramGatewayForTests(null)
   $degramEnabled.set(false)
   $activeGatewayProfile.set('default')
@@ -716,7 +718,7 @@ describe('Mapping sub-tab of a Revit model (1303-13)', () => {
     expect(gw.last('degram.mapping.sessions')).toEqual({ app: 'revit', document: 'Tower.rvt' })
 
     fireEvent.click(within(tab).getByRole('button', { name: 'Start mapping' }))
-    await waitFor(() => expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit' }))
+    await waitFor(() => expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit', filters: {}, limit: 5000 }))
     await within(tab).findByTestId('degram-mapping-progress')
     expect(within(tab).getByText('Signed in to DG in Revit.')).toBeTruthy()
     // With a session the start stays, as «Read the model again» (enabled once the new session ended the follow).
@@ -788,7 +790,7 @@ describe('Mapping sub-tab of a Revit model (1303-13)', () => {
     const lists = gw.count('degram.mapping.sessions')
 
     fireEvent.click(await within(tab).findByRole('button', { name: 'Read the model again' }))
-    await waitFor(() => expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit' }))
+    await waitFor(() => expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit', filters: {}, limit: 5000 }))
     // The follow re-reads the list, which still names the old session first: that must not end the follow.
     await waitFor(() => expect(gw.count('degram.mapping.sessions')).toBe(lists + 1))
     await act(async () => {
@@ -963,5 +965,99 @@ describe('Design State name of a Revit confirmation (DG 1303-31)', () => {
       designStateName: 'Panels mapped again',
       designStateNameSource: 'edited'
     })
+  })
+})
+
+describe('Mapping filters and the element limit (1303-33, D-123, D-124)', () => {
+  const FILTER_LISTS = {
+    status: 'ok',
+    categories: [
+      { name: 'OST_Rooms', label: 'Rooms', count: 224 },
+      { name: 'OST_Doors', label: 'Doors', count: 101 },
+      { name: 'OST_Walls', label: 'Walls', count: 433 }
+    ],
+    views: [{ id: 41, name: 'Level 1', type: 'FloorPlan' }]
+  }
+
+  const revitBackend = (start: Handler) => {
+    let started = false
+
+    return backend({
+      'degram.mapping.sessions': ({ app }) =>
+        app === 'revit'
+          ? { status: 'ok', document: 'tower', sessions: started ? [ROW(revitSession())] : [], signedIn: true }
+          : { status: 'ok', document: 'tower-facade', sessions: [], signedIn: true },
+      'degram.mapping.session': () => ({ status: 'ok', session: revitSession() }),
+      'degram.mapping.filters': () => FILTER_LISTS,
+      'degram.mapping.start': params => {
+        started = true
+
+        return start(params)
+      }
+    })
+  }
+
+  it('turns the filters into the start: on by a click, intersected, with the chosen categories listed', async () => {
+    await ready()
+    const gw = fakeGateway(revitBackend(() => ({ status: 'ok', started: true, sessionId: REVIT_SID })))
+    const tab = await openRevit()
+    const filters = within(tab).getByTestId('degram-mapping-filters')
+
+    expect(within(filters).getByTestId('degram-mapping-whole-model').textContent).toContain('at most 5000')
+
+    fireEvent.click(within(filters).getByRole('button', { name: 'Selection' }))
+    fireEvent.click(within(filters).getByRole('button', { name: 'Categories' }))
+    fireEvent.click(within(filters).getByTestId('degram-mapping-categories-picker'))
+    const picker = () => within(window.document.querySelector('[data-slot="popover-content"]') as HTMLElement)
+
+    await waitFor(() => expect(picker().getAllByRole('option')).toHaveLength(3))
+    fireEvent.change(picker().getByRole('combobox'), { target: { value: 'Room' } })
+    await waitFor(() => expect(picker().getAllByRole('option').map(o => o.textContent)).toEqual(['Rooms224']))
+    fireEvent.click(picker().getByRole('option', { name: /Rooms/ }))
+    fireEvent.change(picker().getByRole('combobox'), { target: { value: 'Door' } })
+    await waitFor(() => expect(picker().getAllByRole('option').map(o => o.textContent)).toEqual(['Doors101']))
+    fireEvent.click(picker().getByRole('option', { name: /Doors/ }))
+    expect(within(filters).getByTestId('degram-mapping-categories-chosen').textContent).toBe('Rooms, Doors')
+    expect(within(filters).queryByTestId('degram-mapping-whole-model')).toBeNull()
+    fireEvent.change(within(filters).getByTestId('degram-mapping-limit'), { target: { value: '300' } })
+
+    fireEvent.click(within(tab).getByRole('button', { name: 'Start mapping' }))
+    await waitFor(() =>
+      expect(gw.last('degram.mapping.start')).toEqual({
+        app: 'revit',
+        filters: { selection: true, categories: ['OST_Rooms', 'OST_Doors'] },
+        limit: 300
+      })
+    )
+  })
+
+  it('warns when more elements pass than the limit and continues after the last one read', async () => {
+    await ready()
+
+    const gw = fakeGateway(
+      revitBackend(({ after }) =>
+        after
+          ? { status: 'ok', started: true, sessionId: REVIT_SID, scope: 'filters', read: 100, matched: 250, remaining: 50, lastElementId: 900 }
+          : { status: 'ok', started: true, sessionId: REVIT_SID, scope: 'filters', read: 100, matched: 250, remaining: 150, lastElementId: 700 }
+      )
+    )
+
+    const tab = await openRevit()
+
+    fireEvent.change(within(tab).getByTestId('degram-mapping-limit'), { target: { value: '100' } })
+    fireEvent.click(within(tab).getByRole('button', { name: 'Start mapping' }))
+    const warning = await within(tab).findByTestId('degram-mapping-over-limit')
+
+    await waitFor(() =>
+      expect(
+        (within(warning).getByRole('button', { name: 'Continue with the remaining 150' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    )
+    expect(warning.textContent).toContain('250 elements pass the filters; this session maps the first 100, 150 remain.')
+    fireEvent.click(within(warning).getByRole('button', { name: 'Continue with the remaining 150' }))
+    await waitFor(() =>
+      expect(gw.last('degram.mapping.start')).toEqual({ app: 'revit', filters: {}, limit: 100, after: 700 })
+    )
+    expect((await within(tab).findByTestId('degram-mapping-over-limit')).textContent).toContain('50 remain')
   })
 })

@@ -25,10 +25,18 @@ export function isFileEditTool(toolName: string): boolean {
 //     render their own markup: a question the user has to answer, an image
 //     they asked for, the several agents a fan-out is running.
 //   - `manage_connections` and `manage_catalog` are consent cards; their controls must stay visible.
+//   - `degram_mapping` (DeGram) is the mapping card the user answers and confirms in.
 //
 // Everything else is ephemeral activity — reads, searches, commands — which is
 // what a run summarizes and what the live ticker cycles through.
-const CARD_TOOL_NAMES = ['clarify', 'delegate_task', 'image_generate', 'manage_catalog', 'manage_connections'] as const
+const CARD_TOOL_NAMES = [
+  'clarify',
+  'degram_mapping',
+  'delegate_task',
+  'image_generate',
+  'manage_catalog',
+  'manage_connections'
+] as const
 
 export type CardToolName = (typeof CARD_TOOL_NAMES)[number]
 

@@ -232,13 +232,31 @@ class DegramMappingApplyResult(DegramOutcomeFields):
 
 class DegramMappingStartParams(Params):
     app: str | None = None  # grasshopper (default): CONNECTOR start_mapping; revit: the connector's dg_start_mapping
+    # revit only (DG 1303-33, D-123, D-124): the filters that are on ({view?: "active" | name | id, selection?: true,
+    # categories?: [OST_*]}, intersected; {} reads the whole model; absent: the selection, else the active view), the
+    # element limit 1..5000 and the continuation after an over-limit start (the lastElementId it answered)
+    filters: JsonValue = None
+    limit: int | None = None
+    after: int | None = None
 
 
 class DegramMappingStartResult(DegramOutcomeFields):
     started: bool | None = None
     sessionId: str | None = None  # revit only: the session the connector just created
-    scope: str | None = None  # revit only: "selection" (only the selected elements were read) or "view"
+    scope: str | None = None  # revit only: "selection" (only the selected elements were read), "view" or "filters"
     read: int | None = None  # revit only: elements sent to DG
+    matched: int | None = None  # revit, filters: elements that pass the filters
+    remaining: int | None = None  # revit, filters: elements left beyond the limit (continue with after)
+    lastElementId: int | None = None  # revit, filters: the ElementId to continue after
+
+
+class DegramMappingFiltersParams(Params):
+    app: str | None = None  # revit (the only application with mapping filters)
+
+
+class DegramMappingFiltersResult(DegramOutcomeFields):
+    categories: JsonValue = None  # [{name: OST_*, label, count}] model categories that can hold DG_Class
+    views: JsonValue = None  # [{id, name, type}] views a View filter can name
 
 
 class DegramMappingFocusParams(Params):
@@ -291,6 +309,10 @@ method("degram.mapping.start", params=DegramMappingStartParams, result=DegramMap
        doc="Create a mapping session from the CAD model now: CONNECTOR reads the Grasshopper canvas (bridge "
            "start_mapping), or with app revit the DG Revit connector reads the active model (dg_start_mapping). "
            "Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.")
+method("degram.mapping.filters", params=DegramMappingFiltersParams, result=DegramMappingFiltersResult,
+       doc="DG 1303-33 (D-123): the model categories that can hold DG_Class (with counts) and the views a View filter "
+           "can name, read from the open Revit model through the DG Revit connector. Outcomes: BRIDGE_OFF, BUSY, "
+           "EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.")
 method("degram.restate", params=DegramRestateParams, result=DegramRestateResult,
        doc="Restate a Design State of the Model Viewer (1303-29): DG answers the state's recorded placements or "
            "ParamState; Revit gets them through the DG Revit connector (dg_restate, one transaction, moves and "

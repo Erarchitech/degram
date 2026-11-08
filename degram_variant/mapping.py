@@ -17,7 +17,11 @@ row without ``document`` (an older row) is matched by its label before « · ».
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .cancel import CancelToken
@@ -40,6 +44,16 @@ MAX_SHOW_ELEMENTS = 5000
 # The connector status rides on the session list: a blocked Revit must not hold the list past the renderer's RPC
 # timeout, so the status read gives up early (BUSY) and the list is answered without it.
 REVIT_STATUS_DEADLINE_S = 10.0
+# DG 1303-33 (D-123, D-124): the Revit mapping filters (View, Selection, Categories, intersected), the element limit
+# per session (the stand engine's cap) and the continuation after an over-limit start.
+MAX_FILTER_CATEGORIES = 200
+MAX_START_LIMIT = 5000
+_CATEGORY_NAME = re.compile(r"^OST_[A-Za-z0-9_]+$")
+_START_SCOPES = ("selection", "view", "filters")
+_START_COUNTS = ("read", "matched", "remaining", "lastElementId")
+# DG 1303-33 (D-121): the answer ids the agent proposed, per project and session, in the scope profile home.
+AGENT_ANSWERS_FILE = "degram-agent-answers.json"
+MAX_AGENT_SESSIONS = 200
 
 
 def document_key(name: Any) -> str:
@@ -73,6 +87,53 @@ def _group_ids(value: Any) -> list[str] | None:
     if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
         raise ValueError("groupIds must be a list of group ids")
     return list(value)
+
+
+def _start_arguments(filters: Any, limit: Any, after: Any) -> dict[str, Any]:
+    """D-123/D-124: the dg_start_mapping arguments of a filtered Revit start; ``{}`` keeps the connector's default
+    (the selection, else the active view). ``filters`` = {view?: "active" | name | id, selection?: bool,
+    categories?: [OST_*]}; ``{}`` reads the whole model."""
+    if filters is None:
+        if limit is not None or after is not None:
+            raise ValueError("limit and after go with filters ({} reads the whole model)")
+        return {}
+    if not isinstance(filters, dict) or set(filters) - {"view", "selection", "categories"}:
+        raise ValueError("filters may hold only view, selection and categories")
+    clean: dict[str, Any] = {}
+    view = filters.get("view")
+    if view is not None:
+        if isinstance(view, bool) or not (view == "active" or (isinstance(view, int) and view > 0)
+                                          or (isinstance(view, str) and view.strip())):
+            raise ValueError('filters.view must be "active", a view name or a view id')
+        clean["view"] = view.strip() if isinstance(view, str) else view
+    if filters.get("selection") not in (None, False, True):
+        raise ValueError("filters.selection must be true or false")
+    if filters.get("selection") is True:
+        clean["selection"] = True
+    categories = filters.get("categories")
+    if categories is not None:
+        if not isinstance(categories, list) or not categories:
+            raise ValueError('filters.categories must be a non-empty list such as ["OST_Rooms"]')
+        names: list[str] = []
+        for item in categories:
+            text = item.strip() if isinstance(item, str) else ""
+            if not _CATEGORY_NAME.match(text):
+                raise ValueError("every category must be a Revit BuiltInCategory name such as OST_Rooms")
+            if text not in names:
+                names.append(text)
+        if len(names) > MAX_FILTER_CATEGORIES:
+            raise ValueError(f"filters.categories names more than {MAX_FILTER_CATEGORIES} categories")
+        clean["categories"] = names
+    arguments: dict[str, Any] = {"filters": clean}
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_START_LIMIT:
+            raise ValueError(f"limit must be a whole number from 1 to {MAX_START_LIMIT}")
+        arguments["limit"] = limit
+    if after is not None:
+        if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+            raise ValueError("after must be the lastElementId of the previous start")
+        arguments["after"] = after
+    return arguments
 
 
 def _app(value: Any, default: str | None) -> str | None:
@@ -123,6 +184,68 @@ def _count(value: Any) -> int:
     return value if isinstance(value, int) and value > 0 else 0
 
 
+def latest_answer_id(session: dict[str, Any], question_id: str) -> str | None:
+    """The id of the newest answer to ``question_id`` in a recomputed session (the one just posted)."""
+    rows = [a for a in session.get("answers") or [] if isinstance(a, dict) and a.get("questionId") == question_id
+            and isinstance(a.get("answerId"), str)]
+    return max(rows, key=lambda a: str(a.get("decidedAt") or ""))["answerId"] if rows else None
+
+
+class AgentAnswers:
+    """D-121: which answers the agent proposed. DG records every answer under the user's principal, so DeGram keeps
+    the agent's own ids, per project and session, in the scope profile home (resolved per call); the mark survives
+    a restart. Bounded to the newest MAX_AGENT_SESSIONS sessions."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _path() -> Path:
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home() / AGENT_ANSWERS_FILE
+
+    def _read(self) -> dict[str, list[str]]:
+        try:
+            data = json.loads(self._path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {k: [i for i in v if isinstance(i, str)] for k, v in data.items()
+                if isinstance(k, str) and isinstance(v, list)}
+
+    def _write(self, data: dict[str, list[str]]) -> None:
+        path = self._path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+
+    @staticmethod
+    def _key(project: str, session_id: str) -> str:
+        return json.dumps([project, session_id])
+
+    def ids(self, project: str, session_id: str) -> set[str]:
+        with self._lock:
+            return set(self._read().get(self._key(project, session_id), []))
+
+    def add(self, project: str, session_id: str, answer_id: str) -> None:
+        with self._lock:
+            data = self._read()
+            key = self._key(project, session_id)
+            data[key] = [i for i in data.pop(key, []) if i != answer_id] + [answer_id]  # newest session last
+            self._write(dict(list(data.items())[-MAX_AGENT_SESSIONS:]))
+
+    def drop(self, project: str, session_id: str, answer_id: str) -> None:
+        with self._lock:
+            data = self._read()
+            key = self._key(project, session_id)
+            if answer_id in data.get(key, []):
+                data[key] = [i for i in data[key] if i != answer_id]
+                self._write(data)
+
+
 class MappingService:
     def __init__(self, dg: DgClient, gh: GhBridgeClient, revit: RevitBridgeClient | None = None) -> None:
         if revit is None:
@@ -132,6 +255,7 @@ class MappingService:
         self._dg = dg
         self._gh = gh
         self._revit = revit
+        self._agent = AgentAnswers()
 
     # -- DG ------------------------------------------------------------------------------------------
     def sessions(self, document: Any = None, app: Any = None, cancel: CancelToken | None = None) -> dict[str, Any]:
@@ -164,17 +288,30 @@ class MappingService:
         return out
 
     def session(self, session_id: Any, cancel: CancelToken | None = None) -> dict[str, Any]:
-        return panel_session(self._dg.get_mapping_session(_require_id(session_id, "sessionId"), cancel))
+        return self._marked(panel_session(self._dg.get_mapping_session(_require_id(session_id, "sessionId"), cancel)))
 
     def answer(self, session_id: Any, question_id: Any, option_id: Any, group_ids: Any = None,
-               cancel: CancelToken | None = None) -> dict[str, Any]:
-        return panel_session(self._dg.post_mapping_decision(
+               cancel: CancelToken | None = None, by_agent: bool = False) -> dict[str, Any]:
+        """Post one answer; ``by_agent`` (the degram_mapping tool) records it as proposed by the agent (D-121)."""
+        session = panel_session(self._dg.post_mapping_decision(
             _require_id(session_id, "sessionId"), _require_id(question_id, "questionId"),
             _require_id(option_id, "optionId"), _group_ids(group_ids), cancel))
+        if by_agent and (answer_id := latest_answer_id(session, question_id)):
+            self._agent.add(self._dg.bound_project(), session_id, answer_id)
+        return self._marked(session)
 
     def undo(self, session_id: Any, answer_id: Any, cancel: CancelToken | None = None) -> dict[str, Any]:
-        return panel_session(self._dg.undo_mapping_answer(
+        session = panel_session(self._dg.undo_mapping_answer(
             _require_id(session_id, "sessionId"), _require_id(answer_id, "answerId"), cancel))
+        self._agent.drop(self._dg.bound_project(), session_id, answer_id)
+        return self._marked(session)
+
+    def _marked(self, session: dict[str, Any]) -> dict[str, Any]:
+        """D-121: ``agentAnswerIds`` = the session's current answers the agent proposed."""
+        current = {a.get("answerId") for a in session.get("answers") or [] if isinstance(a, dict)}
+        sid = str(session.get("sessionId") or "")
+        mine = self._agent.ids(self._dg.bound_project(), sid) if sid else set()
+        return {**session, "agentAnswerIds": sorted(i for i in mine if i in current)}
 
     def apply(self, session_id: Any, request_id: Any, revision: Any, answer_ids: Any,
               cancel: CancelToken | None = None, design_state_name: Any = None,
@@ -206,26 +343,42 @@ class MappingService:
                                                   cancel)
 
     # -- CAD side: start and show ---------------------------------------------------------------------
-    def start(self, app: Any = "grasshopper", cancel: CancelToken | None = None) -> dict[str, Any]:
+    def start(self, app: Any = "grasshopper", cancel: CancelToken | None = None, filters: Any = None,
+              limit: Any = None, after: Any = None) -> dict[str, Any]:
         """Create a session from the CAD model now: CONNECTOR reads the canvas (``start_mapping``), or the DG Revit
-        connector reads the active model's scope (``dg_start_mapping``, which also answers the new ``sessionId``)."""
+        connector reads the active model (``dg_start_mapping``, which also answers the new ``sessionId``): its
+        default scope, or the filters that are on with the limit and the continuation (D-123, D-124)."""
+        arguments = _start_arguments(filters, limit, after)
         if _app(app, "grasshopper") == "revit":
-            reply = self._revit.call("dg_start_mapping", {}, cancel=cancel)
+            reply = self._revit.call("dg_start_mapping", arguments, cancel=cancel)
             session_id = reply.get("sessionId")
             # scope "selection": only the elements selected in Revit were read (D-48); DeGram warns about it (F-10)
             result = {"started": reply.get("started") is True,
                       "sessionId": session_id if isinstance(session_id, str) and session_id else None,
                       "message": str(reply.get("message") or "") or None}
-            if reply.get("scope") in ("selection", "view"):
+            if reply.get("scope") in _START_SCOPES:
                 result["scope"] = reply["scope"]
-            read = reply.get("read")
-            if isinstance(read, int) and not isinstance(read, bool) and read >= 0:
-                result["read"] = read
+            for key in _START_COUNTS:
+                value = reply.get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    result[key] = value
             return result
+        if arguments:
+            raise ValueError("mapping filters apply to a Revit model only")
         reply = self._gh.call("start_mapping", {}, cancel=cancel)
         if not isinstance(reply, dict):
             raise BridgeError(SETUP_INCOMPLETE, "BRIDGE_PROTOCOL", "start_mapping returned no result.")
         return {"started": reply.get("started") is True, "message": str(reply.get("message") or "") or None}
+
+    def filter_lists(self, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """D-123: what the Revit filters offer: the model categories that can hold DG_Class (with counts) and the views
+        a View filter can name."""
+        categories = self._revit.call("dg_list_mapping_categories", {}, cancel=cancel)
+        views = self._revit.call("dg_list_mapping_views", {}, cancel=cancel)
+        return {"categories": [{k: c.get(k) for k in ("name", "label", "count")}
+                               for c in (categories or {}).get("categories") or [] if isinstance(c, dict)],
+                "views": [{k: v.get(k) for k in ("id", "name", "type")}
+                          for v in (views or {}).get("views") or [] if isinstance(v, dict)]}
 
     def focus(self, component_id: Any = None, app: Any = "grasshopper", session_id: Any = None, item_id: Any = None,
               cancel: CancelToken | None = None) -> dict[str, Any]:

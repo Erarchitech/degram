@@ -1015,6 +1015,24 @@
       }
     },
     {
+      "name": "degram.mapping.filters",
+      "summary": "DG 1303-33 (D-123): the model categories that can hold DG_Class (with counts) and the views a View filter can name, read from the open Revit model through the DG Revit connector. Outcomes: BRIDGE_OFF, BUSY, EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingFiltersParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingFiltersResult"
+        }
+      }
+    },
+    {
       "name": "degram.mapping.focus",
       "summary": "Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements).",
       "params": [
@@ -13524,6 +13542,95 @@
         "title": "DegramMappingApplyResult",
         "type": "object"
       },
+      "DegramMappingFiltersParams": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "App"
+          }
+        },
+        "title": "DegramMappingFiltersParams",
+        "type": "object"
+      },
+      "DegramMappingFiltersResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "categories": {
+            "default": null,
+            "title": "Categories"
+          },
+          "views": {
+            "default": null,
+            "title": "Views"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingFiltersResult",
+        "type": "object"
+      },
       "DegramMappingFocusParams": {
         "additionalProperties": false,
         "properties": {
@@ -13967,6 +14074,34 @@
             ],
             "default": null,
             "title": "App"
+          },
+          "filters": {
+            "default": null,
+            "title": "Filters"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "After"
           }
         },
         "title": "DegramMappingStartParams",
@@ -14074,6 +14209,42 @@
             ],
             "default": null,
             "title": "Read"
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Matched"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Remaining"
+          },
+          "lastElementId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lastelementid"
           }
         },
         "required": [

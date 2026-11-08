@@ -145,6 +145,34 @@ export interface DegramCopy {
     details: string
     undo: string
     undoUnavailable: string
+    /** DG 1303-33 (D-121): the mark on an answer the DeGram agent proposed. */
+    proposedByAgent: string
+    /** DG 1303-33 (D-123, D-124): the Revit mapping filters and the element limit. */
+    filters: {
+      title: string
+      view: string
+      viewActive: string
+      viewSearch: string
+      selection: string
+      selectionHint: string
+      categories: string
+      categoriesSearch: string
+      categoriesPick: string
+      noMatch: string
+      off: string
+      loading: string
+      limit: string
+      wholeModel: (limit: number) => string
+      overLimit: (read: number, matched: number, remaining: number) => string
+      continue: (remaining: number) => string
+      continueAfterConfirm: string
+    }
+    /** DG 1303-33 (D-118): the mapping card a degram_mapping call shows in the chat. */
+    chatCard: {
+      title: string
+      reading: string
+      otherProject: (project: string) => string
+    }
     sending: string
     undone: string
     noSession: string
@@ -402,6 +430,32 @@ export const degramEn: DegramCopy = {
     details: 'Details',
     undo: 'Undo decision',
     undoUnavailable: 'The session is applied — undo is not available',
+    proposedByAgent: 'proposed by the agent',
+    filters: {
+      title: 'Elements of the mapping',
+      view: 'View',
+      viewActive: 'Active view',
+      viewSearch: 'Find a view',
+      selection: 'Selection',
+      selectionHint: 'the current Revit selection',
+      categories: 'Categories',
+      categoriesSearch: 'Find a category',
+      categoriesPick: 'choose categories',
+      noMatch: 'Nothing found',
+      off: 'off',
+      loading: 'Reading the model',
+      limit: 'Element limit',
+      wholeModel: limit => `No filter is on: the whole model is mapped, at most ${limit} elements.`,
+      overLimit: (read, matched, remaining) =>
+        `${matched} elements pass the filters; this session maps the first ${read}, ${remaining} remain.`,
+      continue: remaining => `Continue with the remaining ${remaining}`,
+      continueAfterConfirm: 'Confirm or undo the answers of this session first: a new session replaces it.'
+    },
+    chatCard: {
+      title: 'Mapping',
+      reading: 'Reading the mapping session',
+      otherProject: project => `This mapping belongs to the project ${project}; open that project to review it.`
+    },
     sending: 'Sending the answer',
     undone: 'Decision undone',
     noSession: 'Mapping has not been run for this model yet.',
@@ -677,6 +731,32 @@ export const degramRu: DegramCopy = {
     details: 'Подробнее',
     undo: 'Отменить решение',
     undoUnavailable: 'Сессия применена — отмена недоступна',
+    proposedByAgent: 'предложено агентом',
+    filters: {
+      title: 'Элементы меппинга',
+      view: 'Вид',
+      viewActive: 'Активный вид',
+      viewSearch: 'Найти вид',
+      selection: 'Выделение',
+      selectionHint: 'текущее выделение в Revit',
+      categories: 'Категории',
+      categoriesSearch: 'Найти категорию',
+      categoriesPick: 'выберите категории',
+      noMatch: 'Ничего не найдено',
+      off: 'выключен',
+      loading: 'Чтение модели',
+      limit: 'Лимит элементов',
+      wholeModel: limit => `Фильтры не включены: меппинг всей модели, не больше ${limit} элементов.`,
+      overLimit: (read, matched, remaining) =>
+        `Под фильтры попадает ${matched} элементов; в эту сессию вошли первые ${read}, осталось ${remaining}.`,
+      continue: remaining => `Продолжить с оставшимися (${remaining})`,
+      continueAfterConfirm: 'Сначала подтвердите или отмените ответы этой сессии: новая сессия заменит её.'
+    },
+    chatCard: {
+      title: 'Меппинг',
+      reading: 'Чтение сессии меппинга',
+      otherProject: project => `Этот меппинг относится к проекту ${project}; откройте этот проект, чтобы его просмотреть.`
+    },
     sending: 'Отправка ответа',
     undone: 'Решение отменено',
     noSession: 'Меппинг для этой модели ещё не запускался.',

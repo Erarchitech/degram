@@ -392,7 +392,15 @@ def _(rid, params: dict) -> dict:
 
 @method("degram.mapping.start")
 def _(rid, params: dict) -> dict:
-    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(app=params.get("app"), cancel=t), params)
+    return _mapping_call(rid, "degram.mapping.start", lambda m, t: m.start(
+        app=params.get("app"), cancel=t, filters=params.get("filters"), limit=params.get("limit"),
+        after=params.get("after")), params)
+
+
+@method("degram.mapping.filters")
+def _(rid, params: dict) -> dict:
+    # 1303-33 (D-123): the model categories that can hold DG_Class and the views, for the Revit mapping filters
+    return _mapping_call(rid, "degram.mapping.filters", lambda m, t: m.filter_lists(t), params)
 
 
 @method("degram.mapping.focus")

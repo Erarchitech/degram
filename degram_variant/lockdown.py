@@ -40,7 +40,9 @@ class DegramLockedError(Exception):
 DEGRAM_TOOL_NAMES = frozenset({
     "degram_project_graph", "degram_document_snapshot", "degram_list_documents", "degram_bridge_status",
     # 1303-15 (owner 2026-10-20: "DeGram itself activates the scripts"): generate / run / clear the property check.
-    "degram_property_check"})
+    "degram_property_check",
+    # 1303-33 (D-119): start a mapping and propose answers from the chat; the user confirms in the card.
+    "degram_mapping"})
 # Revit is not an allowlist any more (D-45, owner decision 2026-10-18): DeGram runs the DG Revit connector,
 # which registers every upstream tool, writes included (parameter edits, element creation and deletion,
 # colour overrides, code execution). The rule is the server prefix; the 1301 read list below stays as the
@@ -243,6 +245,8 @@ ALLOWED_RPC_METHODS = frozenset({
     # Mapping: explicit user intent is forwarded to DG, whose principal policy remains authoritative.
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
     "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus", "degram.mapping.suggestName",
+    # 1303-33 (D-123): the categories and views the Revit mapping filters offer
+    "degram.mapping.filters",
     # 1303-29 (D-97): Restate from the Model Viewer
     "degram.restate",
 })

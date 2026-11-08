@@ -75,6 +75,10 @@ class DgClient:
     def __init__(self, store: DegramCredentials | None = None) -> None:
         self._store = store or _credentials
 
+    def bound_project(self) -> str:
+        """The project of the delegated credential (never a parameter)."""
+        return str(self._scope()[0].project)
+
     def _scope(self) -> tuple[Any, str]:
         try:
             return self._store.require_info(), self._store.api_key_provider()

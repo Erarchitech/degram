@@ -205,3 +205,60 @@ export function useMappingSession(app: string, document: string, open: boolean, 
     following: stateKey === key && following
   }
 }
+
+/**
+ * DG 1303-33 (D-118): one session by id, for the mapping card a degram_mapping call shows in the chat. Read on mount
+ * and on a scope change, polled every MAPPING_POLL_MS while it can still change on its own; an answer or undo adopts
+ * the recomputed session over any read in flight, as in the sub-tab.
+ */
+export function useMappingSessionById(sessionId: string, scopeKey: string) {
+  const [state, setState] = useState<MappingPanelState>({ ...INITIAL, loading: true })
+  const generation = useRef(0)
+
+  const read = useCallback(async (): Promise<void> => {
+    const gen = ++generation.current
+    const stamp = environmentStamp()
+    const current = () => gen === generation.current && isCurrentEnvironment(stamp)
+
+    try {
+      const result = await readMappingSession(sessionId)
+
+      if (current()) {
+        setState(s => ({
+          ...s,
+          loading: false,
+          loaded: true,
+          outcome: result.outcome,
+          session: result.session ?? s.session
+        }))
+      }
+    } catch (error) {
+      if (current()) {
+        setState(s => ({ ...s, loading: false, loaded: true, outcome: failure(error) }))
+      }
+    }
+  }, [sessionId])
+
+  useEffect(() => {
+    void read()
+  }, [read, scopeKey])
+
+  useEffect(() => {
+    if (!needsPolling(state.session, false)) {
+      return
+    }
+
+    const timer = setTimeout(() => void read(), MAPPING_POLL_MS)
+
+    return () => clearTimeout(timer)
+  }, [state, read])
+
+  const adopt = useCallback((session: MappingSession) => {
+    generation.current++
+    setState(s => ({ ...s, loading: false, loaded: true, outcome: null, session }))
+  }, [])
+
+  const reload = useCallback(() => void read(), [read])
+
+  return { state, adopt, reload }
+}
