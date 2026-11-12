@@ -6,7 +6,22 @@
 // a request DG refuses for what it is (applied session, answer already undone, stale question) is a JSON-RPC error whose
 // `data.code` is DG's code, surfaced as `MappingRefusal`.
 
-import { type BridgeApp, type OutcomeInfo, outcomeOf, request } from './use-degram-gateway'
+import type {
+  AnswerTuple,
+  CommitSpec,
+  MappingIntentResult,
+  MappingIntentStatusResult
+} from '../../electron/degram/mapping-intent'
+
+import { type Line, safeDefinitionScheme } from './definition-scheme'
+import {
+  type BridgeApp,
+  type OutcomeInfo,
+  outcomeOf,
+  readMappingIntentStatus,
+  request,
+  runMappingIntent
+} from './use-degram-gateway'
 
 export const MAPPING_STATES = ['confirmed', 'auto', 'suggested', 'ambiguous', 'unmapped'] as const
 
@@ -75,9 +90,236 @@ export interface MappingBatch {
   answerIds: string[]
   committedAt: string
   delivery: 'queued' | 'written' | 'failed' | 'unknown'
+  snapshot?: { status: 'pending' | 'published' | 'failed' | 'skipped' | 'unknown'; stateId: string; reason: string } | null
+}
+
+export interface AdvancedDefinition {
+  definitionId: string
+  classIri: string
+  revision: number
+  mode: string
+  modeRevision: number
+  head: { version: number; kind: string; text: string; proposedBy: string; source: string } | null
+  effective: { version: number; kind: string; text: string } | null
+  modeProposal: string | null
+  agentProposed: boolean
+}
+
+export interface AdvancedBinding {
+  definitionId: string
+  revision: number
+  resultDefinitionVersion: number
+  resultHash: string
+  resultStatus: string
+  change: string
+  confirmation: string
+  delivery: string
+  approvedVersion: number | null
+  eligible: boolean
+  profileOffer: { selector: Record<string, string>; selectorHash: string; matchedCount: number; capturedCount: number; countState: 'unknown'; futureScope: string } | null
+  reasons: string[]
+  display: { message: string; question: string; code: string; memberIds: string[]; inputIds: string[]; scheme: { lines: Line[] } | null }
+}
+
+export interface AdvancedState {
+  revision: string
+  definitions: AdvancedDefinition[]
+  bindings: AdvancedBinding[]
+  pending: { answerId: string; definitionId: string; valid: boolean; action: string; reasons: string[] }[]
+  model: { document: string; modelKey: string }
+  complete: boolean
+  commitHash: string
+  commitCounts: { upserts: number; deletes: number; direct: number; ordinary: number } | null
+  operations: { definitionId: string; definitionVersion: number | null; classIri: string; instanceKey: string; action: string; nativeId: string; reason: string; uniqueIds: string[] }[]
+  affectedModels: { definitionId: string; modelKey: string; document: string }[]
+  confirmationComplete: boolean
+  ordinaryRows: { nativeId: string; roles: string[]; clear: boolean; kind: string; name: string; propertyIri: string; stream: string }[]
+  snapshotState: string
+}
+
+/** Closed display projection: do not let raw session keys become renderer state or HTML. Missing eligibility is
+ * unknown, never success. Only the bounded public display projection is retained, never raw native geometry. */
+function parseAdvanced(raw: unknown): AdvancedState | null {
+  const a = asRecord(raw)
+
+  if (!a) {
+    return null
+  }
+
+  const strings = (v: unknown) => asList(v).filter((s): s is string => typeof s === 'string').slice(0, 100)
+
+  const version = (v: unknown) => {
+    const r = asRecord(v)
+
+    return r && Number.isSafeInteger(r.version) && (r.version as number) >= 1 ? { version: asCount(r.version), kind: asString(r.kind), text: asString(r.text).slice(0, 16000),
+      proposedBy: asString(r.proposedBy), source: asString(r.source) } : null
+  }
+
+  const commit = asRecord(a.commit)
+  const operationList = commit?.operations
+  const affected = a.affectedModels
+  const ordinary = asRecord(commit?.ordinaryRows)
+  const boundedText = (value: unknown, max = 512): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= max
+
+  const uniqueTexts = (value: unknown, maxItems: number, maxLength = 512): value is string[] =>
+    Array.isArray(value) && value.length <= maxItems && value.every(v => boundedText(v, maxLength)) && new Set(value).size === value.length
+
+  const exactOrdinary = Boolean(ordinary && ['elements', 'parameters', 'measures'].every(kind => {
+    const rows = ordinary[kind]
+
+    if (!Array.isArray(rows) || rows.length > 5000) {
+      return false
+    }
+
+    const ids = new Set<string>()
+
+    return rows.every(raw => {
+      const row = asRecord(raw)
+
+      if (!row || !boundedText(row.nativeId, 200) || ids.has(row.nativeId)) {
+        return false
+      }
+
+      ids.add(row.nativeId)
+
+      if (row.stream !== undefined && row.stream !== null && !boundedText(row.stream)) {
+        return false
+      }
+
+      if (kind === 'elements') {
+        return uniqueTexts(row.roles, 100) && (row.clear === undefined || typeof row.clear === 'boolean') &&
+          (row.clear === true ? row.roles.length === 0 : row.roles.length > 0)
+      }
+
+      return boundedText(row.name) && (kind !== 'measures' || boundedText(row.propertyIri))
+    })
+  }))
+
+  const exactOperations = Array.isArray(operationList) && operationList.length <= 1500 && operationList.every(raw => {
+    const op = asRecord(raw)
+
+    if (!op || !boundedText(op.definitionId, 200)) {
+      return false
+    }
+
+    if (op.action === 'direct') {
+      return boundedText(op.classIri) && uniqueTexts(op.uniqueIds, 500, 200) && op.uniqueIds.length > 0
+    }
+
+    if (!boundedText(op.instanceKey)) {
+      return false
+    }
+
+    if (op.action === 'delete') {
+      return boundedText(op.nativeId, 200) && ['skip', 'stale'].includes(asString(op.reason))
+    }
+
+    return ['create', 'update'].includes(asString(op.action)) && boundedText(op.classIri) &&
+      Number.isSafeInteger(op.definitionVersion) && (op.definitionVersion as number) >= 1 &&
+      (op.action === 'create' ? op.existing === null : boundedText(op.existing, 200))
+  })
+
+  const exactAffected = Array.isArray(affected) && affected.length <= 500 && affected.every(raw => {
+    const model = asRecord(raw)
+
+    return model && ['definitionId', 'modelKey', 'document'].every(k => boundedText(model[k]))
+  })
+
+  // Never enable a write from a sliced definition/binding/pending list. Old or oversized contracts stay read-only.
+  const completeLists = ['definitions', 'bindings', 'pending'].every(k => {
+    const rows = a[k]
+
+    if (!Array.isArray(rows) || rows.length > 500) {
+      return false
+    }
+
+    const identities = new Set<string>()
+
+    return rows.every(raw => {
+      const row = asRecord(raw)
+
+      if (!row || !boundedText(row.definitionId, 200)) {
+        return false
+      }
+
+      const identity = k === 'pending' ? row.answerId : row.definitionId
+
+      if (!boundedText(identity, 200) || identities.has(identity)) {
+        return false
+      }
+
+      identities.add(identity)
+
+      return k !== 'pending' || (typeof row.valid === 'boolean' && ['approve', 'skip'].includes(asString(row.action)))
+    })
+  })
+
+  return {
+    revision: asString(a.revision),
+    definitions: asList(a.definitions).slice(0, 500).flatMap(v => {
+      const d = asRecord(v)
+
+      return d && asString(d.definitionId) ? [{ definitionId: asString(d.definitionId), classIri: asString(d.classIri),
+        revision: asCount(d.revision), mode: asString(d.mode), modeRevision: asCount(d.modeRevision),
+        head: version(d.head), effective: version(d.effective), modeProposal: asString(asRecord(d.modeProposal)?.mode) || null,
+        agentProposed: d.agentProposed === true }] : []
+    }),
+    bindings: asList(a.bindings).slice(0, 500).flatMap(v => {
+      const b = asRecord(v)
+      const eligibility = asRecord(b?.eligibility)
+      const display = asRecord(b?.display)
+      const offer = asRecord(b?.profileOffer)
+      const selector = asRecord(offer?.selector)
+      const profileOffer = offer && selector && Object.keys(selector).length > 0 && Object.keys(selector).every(k => ['category', 'family', 'type'].includes(k) && typeof selector[k] === 'string') && /^[a-f0-9]{16}$/.test(asString(offer.selectorHash)) && Number.isSafeInteger(offer.matchedCount) && (offer.matchedCount as number) >= 0 && Number.isSafeInteger(offer.capturedCount) && (offer.capturedCount as number) >= 0 && offer.countState === 'unknown' && offer.futureScope === 'project-revit-future-sessions' ? { selector: selector as Record<string, string>, selectorHash: asString(offer.selectorHash), matchedCount: asCount(offer.matchedCount), capturedCount: asCount(offer.capturedCount), countState: 'unknown' as const, futureScope: asString(offer.futureScope) } : null
+      const lines = b?.resultStatus === 'ok' ? safeDefinitionScheme(display?.scheme) : null
+
+      return b && asString(b.definitionId) ? [{ definitionId: asString(b.definitionId), revision: Number.isSafeInteger(b.revision) && (b.revision as number) >= 0 ? b.revision as number : -1,
+        resultDefinitionVersion: asCount(b.resultDefinitionVersion), resultHash: asString(b.resultHash),
+        resultStatus: asString(b.resultStatus), change: asString(b.change), confirmation: asString(b.confirmation),
+        delivery: asString(asRecord(b.materialization)?.state) || asString(b.delivery), approvedVersion: asRecord(b.approved) ? asCount(asRecord(b.approved)?.definitionVersion) : null,
+        eligible: eligibility?.eligible === true, profileOffer, reasons: strings(eligibility?.reasons),
+        display: { message: asString(display?.message).slice(0, 2000), question: asString(display?.question).slice(0, 2000),
+          code: asString(display?.code).slice(0, 2000), memberIds: asList(display?.memberIds).slice(0, 5000).filter((s): s is string => typeof s === 'string' && s.length <= 200), inputIds: asList(display?.inputIds).slice(0, 5000).filter((s): s is string => typeof s === 'string' && s.length <= 200), scheme: lines ? { lines } : null }
+      }] : []
+    }),
+    pending: asList(a.pending).slice(0, 500).flatMap(v => {
+      const p = asRecord(v)
+
+      return p && asString(p.answerId) ? [{ answerId: asString(p.answerId), definitionId: asString(p.definitionId),
+        valid: p.valid === true, action: asString(p.action), reasons: strings(p.invalidReasons) }] : []
+    }),
+    model: { document: asString(asRecord(a.model)?.document), modelKey: asString(asRecord(a.model)?.modelKey) },
+    complete: a.complete === true && completeLists,
+    commitHash: asString(asRecord(a.commit)?.batchManifestHash),
+    commitCounts: ['upserts', 'deletes', 'direct', 'ordinary'].every(k => Number.isSafeInteger(asRecord(a.commit)?.[k]) && (asRecord(a.commit)?.[k] as number) >= 0) ? {
+      upserts: asCount(asRecord(a.commit)?.upserts), deletes: asCount(asRecord(a.commit)?.deletes),
+      direct: asCount(asRecord(a.commit)?.direct), ordinary: asCount(asRecord(a.commit)?.ordinary)
+    } : null,
+    operations: asList(asRecord(a.commit)?.operations).slice(0, 1500).flatMap(raw => {
+      const op = asRecord(raw)
+
+      return op ? [{ definitionId: asString(op.definitionId), definitionVersion: Number.isSafeInteger(op.definitionVersion) ? op.definitionVersion as number : null,
+        classIri: asString(op.classIri), instanceKey: asString(op.instanceKey), reason: asString(op.reason),
+        action: asString(op.action), nativeId: asString(op.nativeId) || asString(op.existing), uniqueIds: asList(op.uniqueIds).slice(0, 500).filter((v): v is string => typeof v === 'string' && v.length <= 200) }] : []
+    }),
+    affectedModels: asList(a.affectedModels).slice(0, 500).flatMap(raw => {
+      const model = asRecord(raw)
+
+      return model ? [{ definitionId: asString(model.definitionId), modelKey: asString(model.modelKey), document: asString(model.document) }] : []
+    }),
+    confirmationComplete: completeLists && exactOrdinary && exactOperations && exactAffected,
+    ordinaryRows: exactOrdinary ? ['elements', 'parameters', 'measures'].flatMap(kind => asList(ordinary?.[kind]).map(raw => {
+      const row = asRecord(raw)!
+
+      return { kind, nativeId: asString(row.nativeId), roles: asList(row.roles).map(asString), clear: row.clear === true,
+        name: asString(row.name), propertyIri: asString(row.propertyIri), stream: asString(row.stream) }
+    })) : [],
+    snapshotState: asString(asRecord(a.snapshot)?.status)
+  }
 }
 
 export interface MappingSession {
+  advanced: AdvancedState | null
   revision: string
   pendingAnswerIds: string[]
   batches: MappingBatch[]
@@ -239,6 +481,8 @@ function parseAnswer(raw: unknown): MappingAnswer | null {
 function parseBatch(raw: unknown): MappingBatch | null {
   const b = asRecord(raw)
   const state = asRecord(b?.delivery)?.state
+  const snapshot = asRecord(b?.snapshot)
+  const snapshotStatus = snapshot?.status
 
   return b && asString(b.batchId)
     ? {
@@ -246,7 +490,11 @@ function parseBatch(raw: unknown): MappingBatch | null {
         revision: asString(b.revision),
         answerIds: asList(b.answerIds).filter((v): v is string => typeof v === 'string' && Boolean(v)),
         committedAt: asString(b.committedAt),
-        delivery: state === 'queued' || state === 'written' || state === 'failed' ? state : 'unknown'
+        delivery: state === 'queued' || state === 'written' || state === 'failed' ? state : 'unknown',
+        snapshot: snapshot ? {
+          status: snapshotStatus === 'pending' || snapshotStatus === 'published' || snapshotStatus === 'failed' || snapshotStatus === 'skipped' ? snapshotStatus : 'unknown',
+          stateId: asString(snapshot.stateId).slice(0, 200), reason: asString(snapshot.reason).slice(0, 1000)
+        } : null
       }
     : null
 }
@@ -261,6 +509,7 @@ export function parseSession(raw: unknown): MappingSession | null {
 
   return {
     sessionId,
+    advanced: parseAdvanced(s.advancedState),
     label: asString(s.label),
     document: asString(s.document) || null,
     createdAt: asString(s.createdAt),
@@ -320,6 +569,45 @@ async function call(method: string, params: Record<string, unknown>, timeoutMs?:
 
     throw error
   }
+}
+
+/** Terminal references only: an empty response, confirmed challenge, claimed or unknown operation never unlocks. */
+export function advancedIntentSettled(result: MappingIntentStatusResult): boolean {
+  return result.ok && result.intents.length > 0 && result.intents.every(i =>
+    i.operationState ? ['completed', 'failed', 'cancelled'].includes(i.operationState) :
+      ['cancelled', 'expired', 'stale', 'revoked', 'consumed'].includes(i.status))
+}
+
+export async function proposeOrdinaryMode(definition: AdvancedDefinition): Promise<void> {
+  const raw = await call('degram.mapping.advanced.mode', {
+    definitionId: definition.definitionId, mode: 'ordinary', expectedRevision: definition.revision
+  })
+
+  const outcome = outcomeOf(raw)
+
+  if (outcome) {
+    throw new MappingRefusal(outcome.code, outcome.code)
+  }
+}
+
+/** Pure derivation only; never approve or materialize. Reuse the request id for status, not a blind retry. */
+export async function deriveAdvancedDefinition(sessionId: string, definition: AdvancedDefinition, bindingRevision: number | undefined, requestId: string, statusOnly = false, binding?: { grids: string[]; phaseScope?: 'all-model' } | { memberIds: string[] } | { uniqueIds: string[] }): Promise<string> {
+  const raw = await call('degram.mapping.advanced.derive', {
+    sessionId, definitionId: definition.definitionId, requestId,
+    ...(statusOnly ? {} : {
+      definitionVersion: definition.head?.version,
+      ...(binding === undefined ? {} : { binding }),
+      ...(bindingRevision === undefined ? {} : { expectedBindingRevision: bindingRevision })
+    }), statusOnly
+  })
+
+  const outcome = outcomeOf(raw)
+
+  if (outcome) {
+    throw new MappingRefusal(outcome.code, outcome.code)
+  }
+
+  return asString(asRecord(raw)?.outcome) || asString(asRecord(raw)?.resultStatus) || 'unknown'
 }
 
 function sessionResult(raw: unknown): SessionResult {
@@ -553,4 +841,64 @@ export async function showRevitItem(sessionId: string, itemId: string): Promise<
     shown: asCount(raw?.shown),
     missing: asList(raw?.missing).filter((id): id is string => typeof id === 'string')
   }
+}
+
+// ─── 1303-35: protected advanced-mapping actions (the human-intent lane) ─────────────────────────────
+//
+// Approve, skip, preview, clear preview and the common commit of the advanced Revit mapping are NOT gateway calls from
+// the renderer. Each goes to Electron main's broker (`runMappingIntent`), which shows the connector's native dialog and
+// holds the proof; the renderer only names what the card showed (the frozen tuple) and gets back intent/status
+// references plus the canonical state. A refusal is a value (`ok: false` + `code`), never a thrown credential.
+// `requestId` is the idempotency key of one user action: reuse it to retry that action (it resumes, it never shows a
+// second dialog), mint a new one for a new click.
+
+export type {
+  AnswerTuple as AdvancedAnswerTuple,
+  CommitSpec as AdvancedCommitSpec,
+  MappingIntentCode,
+  MappingIntentFailure,
+  MappingIntentRef,
+  MappingIntentResult,
+  MappingIntentStatusResult,
+  MappingIntentSuccess
+} from '../../electron/degram/mapping-intent'
+
+/** A fresh idempotency key for one user action (3 to 48 characters of `[A-Za-z0-9._:-]`). */
+export function newIntentRequestId(): string {
+  const random =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+
+  return `mi-${random}`.slice(0, 48)
+}
+
+/** Approve one definition or one atomic frozen list; skip accepts a single definition only. */
+export function answerAdvanced(
+  action: 'approve' | 'skip',
+  sessionId: string,
+  requestId: string,
+  items: AnswerTuple[]
+): Promise<MappingIntentResult> {
+  return runMappingIntent({ action, sessionId, requestId, items })
+}
+
+/** Show the native preview of a definition result (claimed once; never enters the population). */
+export function previewAdvancedDefinition(sessionId: string, requestId: string, item: AnswerTuple): Promise<MappingIntentResult> {
+  return runMappingIntent({ action: 'preview', sessionId, requestId, items: [item] })
+}
+
+/** Remove that definition's own preview (owned authorization, never a generic delete). */
+export function clearAdvancedPreview(sessionId: string, requestId: string, definitionId: string): Promise<MappingIntentResult> {
+  return runMappingIntent({ action: 'clear-preview', sessionId, requestId, definitionIds: [definitionId] })
+}
+
+/** The common commit of a batch with advanced work: one native confirmation of the exact manifest, then apply. */
+export function commitAdvanced(sessionId: string, requestId: string, commit: CommitSpec): Promise<MappingIntentResult> {
+  return runMappingIntent({ action: 'commit', sessionId, requestId, commit })
+}
+
+/** After an unresolved outcome: read where the challenges of that request stand (never repeats a native action). */
+export function readAdvancedIntentStatus(sessionId: string, requestId: string): Promise<MappingIntentStatusResult> {
+  return readMappingIntentStatus({ sessionId, requestId })
 }

@@ -81,6 +81,48 @@ def build_server() -> MCPServer:
                            "truncation": {"elementsTotal": 2, "elementsKept": 2, "parametersTruncated": 0,
                                           "maxElements": max_elements, "maxParameters": max_parameters}})
 
+    # 1303-35: the advanced-mapping tools of the DG Revit connector. Each answers a canned, structured JSON text (or
+    # whatever FAKE_REVIT_MODE_FILE says) and records its call, so a test sees what the client really sent.
+    @server.tool()
+    async def dg_model_overview() -> str:
+        """Overview of the pinned model."""
+        return await _gate("dg_model_overview", {}) or json.dumps({"status": "ok", "grids": [], "levels": []})
+
+    @server.tool()
+    async def dg_read_selection() -> str:
+        """Selection of the pinned model."""
+        return await _gate("dg_read_selection", {}) or json.dumps(
+            {"status": "ok", "uniqueIds": ["uid-1"], "matched": 1, "truncated": False})
+
+    @server.tool()
+    async def dg_derive_definition(request_id: str) -> str:
+        """Execute one frozen derive request."""
+        return await _gate("dg_derive_definition", {"request_id": request_id}) or json.dumps(
+            {"status": "ok", "derived": True, "requestId": request_id, "resultStatus": "ok"})
+
+    @server.tool()
+    async def dg_confirm_mapping_intent(intent_id: str) -> str:
+        """Show the native challenge."""
+        return await _gate("dg_confirm_mapping_intent", {"intent_id": intent_id}) or json.dumps(
+            {"status": "ok", "decision": "confirmed", "intent": {"intentId": intent_id, "status": "confirmed"}})
+
+    @server.tool()
+    async def dg_preview_definition(intent_id: str) -> str:
+        """Preview natively."""
+        return await _gate("dg_preview_definition", {"intent_id": intent_id}) or json.dumps(
+            {"status": "ok", "outcome": "completed", "operationId": "OP-0123456789abcdef", "result": None})
+
+    @server.tool()
+    async def dg_clear_definition_preview(intent_id: str) -> str:
+        """Clear the owned preview."""
+        return await _gate("dg_clear_definition_preview", {"intent_id": intent_id}) or json.dumps(
+            {"status": "ok", "outcome": "completed", "operationId": "OP-0123456789abcdef", "result": None})
+
+    @server.tool()
+    async def a_tool_the_fork_adds_tomorrow(x: str = "") -> str:
+        """A tool no classification names: it must never be admitted."""
+        return await _gate("a_tool_the_fork_adds_tomorrow", {"x": x}) or json.dumps({"status": "ok"})
+
     return server
 
 

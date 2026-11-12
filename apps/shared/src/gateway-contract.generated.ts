@@ -1395,6 +1395,7 @@ export interface DegramMappingApplyParams {
   requestId: string
   revision: string
   answerIds: string[]
+  intentId?: string | null
   designStateName?: string | null
   designStateNameSource?: string | null
 }
@@ -1450,6 +1451,92 @@ export interface DegramMappingFiltersResult {
   bridgeState?: string | null
   categories?: unknown
   views?: unknown
+}
+export interface DegramMappingAdvancedAnswerParams {
+  sessionId: string
+  requestId: string
+  intentId: string
+  action: 'approve' | 'skip'
+  scope: unknown
+}
+export interface DegramMappingAdvancedAnswersParams {
+  sessionId: string
+  requestId: string
+  intentId: string
+  scope: unknown
+}
+export interface DegramMappingAdvancedDeriveParams {
+  sessionId: string
+  definitionId: string
+  requestId: string
+  definitionVersion?: number | null
+  expectedBindingRevision?: number | null
+  binding?: Record<string, unknown> | null
+  statusOnly?: boolean
+}
+export interface DegramMappingAdvancedDeriveResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  unresolved?: boolean | null
+  statusLink?: unknown
+  intent?: unknown
+  tool?: string | null
+  requestId?: string | null
+  requestHash?: string | null
+  definitionId?: string | null
+  bindingRevision?: number | null
+  outcome?: string | null
+  ok?: boolean | null
+  resultStatus?: string | null
+  resultHash?: string | null
+  change?: string | null
+  nativeCode?: string | null
+  nativeMessage?: string | null
+}
+export interface DegramMappingAdvancedPreviewParams {
+  sessionId: string
+  intentId: string
+}
+export interface DegramMappingAdvancedIntentResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  unresolved?: boolean | null
+  statusLink?: unknown
+  intent?: unknown
+  tool?: string | null
+  outcome?: string | null
+  decision?: string | null
+  operationId?: string | null
+  result?: unknown
+}
+export interface DegramMappingAdvancedModeParams {
+  definitionId: string
+  mode: 'ordinary' | 'advanced'
+  expectedRevision: number
+  reason?: string | null
+}
+export interface DegramMappingAdvancedModeResult {
+  status: string
+  code?: string | null
+  reason?: string | null
+  message?: string | null
+  bridgeState?: string | null
+  unresolved?: boolean | null
+  statusLink?: unknown
+  intent?: unknown
+  tool?: string | null
+  definition?: unknown
+}
+export interface DegramMappingAdvancedConfirmIntentParams {
+  sessionId: string
+  intentId: string
+  scope: unknown
 }
 export interface DegramRestateParams {
   stateId?: string | null
@@ -5235,6 +5322,20 @@ export interface RpcMethods {
   'degram.environment.quiesce': { params: DegramEnvironmentBarrierParams; result: DegramEnvironmentBarrierResult }
   /** Reopen only the exact generation quiesced before an aborted pre-persistence environment switch. */
   'degram.environment.resume': { params: DegramEnvironmentBarrierParams; result: DegramEnvironmentBarrierResult }
+  /** 1303-35: approve or skip one advanced class as a DRAFT answer under the reference of a member's native-confirmed intent for exactly this action and scope; returns the recomputed session with its advancedState. Errors: INTENT_NOT_CONFIRMED, INTENT_HASH_CONFLICT, ADVANCED_ANSWER_STALE. */
+  'degram.mapping.advanced.answer': { params: DegramMappingAdvancedAnswerParams; result: DegramMappingSessionResult }
+  /** Atomically approve the complete frozen definition list under one confirmed human intent. */
+  'degram.mapping.advanced.answers': { params: DegramMappingAdvancedAnswersParams; result: DegramMappingSessionResult }
+  /** 1303-35 (broker): remove that definition's own preview for a confirmed clear-definition-preview intent, once. Never a generic delete. */
+  'degram.mapping.advanced.clearPreview': { params: DegramMappingAdvancedPreviewParams; result: DegramMappingAdvancedIntentResult }
+  /** 1303-35 (broker): show a pending challenge the main process issued for this member in the native Revit dialog. Only a person pressing Yes confirms; Cancel grants nothing. It accepts the intent id and the scope echo only: it cannot create a member intent or set confirmed. */
+  'degram.mapping.advanced.confirmIntent': { params: DegramMappingAdvancedConfirmIntentParams; result: DegramMappingAdvancedIntentResult }
+  /** 1303-35: freeze one canonical read-only derive request in DG, let the DG Revit connector derive and post its own result, and read the outcome back (ok, failed, needs-input, pending, unresolved). statusOnly reads the status of requestId and asks Revit nothing; a timeout is unresolved and is never retried. */
+  'degram.mapping.advanced.derive': { params: DegramMappingAdvancedDeriveParams; result: DegramMappingAdvancedDeriveResult }
+  /** 1303-35: propose the class mode (ordinary or advanced) as a compare-and-set proposal; the effective mode and any approved instance stay until a member confirms at the common commit. Errors: MAPPING_DEFINITION_CONFLICT. */
+  'degram.mapping.advanced.mode': { params: DegramMappingAdvancedModeParams; result: DegramMappingAdvancedModeResult }
+  /** 1303-35 (broker): run the native preview of a definition for a confirmed preview-definition intent, once. A timeout is an unresolved outcome with a status link, never a second native call. */
+  'degram.mapping.advanced.preview': { params: DegramMappingAdvancedPreviewParams; result: DegramMappingAdvancedIntentResult }
   /** Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID. */
   'degram.mapping.answer': { params: DegramMappingAnswerParams; result: DegramMappingSessionResult }
   /** Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. Errors: MAPPING_COMMIT_REQUIRED, MAPPING_COMMIT_CONFLICT. Queued is not a CAD write receipt. */
@@ -5730,6 +5831,13 @@ export const RPC_METHODS = [
   'degram.environment.assert_active',
   'degram.environment.quiesce',
   'degram.environment.resume',
+  'degram.mapping.advanced.answer',
+  'degram.mapping.advanced.answers',
+  'degram.mapping.advanced.clearPreview',
+  'degram.mapping.advanced.confirmIntent',
+  'degram.mapping.advanced.derive',
+  'degram.mapping.advanced.mode',
+  'degram.mapping.advanced.preview',
   'degram.mapping.answer',
   'degram.mapping.apply',
   'degram.mapping.filters',

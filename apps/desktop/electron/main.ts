@@ -15364,7 +15364,7 @@ function ensureDegramWiring(): DegramEnvironmentWiring | null {
       const dgSession: Session = session.fromPartition(descriptor.partition)
       const gatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never })
       // 1303-29: a Restate waits on Revit (MCP tool timeout 40 s) or the Grasshopper canvas
-      const slowGatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never, timeoutMs: 150_000 })
+      const slowGatewayRpc = createGatewayRpc({ WebSocketImpl: globalThis.WebSocket as never, defaultTimeoutMs: 150_000 })
       const profiles = createProfilesCli({
         home: degramHome,
         environment: descriptor,

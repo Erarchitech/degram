@@ -85,6 +85,7 @@ class DegramCredentials:
         self._clock = clock
         self._token: str | None = None
         self._info: CredentialsInfo | None = None
+        self._generation = 0
 
     # -- writers -------------------------------------------------------------------------------
     def set(self, *, token: Any, expires_at: Any, relay_base_url: Any, user: Any,
@@ -102,13 +103,23 @@ class DegramCredentials:
             project=project.strip())
         with self._lock:
             self._token, self._info = token.strip(), info
+            self._generation += 1
         return info
 
     def clear(self) -> None:
         with self._lock:
             self._token, self._info = None, None
+            self._generation += 1
 
     # -- readers -------------------------------------------------------------------------------
+    @property
+    def generation(self) -> int:
+        """Counts every ``set`` and ``clear``. A reply that arrives after it moved belongs to an earlier scope, even
+        when the same user, company and project are back (A -> B -> A): a caller captures it before a remote step and
+        drops the reply when it differs (1303-35). Carries no secret."""
+        with self._lock:
+            return self._generation
+
     def info(self) -> CredentialsInfo | None:
         """Scope and expiry; never the token."""
         with self._lock:

@@ -33,6 +33,10 @@ export const DEGRAM_CHANNELS = {
   // The onboarding tour (quick 261101-dzj): start or resume the DG page's part; a picture of the page for DeGram's part.
   tourSignal: 'degram:tour-signal',
   captureDg: 'degram:capture-dg',
+  // 1303-35: the main-owned human-intent broker of the advanced Revit mapping (protected card actions + status).
+  mappingIntent: 'degram:mapping-intent',
+  mappingIntentStatus: 'degram:mapping-intent-status',
+  recoverSnapshot: 'degram:recover-snapshot',
   stateChanged: 'degram:state-changed',
   event: 'degram:event'
 } as const

@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { useI18n } from '@/i18n'
+import { appendComposerDraft } from '@/store/composer'
 
 import { scopeKeyOf } from './documents-store'
 import type { DegramCopy } from './i18n'
@@ -28,7 +29,7 @@ import { canContinueAfter, MappingFilters, mappingStartOptions, useMappingFilter
 import { Disclosure, Failure, Muted, SessionView, useMappingFocus } from './mapping-session-view'
 import { mappingFailureText } from './mapping-view'
 import type { BridgeApp } from './use-degram-gateway'
-import { useDegram } from './use-degram-state'
+import { environmentStamp, isCurrentEnvironment, useDegram } from './use-degram-state'
 import { useMappingSession } from './use-mapping-session'
 
 type Copy = DegramCopy
@@ -111,6 +112,8 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
   const degram = useDegram()
   const project = degram.state?.scope?.project ?? undefined
   const { state, adopt, follow, reload, following } = useMappingSession(app, document, open, scopeKeyOf(degram))
+  const [clarification, setClarification] = useState<{ text: string; sessionId: string; revision: string; current: () => boolean } | null>(null)
+  const [prefilled, setPrefilled] = useState(false)
   const [starting, setStarting] = useState(false)
   const [next, setNext] = useState<Continuation | null>(null)
   const [startNote, setStartNote] = useState<null | { text: string; detail?: string; error?: boolean }>(null)
@@ -200,12 +203,27 @@ function MappingBody({ app, document, open }: { app: BridgeApp; document: string
         />
       )}
       {focusError && <Failure text={focusError} />}
+      {clarification && clarification.sessionId === state.session?.sessionId && clarification.revision === state.session?.revision && clarification.current() && <div className="grid gap-1.5">
+        <Muted>{clarification.text}</Muted>
+        <Button disabled={prefilled} onClick={() => {
+          if (clarification.current()) {
+            appendComposerDraft(clarification.text)
+            setPrefilled(true)
+          }
+        }} size="sm" variant="outline">{copy.mapping.advanced.prefill}</Button>
+        {prefilled && <Muted>{copy.mapping.advanced.prefilled}</Muted>}
+      </div>}
       {state.session ? (
         <SessionView
           adopt={adopt}
           app={app}
           copy={copy}
           key={`${scopeKeyOf(degram)}:${app}:${document}:${state.session.sessionId}`}
+          onClarify={text => {
+            const stamp = environmentStamp()
+            setClarification({ text, sessionId: state.session!.sessionId, revision: state.session!.revision, current: () => isCurrentEnvironment(stamp) })
+            setPrefilled(false)
+          }}
           onFocus={focus}
           project={project}
           reload={reload}

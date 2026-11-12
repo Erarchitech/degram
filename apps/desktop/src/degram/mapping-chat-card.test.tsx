@@ -4,6 +4,7 @@
 // travel the same RPCs as «Модели → Mapping»; the confirmation is the user's click (requestId / revision / answerIds).
 // An answer the agent proposed carries its mark; a card of another project stays inert.
 
+import { AssistantRuntimeProvider, type ThreadMessage, useExternalStoreRuntime } from '@assistant-ui/react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -140,6 +141,49 @@ describe('mappingCardAnchor', () => {
 })
 
 describe('MappingChatCard', () => {
+  it('renders the one shared advanced section and clarification appends one real user message', async () => {
+    await ready()
+    fakeGateway({ 'degram.mapping.session': () => ({ status: 'ok', session: {
+      ...SESSION, advancedState: { complete: true, definitions: [{ definitionId: 'MD-000000000001', classIri: 'ex:Building',
+        head: { version: 1, kind: 'derived', text: 'Grid A/1', source: 'agent' } }], bindings: [], pending: [] }
+    } }) })
+    const onNew = vi.fn(async (_message: unknown) => {})
+
+    function Host() {
+      const runtime = useExternalStoreRuntime<ThreadMessage>({ messages: [], isRunning: false, onNew })
+
+      return <AssistantRuntimeProvider runtime={runtime}>{withActions(<MappingChatCard anchor={anchor()} />)}</AssistantRuntimeProvider>
+    }
+
+    render(<Host />)
+    await screen.findByTestId('advanced-mapping-section')
+    expect(screen.getAllByTestId('advanced-mapping-section')).toHaveLength(1)
+    expect(onNew).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Clarify in chat' }))
+    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1))
+    expect(onNew.mock.calls[0]?.[0]).toMatchObject({ role: 'user', content: [{ type: 'text', text: 'Clarify in chat: ex:Building\nGrid A/1' }] })
+  })
+
+  it('explains a busy clarification without sending or queuing a synthetic user message', async () => {
+    await ready()
+    fakeGateway({ 'degram.mapping.session': () => ({ status: 'ok', session: {
+      ...SESSION, advancedState: { complete: true, definitions: [{ definitionId: 'MD-000000000001', classIri: 'ex:Building',
+        head: { version: 1, kind: 'derived', text: 'Grid A/1', source: 'agent' } }], bindings: [], pending: [] }
+    } }) })
+    const onNew = vi.fn(async (_message: unknown) => {})
+
+    function Host() {
+      const runtime = useExternalStoreRuntime<ThreadMessage>({ messages: [], isRunning: true, onNew })
+
+      return <AssistantRuntimeProvider runtime={runtime}>{withActions(<MappingChatCard anchor={anchor()} />)}</AssistantRuntimeProvider>
+    }
+
+    render(<Host />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Clarify in chat' }))
+    expect(await screen.findByText(/No message was sent/)).toBeTruthy()
+    expect(onNew).not.toHaveBeenCalled()
+  })
+
   it('answers and confirms through the same calls as the Models → Mapping sub-tab', async () => {
     await ready()
 
@@ -235,6 +279,23 @@ describe('MappingChatCard', () => {
         lastElementId: 900
       })
     })
+
+  it('ignores an old continuation reply after the card changes session', async () => {
+    await ready()
+    let finish!: (value: unknown) => void
+    fakeGateway({
+      'degram.mapping.session': ({ sessionId }) => ({ status: 'ok', session: { ...SESSION, sessionId, pendingAnswerIds: [] } }),
+      'degram.mapping.start': () => new Promise(resolve => { finish = resolve })
+    })
+    const view = render(withActions(<MappingChatCard anchor={anchor({ app: 'revit', next: NEXT })} />))
+    const go = await screen.findByRole('button', { name: 'Continue with the remaining 150' }) as HTMLButtonElement
+    await waitFor(() => expect(go.disabled).toBe(false))
+    fireEvent.click(go)
+    view.rerender(withActions(<MappingChatCard anchor={anchor({ app: 'revit', sessionId: 'ms-current' })} />))
+    await waitFor(() => expect(screen.queryByTestId('degram-mapping-over-limit')).toBeNull())
+    await act(async () => finish({ status: 'ok', started: true, sessionId: 'ms-stale', remaining: 50, lastElementId: 900 }))
+    expect(screen.queryByTestId('degram-mapping-over-limit')).toBeNull()
+  })
 
   it('holds the continuation while this session still has answers to confirm', async () => {
     await ready()

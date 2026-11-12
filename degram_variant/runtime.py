@@ -31,7 +31,7 @@ class Runtime:
         self.documents = DocumentsService(sources)
         self.dg = DgClient()
         self.composer = ContextComposer(self.documents, self.dg, self.cancels)
-        self.mapping = MappingService(self.dg, gh.client)
+        self.mapping = MappingService(self.dg, gh.client, documents=self.documents)
 
 
 _lock = threading.Lock()

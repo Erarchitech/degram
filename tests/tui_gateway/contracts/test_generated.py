@@ -9,6 +9,7 @@ TS-only PR that edits them still runs this test.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -89,3 +90,32 @@ def test_catalog_covers_the_whole_wire():
     from tui_gateway.contracts import registry
 
     registry.assert_complete(server._methods, emitted_event_names(), sent_server_requests())
+
+
+ADVANCED_MAPPING_METHODS = (
+    "degram.mapping.advanced.answer", "degram.mapping.advanced.answers", "degram.mapping.advanced.derive", "degram.mapping.advanced.preview",
+    "degram.mapping.advanced.clearPreview", "degram.mapping.advanced.mode", "degram.mapping.advanced.confirmIntent")
+
+
+def test_the_advanced_mapping_methods_are_in_both_generated_artefacts_with_closed_params():
+    """1303-35 (R10): exactly the six names reach the generated TS and OpenRPC, each with a closed params object
+    (no ``additionalProperties``), and ``confirmIntent`` takes the session, the intent id and the scope echo only."""
+    ts = (REPO / "apps" / "shared" / "src" / "gateway-contract.generated.ts").read_text(encoding="utf-8")
+    openrpc = json.loads((REPO / "apps" / "shared" / "src" / "gateway-contract.openrpc.json").read_text(encoding="utf-8"))
+    methods = {m["name"]: m for m in openrpc["methods"]}
+    advanced = sorted(n for n in methods if n.startswith("degram.mapping.advanced"))
+    assert advanced == sorted(ADVANCED_MAPPING_METHODS)
+    for name in ADVANCED_MAPPING_METHODS:
+        assert f"'{name}'" in ts, name
+    schemas = openrpc["components"]["schemas"]
+
+    def declared(name):
+        (param,) = methods[name]["params"]
+        schema = schemas[param["schema"]["$ref"].rsplit("/", 1)[1]]
+        assert schema.get("additionalProperties") is False, f"{name}: the params object must be closed"
+        return sorted(schema.get("properties", {}))
+
+    assert declared("degram.mapping.advanced.confirmIntent") == ["intentId", "scope", "sessionId"]
+    for name in ADVANCED_MAPPING_METHODS:
+        for forbidden in ("confirmed", "byAgent", "actor", "project", "issuedBy", "status", "tool", "url"):
+            assert forbidden not in declared(name), (name, forbidden)

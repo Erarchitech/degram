@@ -84,7 +84,7 @@ const bundleDgGrasshopper = fs.existsSync(path.join(dgGrasshopperSource, 'DG.gha
 // resolveRevitAdapter looks for it. No default location: without DEGRAM_REVIT_PYTHON_SOURCE (or without its
 // python.exe) nothing is bundled and the Revit group falls back to DEGRAM_PYTHON, degram.json or the adapter's .venv.
 const revitPythonSource = process.env.DEGRAM_REVIT_PYTHON_SOURCE
-const bundleRevitPython = Boolean(revitPythonSource) && fs.existsSync(path.join(revitPythonSource, 'python.exe'))
+const bundleRevitPython = typeof revitPythonSource === 'string' && revitPythonSource.length > 0 && fs.existsSync(path.join(revitPythonSource, 'python.exe'))
 
 const macFeed = channelRequest ? null : feedContract.darwinFeed(channel === 'canary' || channel === 'light-canary' ? 'canary' : 'stable', light)
 const publicUrl = feedContract.feedBaseUrl(process.env.CLOUDFLARE_R2_PUBLIC_URL)
@@ -136,7 +136,7 @@ module.exports = {
     // for every installer build and never reuse a number; the shared
     // package.json stays 0.0.0 and scripts/bundles/desktop.py passes no
     // version override for degram.
-    ...(degram ? { author: { name: 'Erarchitech' }, version: '0.1.22' } : {}),
+    ...(degram ? { author: { name: 'Erarchitech' }, version: '0.1.23' } : {}),
     desktopName: appId
   },
   directories: {

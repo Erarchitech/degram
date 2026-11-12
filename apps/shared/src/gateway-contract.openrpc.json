@@ -979,6 +979,132 @@
       }
     },
     {
+      "name": "degram.mapping.advanced.answer",
+      "summary": "1303-35: approve or skip one advanced class as a DRAFT answer under the reference of a member's native-confirmed intent for exactly this action and scope; returns the recomputed session with its advancedState. Errors: INTENT_NOT_CONFIRMED, INTENT_HASH_CONFLICT, ADVANCED_ANSWER_STALE.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedAnswerParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.advanced.answers",
+      "summary": "Atomically approve the complete frozen definition list under one confirmed human intent.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedAnswersParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.advanced.clearPreview",
+      "summary": "1303-35 (broker): remove that definition's own preview for a confirmed clear-definition-preview intent, once. Never a generic delete.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedPreviewParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingAdvancedIntentResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.advanced.confirmIntent",
+      "summary": "1303-35 (broker): show a pending challenge the main process issued for this member in the native Revit dialog. Only a person pressing Yes confirms; Cancel grants nothing. It accepts the intent id and the scope echo only: it cannot create a member intent or set confirmed.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedConfirmIntentParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingAdvancedIntentResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.advanced.derive",
+      "summary": "1303-35: freeze one canonical read-only derive request in DG, let the DG Revit connector derive and post its own result, and read the outcome back (ok, failed, needs-input, pending, unresolved). statusOnly reads the status of requestId and asks Revit nothing; a timeout is unresolved and is never retried.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedDeriveParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingAdvancedDeriveResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.advanced.mode",
+      "summary": "1303-35: propose the class mode (ordinary or advanced) as a compare-and-set proposal; the effective mode and any approved instance stay until a member confirms at the common commit. Errors: MAPPING_DEFINITION_CONFLICT.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedModeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingAdvancedModeResult"
+        }
+      }
+    },
+    {
+      "name": "degram.mapping.advanced.preview",
+      "summary": "1303-35 (broker): run the native preview of a definition for a confirmed preview-definition intent, once. A timeout is an unresolved outcome with a status link, never a second native call.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingAdvancedPreviewParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingAdvancedIntentResult"
+        }
+      }
+    },
+    {
       "name": "degram.mapping.answer",
       "summary": "Answer one proposal; returns the recomputed session. Errors: MAPPING_QUESTION_NOT_FOUND, MAPPING_OPTION_INVALID.",
       "params": [
@@ -13381,6 +13507,677 @@
         "title": "DegramEnvironmentBarrierResult",
         "type": "object"
       },
+      "DegramMappingAdvancedAnswerParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "intentId": {
+            "title": "Intentid",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "approve",
+              "skip"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "sessionId",
+          "requestId",
+          "intentId",
+          "action",
+          "scope"
+        ],
+        "title": "DegramMappingAdvancedAnswerParams",
+        "type": "object"
+      },
+      "DegramMappingAdvancedAnswersParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "intentId": {
+            "title": "Intentid",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "sessionId",
+          "requestId",
+          "intentId",
+          "scope"
+        ],
+        "title": "DegramMappingAdvancedAnswersParams",
+        "type": "object"
+      },
+      "DegramMappingAdvancedConfirmIntentParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "intentId": {
+            "title": "Intentid",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "sessionId",
+          "intentId",
+          "scope"
+        ],
+        "title": "DegramMappingAdvancedConfirmIntentParams",
+        "type": "object"
+      },
+      "DegramMappingAdvancedDeriveParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "definitionId": {
+            "title": "Definitionid",
+            "type": "string"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "definitionVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Definitionversion"
+          },
+          "expectedBindingRevision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expectedbindingrevision"
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Binding"
+          },
+          "statusOnly": {
+            "default": false,
+            "title": "Statusonly",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionId",
+          "definitionId",
+          "requestId"
+        ],
+        "title": "DegramMappingAdvancedDeriveParams",
+        "type": "object"
+      },
+      "DegramMappingAdvancedDeriveResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "unresolved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unresolved"
+          },
+          "statusLink": {
+            "default": null,
+            "title": "Statuslink"
+          },
+          "intent": {
+            "default": null,
+            "title": "Intent"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool"
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestid"
+          },
+          "requestHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requesthash"
+          },
+          "definitionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Definitionid"
+          },
+          "bindingRevision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bindingrevision"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ok"
+          },
+          "resultStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resultstatus"
+          },
+          "resultHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resulthash"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Change"
+          },
+          "nativeCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Nativecode"
+          },
+          "nativeMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Nativemessage"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingAdvancedDeriveResult",
+        "type": "object"
+      },
+      "DegramMappingAdvancedIntentResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "unresolved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unresolved"
+          },
+          "statusLink": {
+            "default": null,
+            "title": "Statuslink"
+          },
+          "intent": {
+            "default": null,
+            "title": "Intent"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Decision"
+          },
+          "operationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operationid"
+          },
+          "result": {
+            "default": null,
+            "title": "Result"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingAdvancedIntentResult",
+        "type": "object"
+      },
+      "DegramMappingAdvancedModeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "definitionId": {
+            "title": "Definitionid",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "ordinary",
+              "advanced"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "expectedRevision": {
+            "title": "Expectedrevision",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "definitionId",
+          "mode",
+          "expectedRevision"
+        ],
+        "title": "DegramMappingAdvancedModeParams",
+        "type": "object"
+      },
+      "DegramMappingAdvancedModeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "bridgeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bridgestate"
+          },
+          "unresolved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unresolved"
+          },
+          "statusLink": {
+            "default": null,
+            "title": "Statuslink"
+          },
+          "intent": {
+            "default": null,
+            "title": "Intent"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool"
+          },
+          "definition": {
+            "default": null,
+            "title": "Definition"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DegramMappingAdvancedModeResult",
+        "type": "object"
+      },
+      "DegramMappingAdvancedPreviewParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "intentId": {
+            "title": "Intentid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "intentId"
+        ],
+        "title": "DegramMappingAdvancedPreviewParams",
+        "type": "object"
+      },
       "DegramMappingAnswerParams": {
         "additionalProperties": false,
         "properties": {
@@ -13441,6 +14238,18 @@
             },
             "title": "Answerids",
             "type": "array"
+          },
+          "intentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intentid"
           },
           "designStateName": {
             "anyOf": [

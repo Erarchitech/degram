@@ -18,6 +18,8 @@ import type { AuthState, Clock, DgSession, Logger, Membership, PartitionFetch } 
 import { createDgSession } from './dg-session'
 import type { DgBounds, DgHostState, DgLocale, DgMode, DgRegion, DgTheme, DgTourSignal, DgView, DgViewDeps, DgViewPage } from './dg-view'
 import { createDgView, DG_REGIONS, installedFragment, projectFragment, restatedFragment } from './dg-view'
+import type { MappingIntentRequest, MappingIntentResult, MappingIntentStatusRequest, MappingIntentStatusResult, SnapshotRecoveryRequest, SnapshotRecoveryResult } from './mapping-intent'
+import { createMappingIntentBroker, parseMappingIntentRequest, parseMappingIntentStatusRequest, parseSnapshotRecoveryRequest } from './mapping-intent'
 import type { DegramEvent, ScopeController, ScopeDeps, ScopeState, SelectResult } from './scope'
 import { AGENT_OUTCOME_CODES, createScopeController } from './scope'
 
@@ -87,6 +89,15 @@ export interface DegramBridge {
   reportOutcome: (code: string) => Promise<boolean>
   /** Open a URL the DG view refused to show in the system browser. Call only from a user action. */
   openExternalConfirmed: (url: string) => Promise<boolean>
+  /**
+   * 1303-35: run one protected advanced-mapping action (approve, skip, commit, preview, clear preview) of a card the
+   * user clicked. Main builds the proof (member challenge, the connector's native dialog, the server receipt); the
+   * request names only what the card showed, and no credential, intent id or confirmation flag crosses either way.
+   */
+  mappingIntent: (request: MappingIntentRequest) => Promise<MappingIntentResult>
+  /** 1303-35: the status of the challenges of an earlier `mappingIntent` request (after an unresolved outcome). */
+  mappingIntentStatus: (request: MappingIntentStatusRequest) => Promise<MappingIntentStatusResult>
+  recoverSnapshot: (request: SnapshotRecoveryRequest) => Promise<SnapshotRecoveryResult>
 }
 
 export interface DegramRuntimeDeps {
@@ -139,6 +150,10 @@ export interface DegramRuntime {
   openExternalConfirmed: (url: string) => boolean
   /** An agent outcome code forwarded by the renderer; false when it is not an access signal. */
   reportOutcome: (code: string) => Promise<boolean>
+  /** 1303-35: one protected advanced-mapping action through the main-owned human-intent broker. */
+  mappingIntent: (request: MappingIntentRequest) => Promise<MappingIntentResult>
+  mappingIntentStatus: (request: MappingIntentStatusRequest) => Promise<MappingIntentStatusResult>
+  recoverSnapshot: (request: SnapshotRecoveryRequest) => Promise<SnapshotRecoveryResult>
   /** The DeGram window gained focus: verify the DG session and the active project's membership. */
   onWindowFocus: () => Promise<void>
   /** Strict target-switch teardown; unlike signOut it preserves partition storage/history. */
@@ -185,14 +200,17 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     return viewChain
   }
 
+  /** The environment's own partition fetch, fenced: nothing runs or is believed once this runtime is obsolete. */
+  const guardedFetch: PartitionFetch = async request => {
+    if (!isCurrent()) throw new Error('degram: obsolete environment')
+    const response = await deps.fetch(request)
+    if (!isCurrent()) throw new Error('degram: obsolete environment')
+    return response
+  }
+
   const session: DgSession = createDgSession({
     origin: deps.origin,
-    fetch: async request => {
-      if (!isCurrent()) throw new Error('degram: obsolete environment')
-      const response = await deps.fetch(request)
-      if (!isCurrent()) throw new Error('degram: obsolete environment')
-      return response
-    },
+    fetch: guardedFetch,
     clock: deps.clock,
     logger
   })
@@ -420,6 +438,19 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
     }
   })
 
+  // 1303-35: the main-owned human-intent broker. It reads the SAME session/scope/partition of this runtime: the member
+  // lane is guardedFetch (this environment's cookie jar), the delegated lane is the open scope's backend handle.
+  const mappingIntents = createMappingIntentBroker({
+    environment,
+    origin: deps.origin,
+    fetch: guardedFetch,
+    callAgent: (method, params) => scope.callAgent(method, params),
+    auth: () => session.state(),
+    scope: () => scope.getState(),
+    isCurrent,
+    logger
+  })
+
   let previousKind: AuthState['kind'] = session.state().kind
 
   const unsubscribeAuth = session.onAuth(auth => {
@@ -556,6 +587,10 @@ export function createDegramRuntime(deps: DegramRuntimeDeps): DegramRuntime {
 
       return known
     },
+    mappingIntent: (request: MappingIntentRequest): Promise<MappingIntentResult> => mappingIntents.run(request),
+    mappingIntentStatus: (request: MappingIntentStatusRequest): Promise<MappingIntentStatusResult> =>
+      mappingIntents.status(request),
+    recoverSnapshot: request => mappingIntents.recoverSnapshot(request),
     closeForEnvironmentSwitch: async (): Promise<void> => {
       await scope.closeForEnvironmentSwitch()
     },
@@ -788,4 +823,16 @@ export function registerDegramIpc(
     DEGRAM_CHANNELS.openExternalConfirmed,
     guarded((url: unknown) => runtime.openExternalConfirmed(asUrl(url)))
   )
+  // 1303-35: the payload is validated against a closed shape (no intent id, scope, URL, method, body, credential or
+  // confirmation flag exists in it) before the runtime sees it.
+  ipc.handle(
+    DEGRAM_CHANNELS.mappingIntent,
+    guarded((request: unknown) => runtime.mappingIntent(parseMappingIntentRequest(request)))
+  )
+  ipc.handle(
+    DEGRAM_CHANNELS.mappingIntentStatus,
+    guarded((request: unknown) => runtime.mappingIntentStatus(parseMappingIntentStatusRequest(request)))
+  )
+  ipc.handle(DEGRAM_CHANNELS.recoverSnapshot,
+    guarded((request: unknown) => runtime.recoverSnapshot(parseSnapshotRecoveryRequest(request))))
 }

@@ -95,7 +95,11 @@ export function install(initial: DegramState): Harness {
       }
     }),
     reportOutcome: vi.fn(async () => true),
-    openExternalConfirmed: vi.fn(async () => true)
+    openExternalConfirmed: vi.fn(async () => true),
+    // 1303-35: the protected-action broker; a scripted test replaces these with the answer it needs.
+    mappingIntent: vi.fn(async () => { throw new Error('mapping intent fixture not configured') }),
+    mappingIntentStatus: vi.fn(async () => { throw new Error('mapping intent fixture not configured') }),
+    recoverSnapshot: vi.fn(async () => { throw new Error('snapshot recovery fixture not configured') })
   }
 
   ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = { degram: bridge, degramEnabled: true }

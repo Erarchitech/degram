@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createGatewayRpc, GatewayRpcError, gatewayWsUrl, type WebSocketLike } from './gateway-rpc'
 
@@ -78,6 +78,57 @@ describe('createGatewayRpc', () => {
     expect(error).toBeInstanceOf(GatewayRpcError)
     expect(error).toMatchObject({ rpcCode: 4403, code: 'DEGRAM_LOCKED' })
     expect(`${error.message}${error.stack}`).not.toContain('dgd_SECRET')
+  })
+
+  it('1303-35: keeps the structured code of the human-intent lane and tells a timeout apart (the broker reads status on both)', async () => {
+    const pending = rpc('ws://x/api/ws?token=t', 'degram.mapping.advanced.confirmIntent', { sessionId: 's', intentId: 'hi-1', scope: {} })
+    const socket = FakeSocket.last
+
+    socket.emit('open')
+
+    const sent = JSON.parse(socket.sent[0]) as { id: string }
+
+    socket.emit('message', {
+      data: JSON.stringify({ id: sent.id, error: { code: 4090, message: 'already', data: { code: 'INTENT_ALREADY_DISPATCHED', status: 409 } } })
+    })
+    await expect(pending).rejects.toMatchObject({ rpcCode: 4090, code: 'INTENT_ALREADY_DISPATCHED' })
+
+    // an unresolved native outcome is a RESULT with status error, not a transport failure: it resolves as is
+    const unresolved = rpc('ws://x/api/ws?token=t', 'degram.mapping.advanced.preview', { sessionId: 's', intentId: 'hi-1' })
+    const second = FakeSocket.last
+
+    second.emit('open')
+    second.emit('message', {
+      data: JSON.stringify({ id: JSON.parse(second.sent[0]).id, result: { status: 'error', code: 'BUSY', reason: 'NATIVE_OUTCOME_UNRESOLVED', unresolved: true } })
+    })
+    await expect(unresolved).resolves.toMatchObject({ unresolved: true })
+
+    // a call nobody answers is a timeout, distinguishable from every coded refusal
+    await expect(rpc('ws://x', 'degram.mapping.advanced.confirmIntent', {})).rejects.toMatchObject({ code: 'RPC_TIMEOUT' })
+  })
+
+  it('allows the native confirmation budget without extending unrelated RPCs', async () => {
+    vi.useFakeTimers()
+    try {
+      const production = createGatewayRpc({ WebSocketImpl: FakeSocket, defaultTimeoutMs: 150_000 })
+      const pending = production('ws://x', 'degram.mapping.advanced.confirmIntent', {})
+      const socket = FakeSocket.last
+      let settled = false
+      const observed = pending.then(() => { settled = true }, () => { settled = true })
+      socket.emit('open')
+      await vi.advanceTimersByTimeAsync(180_000)
+      expect(settled).toBe(false)
+      socket.emit('message', { data: JSON.stringify({ id: JSON.parse(socket.sent[0]).id, result: { status: 'ok' } }) })
+      await observed
+      expect(settled).toBe(true)
+
+      const ordinary = createGatewayRpc({ WebSocketImpl: FakeSocket })('ws://x', 'degram.credentials.status', {})
+      const rejection = expect(ordinary).rejects.toMatchObject({ code: 'RPC_TIMEOUT' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await rejection
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects when the socket closes or errors before an answer, and on timeout', async () => {

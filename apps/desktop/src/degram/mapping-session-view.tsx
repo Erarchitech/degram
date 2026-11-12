@@ -13,10 +13,13 @@ import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { Input } from '@/components/ui/input'
 
+import { AdvancedMappingSection } from './advanced-mapping'
 import type { DegramCopy } from './i18n'
 import {
+  advancedIntentSettled,
   answerMapping,
   applyMapping,
+  commitAdvanced,
   focusComponent,
   type MappingAnswer,
   type MappingCommitIntent,
@@ -25,7 +28,11 @@ import {
   MappingRefusal,
   type MappingSession,
   type MappingSummary,
+  newIntentRequestId,
+  parseSession,
   pendingMappingAnswers,
+  readAdvancedIntentStatus,
+  readMappingSession,
   type SessionResult,
   showRevitItem,
   suggestMappingStateName,
@@ -44,6 +51,7 @@ import {
   typeLabel
 } from './mapping-view'
 import type { BridgeApp, OutcomeInfo } from './use-degram-gateway'
+import { environmentStamp, isCurrentEnvironment } from './use-degram-state'
 
 type Copy = DegramCopy
 
@@ -351,7 +359,8 @@ export function SessionView({
   session,
   adopt,
   reload,
-  onFocus
+  onFocus,
+  onClarify
 }: {
   app: BridgeApp
   copy: Copy
@@ -361,7 +370,24 @@ export function SessionView({
   adopt: (session: MappingSession) => void
   reload: () => void
   onFocus: (item: MappingItem) => void
+  onClarify?: (text: string) => void
 }) {
+  const operationKey = JSON.stringify([app, project, session.sessionId, session.document, session.revision, session.advanced?.revision, session.advanced?.model])
+  const operationGeneration = useRef(0)
+  const currentOperationKey = useRef(operationKey)
+
+  if (currentOperationKey.current !== operationKey) {
+    currentOperationKey.current = operationKey
+    operationGeneration.current++
+  }
+
+  const guard = () => {
+    const gen = operationGeneration.current
+    const stamp = environmentStamp()
+
+    return () => mounted.current && gen === operationGeneration.current && isCurrentEnvironment(stamp)
+  }
+
   const target: ShowTarget = { app, onFocus }
   const [openCards, setOpenCards] = useState<Record<string, boolean>>({})
   const [pending, setPending] = useState<null | Pending>(null)
@@ -371,12 +397,17 @@ export function SessionView({
   const toggle = (key: string, fallback: boolean) => setOpenCards(s => ({ ...s, [key]: !(s[key] ?? fallback) }))
 
   const run = async (target: Pending, call: () => Promise<SessionResult>, done?: string) => {
+    const current = guard()
     setPending(target)
     setErrors(s => ({ ...s, [target.id]: '' }))
     setNotice(null)
 
     try {
       const result = await call()
+
+      if (!current()) {
+        return
+      }
 
       if (result.outcome) {
         const text = mappingFailureText(copy, result.outcome, { app, project })
@@ -387,6 +418,10 @@ export function SessionView({
         setNotice(done ?? null)
       }
     } catch (error) {
+      if (!current()) {
+        return
+      }
+
       const outcome: OutcomeInfo =
         error instanceof MappingRefusal ? { code: error.code, message: error.message } : { code: 'DG_UNAVAILABLE' }
 
@@ -394,7 +429,9 @@ export function SessionView({
       // DG refused for what the request is: the cached session is stale, read the truth.
       reload()
     } finally {
-      setPending(null)
+      if (mounted.current) {
+        setPending(null)
+      }
     }
   }
 
@@ -410,7 +447,14 @@ export function SessionView({
       copy.mapping.undone
     )
 
-  const answerIds = pendingMappingAnswers(session)
+  const answerIds = [...new Set([...pendingMappingAnswers(session), ...(session.advanced?.pending.map(p => p.answerId) ?? [])])].sort()
+  const hasAdvanced = Boolean(session.advanced?.pending.length)
+  const advancedCommitReady = !hasAdvanced || Boolean(session.advanced?.complete && session.advanced.confirmationComplete && session.advanced.commitHash && session.advanced.pending.every(p => p.valid))
+  const [commitRequest, setCommitRequest] = useState<string | null>(null)
+  const [commitUnresolved, setCommitUnresolved] = useState(false)
+  const committedScope = useRef<{ requestId: string; revision: string; answerIds: string[] } | null>(null)
+  const [readingDelivery, setReadingDelivery] = useState(false)
+  const deliveryRead = useRef(false)
   const intent = useRef<MappingCommitIntent | null>(null)
   const applying = useRef(false)
   const mounted = useRef(true)
@@ -422,11 +466,15 @@ export function SessionView({
 
     return () => {
       mounted.current = false
+      // Invalidate the live generation, not the mount-time value.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      operationGeneration.current++
     }
   }, [])
 
   // DG 1303-31 (D-106): a Revit confirmation records a Design State, so it first asks for that state's name
   const [naming, setNaming] = useState<null | {
+    operationKey: string
     name: string
     suggestion: string
     loading: boolean
@@ -444,10 +492,11 @@ export function SessionView({
       return
     }
 
-    setNaming({ name: '', suggestion: '', loading: true, source: null })
+    const current = guard()
+    setNaming({ operationKey, name: '', suggestion: '', loading: true, source: null })
     suggestMappingStateName(session.sessionId, answerIds, ru ? 'ru' : 'en')
       .then(found => {
-        if (mounted.current) {
+        if (current()) {
           setNaming(
             n =>
               n && {
@@ -461,7 +510,7 @@ export function SessionView({
         }
       })
       .catch(() => {
-        if (mounted.current) {
+        if (current()) {
           setNaming(n => n && { ...n, loading: false })
         }
       })
@@ -470,16 +519,17 @@ export function SessionView({
   const confirmNamed = () => {
     const name = (naming?.name ?? '').replace(/\s+/g, ' ').trim()
 
-    if (name) {
+    if (name && naming?.operationKey === operationKey) {
       void apply({ name, source: naming?.suggestion.replace(/\s+/g, ' ').trim() === name ? 'suggested' : 'edited' })
     }
   }
 
   const apply = async (designState?: { name: string; source: 'suggested' | 'edited' }) => {
-    if (applying.current || pending || !answerIds.length) {
+    if (applying.current || pending || !answerIds.length || !advancedCommitReady || commitUnresolved) {
       return
     }
 
+    const current = guard()
     applying.current = true
     const key = JSON.stringify([session.revision, answerIds])
 
@@ -491,6 +541,40 @@ export function SessionView({
     setErrors(s => ({ ...s, apply: '' }))
 
     try {
+      if (hasAdvanced && session.advanced) {
+        const requestId = newIntentRequestId()
+        committedScope.current = { requestId, revision: session.revision, answerIds: [...answerIds] }
+        setCommitRequest(requestId)
+
+        const result = await commitAdvanced(session.sessionId, requestId, {
+          revision: session.revision, answerIds, batchManifestHash: session.advanced.commitHash,
+          ...(designState ? { designStateName: designState.name, designStateNameSource: designState.source } : {})
+        })
+
+        if (!current()) {
+          return
+        }
+
+        if (!result.ok) {
+          setErrors(s => ({ ...s, apply: result.serverCode || result.code }))
+          setCommitUnresolved(result.unresolved === true)
+        } else {
+          // A broker success acknowledges a queued batch, not native delivery. Do not offer a fresh apply while
+          // the canonical poll catches up (the broker's commit reply may contain only a batch).
+          setCommitUnresolved(true)
+          setNaming(null)
+          const canonical = parseSession(result.session)
+
+          if (canonical?.sessionId === session.sessionId && canonical.document === session.document) {
+            adopt(canonical)
+          }
+        }
+
+        reload()
+
+        return
+      }
+
       const result = await applyMapping(
         session.sessionId,
         designState
@@ -498,7 +582,7 @@ export function SessionView({
           : intent.current
       )
 
-      if (!mounted.current) {
+      if (!current()) {
         return
       }
 
@@ -519,7 +603,11 @@ export function SessionView({
         reload()
       }
     } catch (error) {
-      if (mounted.current) {
+      if (current()) {
+        if (hasAdvanced) {
+          setCommitUnresolved(true)
+        }
+
         const outcome =
           error instanceof MappingRefusal ? { code: error.code, message: error.message } : { code: 'DG_UNAVAILABLE' }
 
@@ -552,10 +640,22 @@ export function SessionView({
       ) : (
         <div className="grid gap-1.5">
           <Muted>{copy.mapping.waitingApply}</Muted>
+          {hasAdvanced && session.advanced && <div className="grid gap-1 text-xs text-muted-foreground">
+            <p className="break-words">{session.advanced.model.document} · {session.advanced.model.modelKey}</p>
+            {session.advanced.commitCounts ? <p>{copy.mapping.advanced.operations(session.advanced.commitCounts.upserts, session.advanced.commitCounts.deletes, session.advanced.commitCounts.direct, session.advanced.commitCounts.ordinary)}</p> : <p>{copy.mapping.advanced.contractUnavailable}</p>}
+            <p>{copy.mapping.advanced.unchosen}</p>
+            <p>{copy.mapping.advanced.exactOperations}</p>
+            {session.advanced.operations.map((op, index) => <p className="break-words" key={index}>{op.action} · {op.definitionId} · {op.definitionVersion !== null ? `v${op.definitionVersion}` : ''} · {op.classIri} · {op.instanceKey} · {op.nativeId} · {op.reason} {op.uniqueIds.join(' · ')}</p>)}
+            {!session.advanced.confirmationComplete && <p role="alert">{copy.mapping.advanced.contractUnavailable}</p>}
+            {session.advanced.ordinaryRows.map((row, index) => <p className="break-words" key={index}>{row.kind} · {row.nativeId} · {row.clear ? 'DG_Class → ∅' : row.roles.join(' · ')} · {row.name} · {row.propertyIri} · {row.stream}</p>)}
+            {session.advanced.pending.map(p => <p className="break-words" key={p.answerId}>{p.definitionId} · {p.action} · {p.answerId}</p>)}
+            {session.advanced.affectedModels.length > 0 && <div><p>{copy.mapping.advanced.affected}</p>{session.advanced.affectedModels.map(model => <p key={`${model.modelKey}:${model.definitionId}`}>{model.document} · {model.modelKey} · {model.definitionId}</p>)}</div>}
+            <p className="break-all font-mono">{session.advanced.commitHash}</p>
+          </div>}
           <Button
             className="justify-self-start"
             data-testid="degram-mapping-apply"
-            disabled={pending !== null || answerIds.length === 0 || naming !== null}
+            disabled={pending !== null || answerIds.length === 0 || naming !== null || !advancedCommitReady || commitUnresolved}
             onClick={requestApply}
             size="sm"
           >
@@ -589,7 +689,7 @@ export function SessionView({
               <div className="flex gap-1.5">
                 <Button
                   data-testid="degram-mapping-state-name-confirm"
-                  disabled={pending !== null || !naming.name.trim()}
+                  disabled={pending !== null || !naming.name.trim() || naming.operationKey !== operationKey || !advancedCommitReady || commitUnresolved}
                   onClick={confirmNamed}
                   size="sm"
                 >
@@ -605,11 +705,77 @@ export function SessionView({
         </div>
       )}
       {session.batches.map(batch => (
-        <p className="text-[0.75rem] leading-[1.4] text-muted-foreground" key={batch.batchId} role="status">
-          {copy.mapping.delivery[batch.delivery]} · {batch.answerIds.length}
-        </p>
+        <div className="grid gap-1 text-[0.75rem] leading-[1.4] text-muted-foreground" data-testid="mapping-batch-status" key={batch.batchId}>
+          <p className="break-words" role="status">{copy.mapping.delivery[batch.delivery]} · {batch.batchId} · {batch.answerIds.length}</p>
+          {batch.snapshot && <div className="grid gap-1 break-words" data-testid="mapping-snapshot-status">
+            <p role="status">{copy.mapping.advanced.snapshot}: {copy.mapping.advanced.snapshotStates[batch.snapshot.status]} · {batch.snapshot.stateId}</p>
+            {batch.snapshot.reason && <p>{batch.snapshot.reason}</p>}
+          </div>}
+        </div>
       ))}
+      {session.batches.length > 0 && <div className="grid gap-1.5">
+        <Muted>{copy.mapping.advanced.snapshotRecovery}</Muted>
+        <Button data-testid="mapping-delivery-status" disabled={readingDelivery || pending !== null} onClick={async () => {
+          if (deliveryRead.current) {return}
+          const current = guard()
+          deliveryRead.current = true
+          setReadingDelivery(true)
+
+          try {
+            const result = await readMappingSession(session.sessionId)
+
+            if (current()) {
+              if (!result.outcome && result.session.sessionId === session.sessionId && result.session.document === session.document) {
+                adopt(result.session)
+              } else {
+                setErrors(s => ({ ...s, apply: copy.mapping.advanced.contractUnavailable }))
+              }
+            }
+          } catch {
+            if (current()) {setErrors(s => ({ ...s, apply: copy.mapping.advanced.nativePending }))}
+          } finally {
+            deliveryRead.current = false
+
+            if (mounted.current) {setReadingDelivery(false)}
+          }
+        }} size="xs" variant="outline">{copy.mapping.advanced.status}</Button>
+      </div>}
       {notice && <Muted>{notice}</Muted>}
+      {commitRequest && (
+        <div className="grid gap-1.5">
+          {commitUnresolved && <Muted>{copy.mapping.advanced.nativePending}</Muted>}
+          <Button disabled={pending !== null} onClick={() => {
+            const current = guard()
+            void readAdvancedIntentStatus(session.sessionId, commitRequest).then(async result => {
+              const canonical = advancedIntentSettled(result) ? await readMappingSession(session.sessionId) : null
+
+              if (current()) {
+                if (canonical && !canonical.outcome && canonical.session.sessionId === session.sessionId && canonical.session.document === session.document) {
+                  // A consumed commit must appear as the exact idempotent batch before another confirmation is allowed.
+                  const consumed = result.ok && result.intents.some(i => i.status === 'consumed')
+
+                  const scope = committedScope.current
+
+                  const exactBatch = scope?.requestId === commitRequest && canonical.session.batches.some(b =>
+                    b.batchId === scope.requestId && b.revision === scope.revision &&
+                    JSON.stringify([...b.answerIds].sort()) === JSON.stringify([...scope.answerIds].sort()))
+
+                  if (!consumed || exactBatch) {setCommitUnresolved(false)}
+                  adopt(canonical.session)
+                }
+
+                setErrors(s => ({ ...s, apply: result.ok ? result.intents.map(i => [i.status, i.operationState].filter(Boolean).join(': ')).join(' · ') || copy.mapping.advanced.nativePending : result.code }))
+                reload()
+              }
+            }).catch(() => {
+              if (current()) {
+                setErrors(s => ({ ...s, apply: copy.mapping.advanced.nativePending }))
+              }
+            })
+          }} size="xs" variant="outline">{copy.mapping.advanced.status}</Button>
+        </div>
+      )}
+      <AdvancedMappingSection adopt={adopt} copy={copy} key={`${session.sessionId}:${session.document}`} onClarify={onClarify} reload={reload} session={session} />
 
       <div className="grid gap-1">
         <h4 className="text-[0.75rem] font-medium tracking-wide text-muted-foreground uppercase">
@@ -670,6 +836,22 @@ export function SessionView({
  */
 export function useMappingFocus(app: BridgeApp, sessionId: null | string, copy: Copy, project?: string) {
   const [focusError, setFocusError] = useState<null | string>(null)
+  const identity = JSON.stringify([app, sessionId, project])
+  const lifetime = useRef({ identity, generation: 0, mounted: true })
+
+  if (lifetime.current.identity !== identity) {
+    lifetime.current.identity = identity
+    lifetime.current.generation++
+  }
+
+  // A lifetime fence, not reactive state synchronization.
+
+  useEffect(() => {
+    const live = lifetime.current
+    live.mounted = true
+
+    return () => { live.mounted = false; live.generation++ }
+  }, [])
 
   const focusFailed = (error: unknown) =>
     setFocusError(
@@ -682,6 +864,12 @@ export function useMappingFocus(app: BridgeApp, sessionId: null | string, copy: 
 
   /** Show one row in its CAD application: a canvas component, or the elements of a Revit group of this session. */
   const focus = (item: MappingItem) => {
+    const stamp = environmentStamp()
+    const generation = ++lifetime.current.generation
+    const current = () => lifetime.current.mounted && lifetime.current.generation === generation && isCurrentEnvironment(stamp)
+
+    const failed = (error: unknown) => { if (current()) {focusFailed(error)} }
+
     if (!itemShowable(app, item)) {
       return
     }
@@ -694,13 +882,15 @@ export function useMappingFocus(app: BridgeApp, sessionId: null | string, copy: 
       setFocusError(null)
       void showRevitItem(sessionId, item.itemId)
         .then(result => {
+          if (!current()) {return}
+
           if (result.outcome) {
             setFocusError(mappingFailureText(copy, result.outcome, { app, project }))
           } else if (!result.found) {
             setFocusError(copy.mapping.notFoundRevit(item.name))
           }
         })
-        .catch(focusFailed)
+        .catch(failed)
 
       return
     }
@@ -712,13 +902,15 @@ export function useMappingFocus(app: BridgeApp, sessionId: null | string, copy: 
     setFocusError(null)
     void focusComponent(item.componentId)
       .then(result => {
+        if (!current()) {return}
+
         if (result.outcome) {
           setFocusError(mappingFailureText(copy, result.outcome, { app, project }))
         } else if (!result.found) {
           setFocusError(copy.mapping.notFound(item.name))
         }
       })
-      .catch(focusFailed)
+      .catch(failed)
   }
 
   return { focus, focusError }

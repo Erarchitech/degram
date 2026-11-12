@@ -93,13 +93,19 @@ class TestAllowlistContents:
             "mcp__revit__get_selection_snapshot", "mcp__revit__get_element_properties", "mcp__revit__list_levels",
             "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})
 
-    def test_every_revit_connector_tool_is_allowed_by_the_prefix_rule(self, degram):
-        """D-45: the rule is the server prefix, so the connector's write tools are allowed with no list entry."""
+    def test_every_classified_revit_connector_tool_is_allowed_and_an_unclassified_one_is_not(self, degram):
+        """D-45 / 1303-35: the rule is the server prefix AND a classification. The connector's write tools stay
+        allowed (typed, guarded natively); a name nobody classified, such as a tool the fork adds tomorrow, fails
+        closed, and the three native-only tools are for the main-process broker, never for the agent."""
         for name in ("modify_element", "delete_elements", "set_parameter", "place_family", "execute_revit_code",
                      "dg_mapping_status", "dg_start_mapping", "dg_show_elements", "dg_clear_mapping_colours",
-                     "a_tool_the_fork_adds_tomorrow"):
+                     "dg_model_overview", "dg_read_selection", "dg_derive_definition"):
             assert revit_tool_allowed(f"mcp__revit__{name}"), name
             assert tool_name_allowed(f"mcp__revit__{name}"), name
+        for name in ("a_tool_the_fork_adds_tomorrow", "dg_confirm_mapping_intent", "dg_preview_definition",
+                     "dg_clear_definition_preview"):
+            assert not revit_tool_allowed(f"mcp__revit__{name}"), name
+            assert not tool_name_allowed(f"mcp__revit__{name}"), name
         assert tool_name_allowed("terminal") is False, "the prefix opens Revit only, never a stock tool"
 
     def test_a_tool_of_another_mcp_server_stays_refused(self, degram):
@@ -107,7 +113,7 @@ class TestAllowlistContents:
                      "mcp__revit_extra__modify_element", "mcp__revit__", "mcp_revit_x"):
             assert not revit_tool_allowed(name), name
             assert not tool_name_allowed(name), name
-        assert revit_tool_allowed("mcp__revit__x") is True  # control: the prefix itself is the whole rule
+        assert revit_tool_allowed("mcp__revit__x") is False  # control: the prefix alone is no longer enough
 
     def test_the_eight_read_tools_stay_the_documented_subset(self):
         assert REVIT_TOOL_NAMES == REVIT_TOOL_READ_NAMES
@@ -159,6 +165,10 @@ class TestRegistry:
         # D-45: the Revit connector's tools register by prefix, write tools included.
         for name in ("mcp__revit__get_revit_status", "mcp__revit__modify_element", "mcp__revit__delete_elements",
                      "mcp__revit__execute_revit_code"):
+            reg.register(name=name, toolset="mcp-revit", schema=schema, handler=lambda a, **k: "{}")
+        # 1303-35: an unclassified name and the three native-only tools never register.
+        for name in ("mcp__revit__a_tool_the_fork_adds_tomorrow", "mcp__revit__dg_preview_definition",
+                     "mcp__revit__dg_confirm_mapping_intent", "mcp__revit__dg_clear_definition_preview"):
             reg.register(name=name, toolset="mcp-revit", schema=schema, handler=lambda a, **k: "{}")
         reg.register(name="clarify", toolset="clarify", schema=schema, handler=lambda a, **k: "{}")
         assert sorted(reg.get_all_tool_names()) == [
@@ -322,6 +332,15 @@ LOCKED_CONFIG_KEYS = [
 
 
 class TestRpcLock:
+    def test_the_advanced_mapping_names_are_exactly_seven_and_nothing_wider(self):
+        """1303-35 (R10 + atomic bulk amendment): seven exact names, no wildcard or stock expansion."""
+        advanced = sorted(n for n in ALLOWED_RPC_METHODS if n.startswith("degram.mapping.advanced"))
+        assert advanced == ["degram.mapping.advanced.answer", "degram.mapping.advanced.answers",
+                            "degram.mapping.advanced.clearPreview",
+                            "degram.mapping.advanced.confirmIntent", "degram.mapping.advanced.derive",
+                            "degram.mapping.advanced.mode", "degram.mapping.advanced.preview"]
+        assert not [n for n in ALLOWED_RPC_METHODS if "*" in n or n.endswith(".")]
+
     def test_every_registered_method_is_classified(self, degram):
         registered = set(server._methods)
         assert ALLOWED_RPC_METHODS <= registered | {"degram.credentials.set"}, (

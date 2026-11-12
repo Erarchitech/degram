@@ -519,7 +519,10 @@ describe('registerDegramIpc', () => {
         DEGRAM_CHANNELS.tourSignal,
         DEGRAM_CHANNELS.captureDg,
         DEGRAM_CHANNELS.reportOutcome,
-        DEGRAM_CHANNELS.openExternalConfirmed
+        DEGRAM_CHANNELS.openExternalConfirmed,
+        DEGRAM_CHANNELS.mappingIntent,
+        DEGRAM_CHANNELS.mappingIntentStatus,
+        DEGRAM_CHANNELS.recoverSnapshot
       ].sort()
     )
 
@@ -559,6 +562,66 @@ describe('registerDegramIpc', () => {
     await expect(call(DEGRAM_CHANNELS.openExternalConfirmed, 5)).rejects.toThrow(/url/i)
 
     expect(r.rpcCalls).toEqual([])
+  })
+
+  it('1303-35: the human-intent channels reject an untrusted sender and an invalid payload before the runtime', async () => {
+    const r = rig()
+    const intent = vi.spyOn(r.runtime, 'mappingIntent')
+    const status = vi.spyOn(r.runtime, 'mappingIntentStatus')
+    const handlers = register(r.runtime, sender => sender === 'main')
+    const valid = {
+      environment: null,
+      project: 'alpha',
+      scopeEpoch: 1,
+      sessionId: 'ms-000000000001',
+      requestId: 'req-0001',
+      action: 'approve',
+      items: [{ definitionId: 'MD-000000000001', definitionVersion: 2, resultHash: 'a'.repeat(64), bindingRevision: 4 }]
+    }
+
+    await expect(handlers.get(DEGRAM_CHANNELS.mappingIntent)!({ sender: 'a webview' }, valid)).rejects.toThrow(/sender/i)
+    await expect(handlers.get(DEGRAM_CHANNELS.mappingIntentStatus)!({ sender: 'a webview' }, valid)).rejects.toThrow(/sender/i)
+
+    for (const forged of [{ ...valid, confirmed: true }, { ...valid, intentId: 'hi-000000000000000000000001' }, { ...valid, action: 'confirmIntent' }, null, 'approve']) {
+      await expect(handlers.get(DEGRAM_CHANNELS.mappingIntent)!(trustedEvent, forged)).rejects.toThrow(/invalid mapping intent/i)
+    }
+
+    await expect(handlers.get(DEGRAM_CHANNELS.mappingIntentStatus)!(trustedEvent, { ...valid, action: 'approve' })).rejects.toThrow(/invalid mapping intent/i)
+    expect(intent).not.toHaveBeenCalled()
+    expect(status).not.toHaveBeenCalled()
+    expect(r.rpcCalls).toEqual([])
+  })
+
+  it('snapshot recovery rejects webviews and extra authority before runtime dispatch', async () => {
+    const r = rig()
+    const recover = vi.spyOn(r.runtime, 'recoverSnapshot').mockResolvedValue({ ok: true, status: 'failed' })
+    const handlers = register(r.runtime, sender => sender === 'main')
+    const payload = { environment: null, project: 'alpha', scopeEpoch: 1, sessionId: 'ms-test', batchId: 'batch-001' }
+
+    await expect(handlers.get(DEGRAM_CHANNELS.recoverSnapshot)!({ sender: 'webview' }, payload)).rejects.toThrow(/sender/i)
+    await expect(handlers.get(DEGRAM_CHANNELS.recoverSnapshot)!(trustedEvent, { ...payload, confirmed: true })).rejects.toThrow(/invalid/i)
+    expect(recover).not.toHaveBeenCalled()
+    await handlers.get(DEGRAM_CHANNELS.recoverSnapshot)!(trustedEvent, payload)
+    expect(recover).toHaveBeenCalledWith(payload)
+    expect(r.rpcCalls).toEqual([])
+  })
+
+  it('1303-35: a valid payload reaches the runtime exactly as the closed shape, and nothing else', async () => {
+    const r = rig()
+    const intent = vi.spyOn(r.runtime, 'mappingIntent').mockResolvedValue({ ok: false, requestId: 'req-0001', action: 'approve', code: 'NOT_READY', message: 'x', intents: [], completed: [], stale: [] })
+    const handlers = register(r.runtime)
+    const payload = {
+      environment: null,
+      project: 'alpha',
+      scopeEpoch: 1,
+      sessionId: 'ms-000000000001',
+      requestId: 'req-0001',
+      action: 'skip',
+      items: [{ definitionId: 'MD-000000000001', definitionVersion: 2, resultHash: 'a'.repeat(64), bindingRevision: 4 }]
+    }
+
+    await handlers.get(DEGRAM_CHANNELS.mappingIntent)!(trustedEvent, payload)
+    expect(intent).toHaveBeenCalledWith(payload)
   })
 
   it('serves the happy paths', async () => {

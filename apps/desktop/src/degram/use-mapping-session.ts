@@ -134,6 +134,12 @@ export function useMappingSession(app: string, document: string, open: boolean, 
     setStateKey(key)
     setState(INITIAL)
     setFollowUntil(0)
+
+    return () => {
+      // Invalidate all reads that are live at cleanup, not the mount-time generation.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      generation.current++
+    }
   }, [key])
 
   useEffect(() => {
@@ -214,11 +220,23 @@ export function useMappingSession(app: string, document: string, open: boolean, 
 export function useMappingSessionById(sessionId: string, scopeKey: string) {
   const [state, setState] = useState<MappingPanelState>({ ...INITIAL, loading: true })
   const generation = useRef(0)
+  const key = JSON.stringify([sessionId, scopeKey])
+  const currentKey = useRef(key)
+  const [stateKey, setStateKey] = useState(key)
+
+  if (currentKey.current !== key) {
+    currentKey.current = key
+    generation.current++
+  }
 
   const read = useCallback(async (): Promise<void> => {
+    if (currentKey.current !== key) {
+      return
+    }
+
     const gen = ++generation.current
     const stamp = environmentStamp()
-    const current = () => gen === generation.current && isCurrentEnvironment(stamp)
+    const current = () => key === currentKey.current && gen === generation.current && isCurrentEnvironment(stamp)
 
     try {
       const result = await readMappingSession(sessionId)
@@ -229,7 +247,7 @@ export function useMappingSessionById(sessionId: string, scopeKey: string) {
           loading: false,
           loaded: true,
           outcome: result.outcome,
-          session: result.session ?? s.session
+          session: result.session?.sessionId === sessionId ? result.session : s.session
         }))
       }
     } catch (error) {
@@ -237,11 +255,20 @@ export function useMappingSessionById(sessionId: string, scopeKey: string) {
         setState(s => ({ ...s, loading: false, loaded: true, outcome: failure(error) }))
       }
     }
-  }, [sessionId])
+  }, [sessionId, key])
 
   useEffect(() => {
+    generation.current++
+    setStateKey(key)
+    setState({ ...INITIAL, loading: true })
     void read()
-  }, [read, scopeKey])
+
+    return () => {
+      // Invalidate all reads that are live at cleanup, not the mount-time generation.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      generation.current++
+    }
+  }, [read, key])
 
   useEffect(() => {
     if (!needsPolling(state.session, false)) {
@@ -254,11 +281,15 @@ export function useMappingSessionById(sessionId: string, scopeKey: string) {
   }, [state, read])
 
   const adopt = useCallback((session: MappingSession) => {
+    if (currentKey.current !== key || session.sessionId !== sessionId) {
+      return
+    }
+
     generation.current++
     setState(s => ({ ...s, loading: false, loaded: true, outcome: null, session }))
-  }, [])
+  }, [key, sessionId])
 
   const reload = useCallback(() => void read(), [read])
 
-  return { state, adopt, reload }
+  return { state: stateKey === key ? state : { ...INITIAL, loading: true }, adopt, reload }
 }

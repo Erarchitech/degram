@@ -25,9 +25,11 @@ def _answered(answer_id: str) -> dict:
 
 
 def _tool(args):
-    from tools.degram_tools import _mapping
+    import tools.degram_tools  # registers the real handler
+    from tools.registry import registry
 
-    return json.loads(_mapping(args))
+    result = registry.dispatch("degram_mapping", args)
+    return json.loads(result) if isinstance(result, str) else result
 
 
 def _rpc(method, params):
@@ -48,6 +50,160 @@ def test_the_agent_tool_cannot_commit_a_batch(rt, dg):
     refused = _tool({"action": "apply", "sessionId": SID})
     assert refused["status"] == "refused" and refused["code"] == "BAD_ACTION"
     assert dg.requests == []
+
+
+def test_agent_schema_declares_only_the_exact_proposal_actions(rt):
+    import tools.degram_tools
+    from tools.registry import registry
+
+    params = registry.get_schema("degram_mapping")["parameters"]
+    assert set(params["properties"]["action"]["enum"]) == {
+        "filters", "sessions", "start", "session", "answer", "undo",
+        "advanced", "overview", "selection", "propose", "mode"}
+    assert params["additionalProperties"] is False
+    assert not {"intentId", "confirmed", "byAgent", "actor", "project", "model", "url"} & set(params["properties"])
+    assert params["properties"]["answerSummary"]["type"] == "object"
+
+
+@pytest.mark.parametrize("action", ["approve", "skip", "apply", "preview", "clear", "clear-preview", "confirm",
+                                  "confirmIntent", "derive", "answers"])
+def test_protected_actions_refused_through_real_registry(rt, dg, revit, action):
+    out = _tool({"action": action, "sessionId": SID, "confirmed": True, "byAgent": False})
+    assert out["status"] == "refused" and out["code"] == "BAD_ACTION"
+    assert dg.requests == [] and revit.calls == []
+
+
+@pytest.mark.parametrize("extra", [{"confirmed": True}, {"byAgent": False}, {"intentId": "hi-fake"},
+                                  {"project": "other"}, {"url": "http://example.invalid"}])
+def test_proof_and_scope_flags_are_refused_before_any_service_call(rt, dg, extra):
+    out = _tool({"action": "advanced", "sessionId": SID, **extra})
+    assert out["status"] == "refused" and out["code"] == "BAD_REQUEST"
+    assert dg.requests == []
+
+
+@pytest.mark.parametrize("entry", ["tool", "service"])
+@pytest.mark.parametrize("shape", ["question", "type", "detail", "pending"])
+def test_agent_and_direct_ordinary_undo_cannot_remove_advanced_answer(rt, dg, entry, shape):
+    from degram_variant.dg_client import DgRefused
+
+    answer = {"answerId": "A-protected", "questionId": QUESTION, "optionId": OPTION}
+    session = {**SESSION, "answers": [answer]}
+    if shape == "question":
+        answer["questionId"] = " %2561dvanced%253Adefinition "
+    elif shape == "type":
+        answer["type"] = "advanced-answer"
+    elif shape == "detail":
+        answer["advancedAnswer"] = {"definitionId": "MD-0123456789ab"}
+    else:
+        session["advanced"] = {"pending": [{"answerId": "A-protected"}]}
+    dg.routes[f"{BASE}/{SID}"] = (200, session)
+    dg.routes[f"POST {BASE}/{SID}/undo"] = (200, SESSION)
+    if entry == "tool":
+        out = _tool({"action": "undo", "sessionId": SID, "answerId": "A-protected"})
+        assert out["status"] == "refused" and out["code"] == "MAPPING_PROTECTED_ANSWER"
+    else:
+        with pytest.raises(DgRefused) as exc:
+            rt.mapping.undo(SID, "A-protected")
+        assert exc.value.code == "MAPPING_PROTECTED_ANSWER"
+    assert not any(r["method"] == "POST" for r in dg.requests)
+
+
+@pytest.mark.parametrize("entry", ["tool", "service"])
+def test_ordinary_undo_still_works(rt, dg, entry):
+    dg.routes[f"{BASE}/{SID}"] = (200, _answered("A-ordinary"))
+    dg.routes[f"POST {BASE}/{SID}/undo"] = (200, SESSION)
+    out = (_tool({"action": "undo", "sessionId": SID, "answerId": "A-ordinary"}) if entry == "tool"
+           else rt.mapping.undo(SID, "A-ordinary"))
+    assert (out.get("status") == "ok") if entry == "tool" else out["sessionId"] == SID
+    assert dg.requests[-1]["body"]["answerId"] == "A-ordinary"
+
+
+@pytest.mark.parametrize("kind,recipe", [
+    ("derived", {"recipe": "building-envelope", "version": 1}),
+    ("compound", {"recipe": "union-members", "version": 1, "members": ["pinned-member"]}),
+    ("direct", {"recipe": "selected-elements", "version": 1, "elementIds": ["pinned-member"]}),
+])
+def test_registry_proposes_each_kind_without_approval_or_native_effect(rt, dg, revit, kind, recipe):
+    definition = {"definitionId": "MD-0123456789ab", "classIri": "ex:Building", "mode": "advanced",
+                  "head": {"kind": kind, "source": "agent", "version": 2, "status": "draft"},
+                  "effective": {"version": 1, "status": "approved"}}
+    dg.routes["POST /data-service/mapping/definitions"] = (200, {"definition": definition})
+    out = _tool({"action": "propose", "classIri": "ex:Building", "kind": kind, "recipe": recipe,
+                 "text": "Grid 1/A, not a height measurement", "answerSummary": {"base": "Grid 1"},
+                 "expectedRevision": 1})
+    assert out["status"] == "ok" and out["definition"] == definition
+    assert out["agentDefinitionClasses"] == ["ex:Building"]
+    assert dg.requests[0]["body"]["recipe"] == recipe
+    assert dg.requests[0]["body"]["answerSummary"] == {"base": "Grid 1"}
+    assert len(dg.requests) == 1 and revit.calls == []
+    assert not any(word in dg.requests[0]["path"] for word in ("human-intents", "answers", "apply"))
+
+
+def test_registry_mode_is_only_a_revisioned_proposal(rt, dg):
+    definition = {"definitionId": "MD-0123456789ab", "mode": "advanced",
+                  "modeProposal": {"mode": "ordinary", "source": "agent"}, "effective": {"version": 1}}
+    dg.routes["POST /data-service/mapping/definitions/mode"] = (200, {"definition": definition})
+    out = _tool({"action": "mode", "definitionId": definition["definitionId"], "mode": "ordinary",
+                 "expectedRevision": 2, "reason": "prefer ordinary mapping"})
+    assert out["status"] == "ok" and out["definition"] == definition
+    assert dg.requests[0]["body"]["expectedRevision"] == 2 and len(dg.requests) == 1
+
+
+def test_registry_advanced_state_keeps_failure_and_draft_separate(rt, dg):
+    session = {**SESSION, "advanced": {"definitions": [], "bindings": [
+        {"definitionId": "MD-0123456789ab", "resultStatus": "needs-input", "resultHash": None,
+         "approved": {"definitionVersion": 1}, "materialization": {"state": "unknown"}}],
+        "pending": [], "commit": None}}
+    dg.routes[f"{BASE}/{SID}"] = (200, session)
+    out = _tool({"action": "advanced", "sessionId": SID})
+    assert out["status"] == "ok" and out["bindings"][0]["resultStatus"] == "needs-input"
+    assert out["bindings"][0]["approved"] == {"definitionVersion": 1}
+    assert out["card"]["sessionId"] == SID
+    assert len(dg.requests) == 1 and dg.requests[0]["method"] == "GET"
+
+
+@pytest.mark.parametrize("answer_id", ["A-unknown", "advanced:MD-0123456789ab", "ＡＤＶＡＮＣＥＤ：test",
+                                      "advanced%253Atest"])
+def test_unknown_or_protected_undo_id_never_reaches_post(rt, dg, answer_id):
+    dg.routes[f"{BASE}/{SID}"] = (200, SESSION)
+    out = _tool({"action": "undo", "sessionId": SID, "answerId": answer_id})
+    assert out["status"] == "refused"
+    assert out["code"] in ("MAPPING_PROTECTED_ANSWER", "MAPPING_ANSWER_NOT_FOUND")
+    assert all(r["method"] == "GET" for r in dg.requests)
+
+
+def test_agent_answer_scope_change_cannot_mark_answer_in_new_profile(rt, dg, monkeypatch):
+    from degram_variant.credentials import credentials
+
+    def delayed(*args, **kwargs):
+        credentials.clear()
+        return _answered("A-delayed")
+
+    monkeypatch.setattr(rt.mapping._dg, "post_mapping_decision", delayed)
+    monkeypatch.setattr(rt.mapping._agent, "add", lambda *a: pytest.fail("stale answer was attributed"))
+    out = _tool({"action": "answer", "sessionId": SID, "questionId": QUESTION, "optionId": OPTION})
+    assert out["code"] == "CANCELLED" and out["reason"] == "SCOPE_CHANGED"
+    assert dg.requests == []
+
+
+def test_undo_scope_change_during_canonical_read_never_posts(rt, dg, monkeypatch):
+    from degram_variant.credentials import credentials
+
+    def delayed(*args, **kwargs):
+        credentials.clear()
+        return _answered("A-ordinary")
+
+    monkeypatch.setattr(rt.mapping._dg, "get_mapping_session", delayed)
+    out = _tool({"action": "undo", "sessionId": SID, "answerId": "A-ordinary"})
+    assert out["code"] == "CANCELLED" and out["reason"] == "SCOPE_CHANGED"
+    assert dg.requests == []
+
+
+def test_user_rpc_can_still_undo_an_advanced_draft(rt, dg):
+    dg.routes[f"POST {BASE}/{SID}/undo"] = (200, SESSION)
+    out = _rpc("degram.mapping.undo", {"sessionId": SID, "answerId": "A-protected"})
+    assert out["session"]["sessionId"] == SID
+    assert dg.requests[0]["body"]["answerId"] == "A-protected"
 
 
 def test_start_reads_the_filters_in_revit_and_names_the_card(rt, revit):

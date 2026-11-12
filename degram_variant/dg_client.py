@@ -13,6 +13,15 @@ Reachable, and only for the project of the delegated credential (the project is 
   server requires the bound project and a live editor role. Delivery receipts remain connector-only; any
   ACCESS_DENIED is returned without credential fallback.
 
+- 1303-35 (advanced Revit mapping): ``GET {relayBaseUrl}/mapping/definitions``, ``POST .../definitions`` and
+  ``.../definitions/mode`` (compare-and-set proposals), ``POST .../sessions/{id}/advanced/derive`` and
+  ``GET .../advanced/derive/{requestId}`` (one canonical read-only request and its outcome),
+  ``GET .../sessions/{id}/human-intents/{intentId}`` (the status of a challenge) and
+  ``POST .../sessions/{id}/advanced/answer`` (a protected answer under the reference of a member's native-confirmed
+  intent). The delegated token proposes as ``agent`` (the server stamps it from the lane) and cannot issue,
+  confirm, claim or consume an intent, post a derive result or a delivery receipt: there is no method here for any
+  of them.
+
 The token is read from the in-memory credential per request, sent as a Bearer header only (no cookie, so no CSRF
 token) and never returned; the server re-checks membership and role. Failures are named: ``DG_UNAVAILABLE``
 (unreachable, timeout, 5xx, oversized or malformed answer) and ``ACCESS_DENIED`` (401/403). A mapping request the
@@ -23,8 +32,9 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 import httpx
 
@@ -38,8 +48,31 @@ TIMEOUT = httpx.Timeout(connect=CONNECT_TIMEOUT_S, read=20.0, write=5.0, pool=5.
 READ_ROUTES = ("graph", "rules")  # GET {relay}/{route}/{project}
 MAPPING_SESSIONS_LIMIT = 20
 REFUSAL_STATUSES = frozenset({400, 404, 409})
+ADVANCED_REFUSAL_STATUSES = REFUSAL_STATUSES | {422}
 _SERVER_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _MAX_REFUSAL_MESSAGE = 300
+_PROTECTED_QUESTION = re.compile(r"^advanced\s*:")
+_DEFINITION_ID = re.compile(r"^MD-[0-9a-f]{12}$")
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{3,64}$")
+_INTENT_ID = re.compile(r"^[A-Za-z0-9._:-]{3,128}$")
+_SESSION_ID = re.compile(r"^[A-Za-z0-9._:-]{3,128}$")
+DEFINITION_KINDS = ("derived", "compound", "direct")
+DEFINITION_MODES = ("ordinary", "advanced")
+ADVANCED_ACTIONS = ("approve", "skip")
+MAX_DEFINITION_TEXT = 2000
+
+
+def is_protected_question(value: Any) -> bool:
+    """True for a question id that names a protected advanced action, however it is spelled. The server refuses the
+    exact prefix ``advanced:`` (409 ``MAPPING_PROTECTED_QUESTION``); this is stricter and runs first, so the ordinary
+    answer never even tries a case, width, zero-width, control or percent-encoded variant."""
+    if not isinstance(value, str):
+        return False
+    text = value
+    for _ in range(3):  # a doubly encoded colon is still a colon
+        text = unicodedata.normalize("NFKC", unquote(text))
+    text = "".join(ch for ch in text if unicodedata.category(ch) not in ("Cf", "Cc", "Cs", "Co", "Cn"))
+    return bool(_PROTECTED_QUESTION.match(text.strip().casefold()))
 
 
 class DgRefused(Exception):
@@ -51,6 +84,17 @@ class DgRefused(Exception):
         self.status = status
         self.code = code
         self.message = message
+
+
+def local_refusal(status: int, code: str, message: str) -> DgRefused:
+    """A refusal this component makes BEFORE any request (same shape as the server's, so callers map one type)."""
+    return DgRefused(status, code, message[:_MAX_REFUSAL_MESSAGE])
+
+
+def require_pattern(value: Any, pattern: re.Pattern, field: str) -> str:
+    if not isinstance(value, str) or not pattern.match(value):
+        raise ValueError(f"{field} is not a valid id")
+    return value
 
 
 def _refusal(status: int, body: bytes) -> DgRefused:
@@ -74,6 +118,11 @@ def _refusal(status: int, body: bytes) -> DgRefused:
 class DgClient:
     def __init__(self, store: DegramCredentials | None = None) -> None:
         self._store = store or _credentials
+
+    def generation(self) -> int:
+        """Counts every credential ``set`` and ``clear`` of this process (0 for a store that has none). A caller
+        captures it before a remote step and drops the reply when it moved: the scope may have gone A -> B -> A."""
+        return int(getattr(self._store, "generation", 0) or 0)
 
     def bound_project(self) -> str:
         """The project of the delegated credential (never a parameter)."""
@@ -148,7 +197,7 @@ class DgClient:
 
     # -- mapping sessions of the bound project (1303-10) -------------------------------------------------
     def _mapping(self, method: str, session_id: str | None, action: str | None, cancel: CancelToken | None,
-                 body: dict | None = None) -> Any:
+                 body: dict | None = None, refusal_statuses: frozenset[int] = REFUSAL_STATUSES) -> Any:
         check(cancel)
         info, token = self._scope()
         path = "/mapping/sessions"
@@ -161,9 +210,10 @@ class DgClient:
             if session_id is None:
                 query["limit"] = str(MAPPING_SESSIONS_LIMIT)
             url = f"{info.relay_base_url}{path}?{urlencode(query)}"
-            return self._send("GET", url, token, "mapping", cancel, refusals=True)
+            return self._send("GET", url, token, "mapping", cancel, refusals=True, refusal_statuses=refusal_statuses)
         return self._send("POST", f"{info.relay_base_url}{path}", token, "mapping", cancel,
-                          body={"project": info.project, **(body or {})}, refusals=True)
+                          body={"project": info.project, **(body or {})}, refusals=True,
+                          refusal_statuses=refusal_statuses)
 
     def list_mapping_sessions(self, cancel: CancelToken | None = None) -> list[dict[str, Any]]:
         data = self._mapping("GET", None, None, cancel)
@@ -177,7 +227,12 @@ class DgClient:
 
     def post_mapping_decision(self, session_id: str, question_id: str, option_id: str,
                               group_ids: list[str] | None = None, cancel: CancelToken | None = None) -> dict[str, Any]:
-        """Answer one proposal; the server answers ``{decisions, profiles, session}`` and this returns the session."""
+        """Answer one proposal; the server answers ``{decisions, profiles, session}`` and this returns the session.
+        A protected ``advanced:`` question is never an ordinary answer, in any spelling (1303-35)."""
+        if is_protected_question(question_id):
+            raise local_refusal(409, "MAPPING_PROTECTED_QUESTION",
+                                "This question is a protected action and cannot be answered as an ordinary mapping "
+                                "answer. It needs a member's native confirmation.")
         body: dict[str, Any] = {"questionId": question_id, "optionId": option_id}
         if group_ids is not None:
             body["groupIds"] = list(group_ids)
@@ -233,20 +288,162 @@ class DgClient:
 
     def commit_mapping(self, session_id: str, request_id: str, revision: str, answer_ids: list[str],
                        cancel: CancelToken | None = None, design_state_name: str | None = None,
-                       design_state_name_source: str | None = None) -> dict[str, Any]:
+                       design_state_name_source: str | None = None, intent_id: str | None = None) -> dict[str, Any]:
         """Explicit intent only; DG still enforces the principal's existing apply permission. A Revit confirmation
-        records a Design State and carries its confirmed name (DG 1303-31, D-106)."""
+        records a Design State and carries its confirmed name (DG 1303-31, D-106). ``intent_id`` (1303-35) is the
+        reference of the member's native-confirmed ``advanced-commit`` proof; it is the only advanced field this
+        sends: the receipt and the connector protocol are connector-only and never travel from here."""
         body: dict[str, Any] = {"requestId": request_id, "revision": revision, "answerIds": list(answer_ids)}
         if design_state_name:
             body.update(designStateName=design_state_name, designStateNameSource=design_state_name_source or "edited")
-        data = self._mapping("POST", session_id, "apply", cancel, body)
+        if intent_id is not None:
+            body["intentId"] = require_pattern(intent_id, _INTENT_ID, "intentId")
+        states = ("queued", "written", "failed") + (("unknown", "undone") if intent_id is not None else ())
+        data = self._mapping("POST", session_id, "apply", cancel, body,
+                             refusal_statuses=ADVANCED_REFUSAL_STATUSES if intent_id is not None else REFUSAL_STATUSES)
         if (not isinstance(data, dict) or data.get("batchId") != request_id
                 or data.get("revision") != revision or data.get("answerIds") != answer_ids
                 or not isinstance(data.get("delivery"), dict)
-                or data["delivery"].get("state") not in ("queued", "written", "failed")):
+                or data["delivery"].get("state") not in states):
             raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG mapping answer has no confirmed batch.")
         return data
 
+    # -- advanced Revit mapping (1303-35; routes of plan 1303-34, API contract sections 9-11) ---------------------
+    def _advanced(self, method: str, path: str, cancel: CancelToken | None, body: dict | None = None,
+                  read_timeout_s: float | None = None) -> Any:
+        """One call of a definition, derive, intent or advanced-answer route for the bound project. The project is
+        the credential's (never a parameter); 422 is a named refusal here (portability, measurement, scope)."""
+        check(cancel)
+        info, token = self._scope()
+        base = f"{info.relay_base_url}{path}"
+        if method == "GET":
+            return self._send("GET", f"{base}?{urlencode({'project': info.project})}", token, "mapping", cancel,
+                              refusals=True, refusal_statuses=ADVANCED_REFUSAL_STATUSES,
+                              read_timeout_s=read_timeout_s)
+        return self._send("POST", base, token, "mapping", cancel, body={"project": info.project, **(body or {})},
+                          refusals=True, refusal_statuses=ADVANCED_REFUSAL_STATUSES, read_timeout_s=read_timeout_s)
+
+    def get_definitions(self, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """The shared definitions of the project and a sanitized view of the model bindings (no native ids)."""
+        data = self._advanced("GET", "/mapping/definitions", cancel)
+        if not isinstance(data, dict) or not isinstance(data.get("definitions"), list):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG definitions answer has no definition list.")
+        bindings = data.get("bindings")
+        return {"definitions": [d for d in data["definitions"] if isinstance(d, dict)],
+                "bindings": [b for b in bindings if isinstance(b, dict)] if isinstance(bindings, list) else []}
+
+    def propose_definition(self, class_iri: str, kind: str, recipe: dict, text: str | None = None,
+                           answer_summary: dict | None = None, expected_revision: int | None = None,
+                           cancel: CancelToken | None = None) -> dict[str, Any]:
+        """Propose a new DRAFT version of a class definition (compare-and-set on ``expected_revision``); the
+        effective approved version is untouched. The server stamps the proposer ``agent`` for this lane."""
+        if not isinstance(class_iri, str) or not class_iri.strip() or len(class_iri) > 300:
+            raise ValueError("classIri is required")
+        if kind not in DEFINITION_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(DEFINITION_KINDS)}")
+        if not isinstance(recipe, dict) or not recipe:
+            raise ValueError("recipe must be a non-empty object")
+        if text is not None and (not isinstance(text, str) or len(text) > MAX_DEFINITION_TEXT):
+            raise ValueError(f"text must have at most {MAX_DEFINITION_TEXT} characters")
+        if answer_summary is not None and not isinstance(answer_summary, dict):
+            raise ValueError("answerSummary must be an object")
+        _revision(expected_revision, 1, "expectedRevision", optional=True)
+        body: dict[str, Any] = {"classIri": class_iri.strip(), "kind": kind, "recipe": recipe}
+        if text is not None:
+            body["text"] = text
+        if answer_summary is not None:
+            body["answerSummary"] = answer_summary
+        if expected_revision is not None:
+            body["expectedRevision"] = expected_revision
+        return _definition_of(self._advanced("POST", "/mapping/definitions", cancel, body))
+
+    def propose_mode(self, definition_id: str, mode: str, expected_revision: int, reason: str | None = None,
+                     cancel: CancelToken | None = None) -> dict[str, Any]:
+        """Propose the class mode (compare-and-set); a proposal only, applied at the common confirmation."""
+        require_pattern(definition_id, _DEFINITION_ID, "definitionId")
+        if mode not in DEFINITION_MODES:
+            raise ValueError(f"mode must be one of {', '.join(DEFINITION_MODES)}")
+        _revision(expected_revision, 1, "expectedRevision")
+        if reason is not None and (not isinstance(reason, str) or len(reason) > 500):
+            raise ValueError("reason must have at most 500 characters")
+        body: dict[str, Any] = {"definitionId": definition_id, "mode": mode, "expectedRevision": expected_revision}
+        if reason is not None:
+            body["reason"] = reason
+        return _definition_of(self._advanced("POST", "/mapping/definitions/mode", cancel, body))
+
+    def request_derive(self, session_id: str, definition_id: str, request_id: str,
+                       definition_version: int | None = None, binding: dict | None = None,
+                       expected_binding_revision: int | None = None,
+                       cancel: CancelToken | None = None) -> dict[str, Any]:
+        """Freeze one canonical read-only derive request for the session's model. The connector fetches exactly
+        this by id and posts the result; nothing here posts, or could post, a result."""
+        require_pattern(session_id, _SESSION_ID, "sessionId")
+        require_pattern(definition_id, _DEFINITION_ID, "definitionId")
+        require_pattern(request_id, _REQUEST_ID, "requestId")
+        _revision(definition_version, 1, "definitionVersion", optional=True)
+        _revision(expected_binding_revision, 0, "expectedBindingRevision", optional=True)
+        if binding is not None and not isinstance(binding, dict):
+            raise ValueError("binding must be an object")
+        body: dict[str, Any] = {"definitionId": definition_id, "requestId": request_id}
+        if definition_version is not None:
+            body["definitionVersion"] = definition_version
+        if binding is not None:
+            body["binding"] = binding
+        if expected_binding_revision is not None:
+            body["expectedBindingRevision"] = expected_binding_revision
+        data = self._advanced("POST", f"/mapping/sessions/{quote(session_id, safe='')}/advanced/derive", cancel, body)
+        if (not isinstance(data, dict) or data.get("requestId") != request_id
+                or not isinstance(data.get("requestHash"), str)):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG derive answer has no frozen request.")
+        return data
+
+    def derive_status(self, session_id: str, request_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """The frozen request (``pending``) or its outcome (``completed``): the status link of a derive."""
+        require_pattern(session_id, _SESSION_ID, "sessionId")
+        require_pattern(request_id, _REQUEST_ID, "requestId")
+        data = self._advanced(
+            "GET", f"/mapping/sessions/{quote(session_id, safe='')}/advanced/derive/{quote(request_id, safe='')}",
+            cancel)
+        if not isinstance(data, dict) or data.get("status") not in ("pending", "completed"):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG derive status has no state.")
+        return data
+
+    def get_human_intent(self, session_id: str, intent_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
+        """The canonical manifest and status of one challenge (no credential, no proof secret). Read only: this
+        client cannot issue, confirm, claim or consume one."""
+        require_pattern(session_id, _SESSION_ID, "sessionId")
+        require_pattern(intent_id, _INTENT_ID, "intentId")
+        data = self._advanced(
+            "GET", f"/mapping/sessions/{quote(session_id, safe='')}/human-intents/{quote(intent_id, safe='')}", cancel)
+        if not isinstance(data, dict) or not isinstance(data.get("status"), str) or not isinstance(data.get("scope"), dict):
+            raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG intent answer has no status.")
+        return data
+
+    def post_advanced_answer(self, session_id: str, request_id: str, intent_id: str, action: str, scope: dict,
+                             cancel: CancelToken | None = None) -> dict[str, Any]:
+        """Approve or skip one advanced class as a DRAFT answer under a member's native-confirmed intent. The server
+        checks the proof for exactly this action and scope and spends it once for this ``request_id``."""
+        require_pattern(session_id, _SESSION_ID, "sessionId")
+        require_pattern(request_id, _REQUEST_ID, "requestId")
+        require_pattern(intent_id, _INTENT_ID, "intentId")
+        if action not in ADVANCED_ACTIONS:
+            raise ValueError(f"action must be one of {', '.join(ADVANCED_ACTIONS)}")
+        if not isinstance(scope, dict):
+            raise ValueError("scope must be an object")
+        data = self._advanced("POST", f"/mapping/sessions/{quote(session_id, safe='')}/advanced/answer", cancel,
+                              {"requestId": request_id, "intentId": intent_id, "action": action, "scope": scope})
+        return _session_of(data)
+
+    def post_advanced_answers(self, session_id: str, request_id: str, intent_id: str, scope: dict,
+                              cancel: CancelToken | None = None) -> dict[str, Any]:
+        require_pattern(session_id, _SESSION_ID, "sessionId")
+        require_pattern(request_id, _REQUEST_ID, "requestId")
+        require_pattern(intent_id, _INTENT_ID, "intentId")
+        if not isinstance(scope, dict):
+            raise ValueError("scope must be an object")
+        data = self._advanced("POST", f"/mapping/sessions/{quote(session_id, safe='')}/advanced/answers", cancel,
+                              {"requestId": request_id, "intentId": intent_id, "scope": scope})
+        return _session_of(data)
 
     def suggest_design_state_name(self, session_id: str, answer_ids: list[str], language: str,
                                   cancel: CancelToken | None = None) -> dict[str, Any]:
@@ -261,6 +458,20 @@ class DgClient:
         if not isinstance(data, dict) or not isinstance(data.get("name"), str):
             raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG answer has no suggested name.")
         return {"name": data["name"], "source": data.get("source") or "llm"}
+
+
+def _revision(value: Any, minimum: int, field: str, optional: bool = False) -> None:
+    if value is None and optional:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{field} must be a whole number of at least {minimum}")
+
+
+def _definition_of(data: Any) -> dict[str, Any]:
+    definition = data.get("definition") if isinstance(data, dict) else None
+    if not isinstance(definition, dict) or not isinstance(definition.get("definitionId"), str):
+        raise BridgeError(DG_UNAVAILABLE, "MALFORMED", "The DG definition answer has no definition.")
+    return definition
 
 
 def _session_of(data: Any) -> dict[str, Any]:

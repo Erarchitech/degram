@@ -80,7 +80,10 @@ it('exposes a typed degram namespace with exactly the capability bridge and no t
       'captureDg',
       'onRequestSignOut',
       'reportOutcome',
-      'openExternalConfirmed'
+      'openExternalConfirmed',
+      'mappingIntent',
+      'mappingIntentStatus',
+      'recoverSnapshot'
     ].sort()
   )
 
@@ -129,6 +132,40 @@ it('maps every method to its degram: channel and passes the argument through', a
     [DEGRAM_CHANNELS.reportOutcome, 'CREDENTIALS_EXPIRED'],
     [DEGRAM_CHANNELS.openExternalConfirmed, 'https://example.test/']
   ])
+})
+
+it('1303-35: the protected-action bridge passes the closed request through untouched and adds nothing', async () => {
+  const bridge = await degramBridge()
+  const request = {
+    environment: { environmentId: 'environment-a', generation: 3 },
+    project: 'alpha',
+    scopeEpoch: 5,
+    sessionId: 'ms-000000000001',
+    requestId: 'req-0001',
+    action: 'approve',
+    items: [{ definitionId: 'MD-000000000001', definitionVersion: 2, resultHash: 'a'.repeat(64), bindingRevision: 4 }]
+  }
+  const reply = { ok: true, requestId: 'req-0001', action: 'approve', intents: [{ intentId: 'hi-000000000000000000000001', action: 'advanced-approve', status: 'confirmed' }] }
+
+  host.invoke.mockClear()
+  host.invoke.mockResolvedValueOnce(reply)
+
+  // structured clone is what IPC does to both directions: the request and the answer must survive it unchanged
+  expect(structuredClone(request)).toEqual(request)
+  await expect(bridge.mappingIntent(request)).resolves.toEqual(reply)
+  expect(structuredClone(reply)).toEqual(reply)
+
+  await bridge.mappingIntentStatus({ environment: request.environment, project: 'alpha', scopeEpoch: 5, sessionId: request.sessionId, requestId: 'req-0001' })
+
+  expect(host.invoke.mock.calls).toEqual([
+    [DEGRAM_CHANNELS.mappingIntent, request],
+    [DEGRAM_CHANNELS.mappingIntentStatus, { environment: request.environment, project: 'alpha', scopeEpoch: 5, sessionId: request.sessionId, requestId: 'req-0001' }]
+  ])
+
+  // no channel, method or key of the bridge can carry or read a credential, an intent id getter or a confirmation
+  for (const channel of [DEGRAM_CHANNELS.mappingIntent, DEGRAM_CHANNELS.mappingIntentStatus]) {
+    expect(channel).not.toMatch(/token|credential|secret|cookie|csrf|confirm/i)
+  }
 })
 
 it('forwards generation-bound target and operation calls without adding an origin', async () => {

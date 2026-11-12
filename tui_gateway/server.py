@@ -203,6 +203,9 @@ _LONG_HANDLERS = frozenset({
     "degram.mapping.filters",
     # 1303-29 (D-97): Restate from the Model Viewer
     "degram.restate",
+    # 1303-35: the advanced mapping may wait for Revit (a derive, the native dialog, a native preview)
+    "degram.mapping.advanced.answer", "degram.mapping.advanced.answers", "degram.mapping.advanced.derive", "degram.mapping.advanced.preview",
+    "degram.mapping.advanced.clearPreview", "degram.mapping.advanced.mode", "degram.mapping.advanced.confirmIntent",
 })
 
 _rpc_pool_workers = max(2, env_int("HERMES_TUI_RPC_POOL_WORKERS", 8))

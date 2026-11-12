@@ -24,7 +24,8 @@ const ENV_KEYS = [
   'HERMES_PAYLOAD_VERSION',
   'AZURE_SIGN_ENDPOINT',
   'AZURE_CLIENT_ID',
-  'CLOUDFLARE_R2_PUBLIC_URL'
+  'CLOUDFLARE_R2_PUBLIC_URL',
+  'DEGRAM_REVIT_PYTHON_SOURCE'
 ]
 
 let saved = {}
@@ -367,6 +368,15 @@ test('the Grasshopper plugin defaults to the framework net48 Release build', () 
 })
 
 // ---- The Revit adapter's own Python ships as resources/revit-python when a staged build exists ----
+
+test('unset or empty Revit Python source does not bundle a runtime or throw', () => {
+  for (const value of [undefined, '']) {
+    if (value === undefined) delete process.env.DEGRAM_REVIT_PYTHON_SOURCE
+    else process.env.DEGRAM_REVIT_PYTHON_SOURCE = value
+    assert.ok(!loadConfig('degram').extraResources.some(item => item.to === 'revit-python'))
+  }
+})
+
 
 test('degram bundles the staged Revit Python from DEGRAM_REVIT_PYTHON_SOURCE, without bytecode caches', () => {
   const source = fs.mkdtempSync(path.join(os.tmpdir(), 'dg-revit-py-'))

@@ -175,7 +175,7 @@ class FakeDg:
                 self.wfile.write(payload)
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}/data-service"
 
     def paths(self) -> list[str]:
@@ -248,7 +248,7 @@ class FakeRelay:
                 self.wfile.flush()
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}/data-service"
 
     def chat_posts(self) -> list[dict]:

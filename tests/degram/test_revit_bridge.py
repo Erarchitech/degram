@@ -65,7 +65,9 @@ class TestConfigTemplate:
         assert "revit" in kept and kept["revit"]["sampling"] == {"enabled": False}
 
     def test_explicit_command_from_settings_still_overrides_the_placeholders(self, tmp_path):
-        out = profiles.ensure_scope_profile(tmp_path, ("alice", "acme", "tower"), revit_command="C:\\py\\python.exe",
+        out = profiles.ensure_scope_profile(tmp_path, profiles.Scope("alice", "acme", "tower",
+                                            "http://127.0.0.1:8080", profiles.environment_id_for_origin("http://127.0.0.1:8080")),
+                                            revit_command="C:\\py\\python.exe",
                                             revit_args=["C:\\r\\main.py"])
         cfg = fast_safe_load((Path(out["path"]) / "config.yaml").read_text(encoding="utf-8"))
         revit = cfg["mcp_servers"]["revit"]
@@ -235,7 +237,8 @@ class TestRevitSnapshot:
         assert not any(c["tool"] == "get_selection_snapshot" for c in adapter.calls())
 
     def test_the_client_calls_every_connector_tool_writes_included(self, rt, adapter):
-        """D-45: the 1301 read-only allowlist is gone; the client's one rule is the ``mcp__revit__`` prefix."""
+        """D-45: the 1301 read-only allowlist is gone; the client admits every classified connector tool (1303-35:
+        the prefix alone is no longer the rule, an unclassified name fails closed)."""
         client = revit_bridge.RevitBridgeClient()
         for tool in ("execute_revit_code", "set_parameter", "modify_element", "delete_elements"):
             assert revit_tool_allowed(f"{REVIT_TOOL_PREFIX}{tool}"), tool
@@ -244,6 +247,14 @@ class TestRevitSnapshot:
             assert exc.value.code != "DEGRAM_LOCKED", tool
             assert (exc.value.code, exc.value.reason) == ("SETUP_INCOMPLETE", "REVIT_ADAPTER_NOT_CONNECTED")
         assert not [c for c in adapter.calls() if c["tool"] in {"execute_revit_code", "set_parameter"}]
+
+    def test_the_client_refuses_an_unclassified_tool_before_the_registry(self, rt, adapter):
+        client = revit_bridge.RevitBridgeClient()
+        for tool in ("a_tool_the_fork_adds_tomorrow", "dg_preview_definition", "dg_confirm_mapping_intent"):
+            with pytest.raises(BridgeError) as exc:
+                client.call(tool, {})
+            assert (exc.value.code, exc.value.reason) == ("DEGRAM_LOCKED", "REVIT_TOOL_NOT_ALLOWED"), tool
+        assert not [c for c in adapter.calls() if c["tool"] in {"a_tool_the_fork_adds_tomorrow"}]
 
     def test_the_client_refuses_a_name_that_names_no_connector_tool(self):
         """The client and the registry gate share one prefix rule; a name that leaves no tool after the prefix is

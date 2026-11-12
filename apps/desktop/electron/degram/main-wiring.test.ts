@@ -3,9 +3,21 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { DEGRAM_CHANNELS } from './ipc'
 import { configuredDgTargets, environmentIdForOrigin } from './dg-target-config'
+import { createGatewayRpc } from './gateway-rpc'
 import { createDegramEnvironmentWiring, createDegramMainWiring } from './main-wiring'
+import {
+  createFakeAgent,
+  createFakeGatewaySocket,
+  createFakeMappingServer,
+  definitionId,
+  LEAKED_COOKIE,
+  LEAKED_TOKEN,
+  PROOF_SECRET,
+  resultHash,
+  tupleOf
+} from './mapping-intent-test-support'
 import type { BackendHandle } from './scope'
-import { createFakeClock, createFakeDg, createFakeViewFactory } from './test-support'
+import { createFakeClock, createFakeDg, createFakeViewFactory, TOKEN_A, TOKEN_B } from './test-support'
 
 type Handler = (event: { sender: unknown }, ...args: unknown[]) => unknown
 
@@ -413,5 +425,439 @@ describe('degram main wiring', () => {
     await new Promise(resolve => setImmediate(resolve))
 
     expect(w.sent).toEqual([])
+  })
+})
+
+// ─── 1303-35 Task 2: the human-intent broker through the actual composition ──────────────────────────
+//
+// main-wiring -> runtime -> registerDegramIpc -> broker, with injected seams only: the DG partition fetch (the member
+// lane with cookie/CSRF/role rules), the native/agent lane (the connector's dialog and protected operations behind the
+// REAL gateway-rpc) and the window. Every assertion about "no native write" counts writes the fake connector performed.
+
+const SESSION_ID = 'ms-000000000001'
+
+describe('1303-35 human-intent broker: actual main-wiring composition', () => {
+  function intentRig(options: { role?: string; timeoutMs?: number } = {}) {
+    const dg = createFakeDg()
+    const server = createFakeMappingServer({ origin: dg.origin, project: 'alpha', sessionId: SESSION_ID, base: dg.fetch })
+    const agent = createFakeAgent(server)
+    const environmentId = environmentIdForOrigin(dg.origin)
+    const stamp = { environmentId, generation: 3 }
+    const rpc = createGatewayRpc({ WebSocketImpl: createFakeGatewaySocket(agent), timeoutMs: options.timeoutMs ?? 40 })
+    const handlers = new Map<string, Handler>()
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const state = { current: true }
+
+    dg.setMe(dg.signedInMe('alpha', 'ACME', options.role ?? 'editor'))
+
+    // The backend handle main builds: the generation stamp rides on every delegated call (main.ts, createDeps).
+    const handle: BackendHandle = {
+      call: async () => ({ ok: true }),
+      callSlow: (method, params) =>
+        rpc('ws://127.0.0.1/api/ws?token=session', method, { ...(params as object), _degram_environment: stamp })
+    }
+
+    const wiring = createDegramMainWiring({
+      origin: dg.origin,
+      environmentId,
+      generation: 3,
+      isCurrent: () => state.current,
+      fetch: server.fetch,
+      clock: createFakeClock(),
+      logger,
+      createView: createFakeViewFactory().factory,
+      openExternal: vi.fn(),
+      profiles: {
+        ensure: async () => ({ profile: 'p' }),
+        purge: async () => undefined,
+        purgeProject: async () => [],
+        migrateLegacy: async () => undefined,
+        cleanupLegacy: async () => ({ ran: false, failed: [] })
+      },
+      backend: { ensure: async () => handle, release: async () => undefined },
+      ipcMain: { handle: (channel, handler) => void handlers.set(channel, handler as Handler) },
+      cookieSession: { cookies: { on: () => undefined } }
+    })
+
+    const w = fakeWindow()
+
+    return { dg, server, agent, stamp, wiring, handlers, w, state, logger }
+  }
+
+  async function ready(r: ReturnType<typeof intentRig>) {
+    r.wiring.attachWindow(r.w.window as never)
+    await r.wiring.started()
+    expect(await r.wiring.runtime.selectProject('alpha')).toMatchObject({ ok: true })
+
+    const scope = r.wiring.runtime.getState().scope
+    const payload = (over: Record<string, unknown> = {}) => ({
+      environment: r.stamp,
+      project: 'alpha',
+      scopeEpoch: scope.epoch,
+      sessionId: SESSION_ID,
+      requestId: 'req-0001',
+      action: 'approve',
+      items: [tupleOf(1)],
+      ...over
+    })
+    const call = (channel: string, body: unknown, sender: unknown = r.w.webContents) =>
+      r.handlers.get(channel)!({ sender }, body)
+
+    return { payload, call, epoch: scope.epoch }
+  }
+
+  const mappingRequests = (r: ReturnType<typeof intentRig>) => r.server.requests.length
+
+  const noLeak = (value: unknown): void => {
+    const text = JSON.stringify(value)
+
+    for (const secret of [PROOF_SECRET, LEAKED_TOKEN, LEAKED_COOKIE, TOKEN_A, TOKEN_B, 'dg_session']) {
+      expect(text).not.toContain(secret)
+    }
+  }
+
+  it('serves a protected approve end to end: IPC, runtime, member challenge, native dialog, server receipt, operation', async () => {
+    const r = intentRig()
+    const { payload, call } = await ready(r)
+    const result = (await call(DEGRAM_CHANNELS.mappingIntent, payload())) as { ok: boolean; intents: unknown[]; session: unknown }
+
+    expect(result).toMatchObject({ ok: true, requestId: 'req-0001', action: 'approve' })
+    expect(r.agent.methods()).toEqual(['degram.mapping.advanced.confirmIntent', 'degram.mapping.advanced.answer'])
+    expect(r.agent.calls[0].params._degram_environment).toEqual(r.stamp)
+    expect(r.agent.state.dialogs).toBe(1)
+    expect(r.agent.state.nativeWrites).toBe(1)
+    expect(r.server.challenges()[0].headers['X-DG-CSRF']).toBe('1')
+    // the preload-safe shape: structured-cloneable, no credential anywhere the renderer can look
+    expect(structuredClone(result)).toEqual(result)
+    noLeak(result)
+    noLeak(r.w.sent)
+  })
+
+  it('refuses a wrong sender and a forged payload before any request or native step', async () => {
+    const r = intentRig()
+    const { payload, call } = await ready(r)
+    const before = mappingRequests(r)
+
+    await expect(Promise.resolve(call(DEGRAM_CHANNELS.mappingIntent, payload(), { id: 99 }))).rejects.toThrow(/sender/i)
+    await expect(Promise.resolve(call(DEGRAM_CHANNELS.mappingIntentStatus, payload(), { id: 99 }))).rejects.toThrow(/sender/i)
+
+    for (const forged of [
+      payload({ confirmed: true }),
+      payload({ byAgent: false, source: 'desktop' }),
+      payload({ intentId: 'hi-000000000000000000000001' }),
+      payload({ scope: tupleOf(1) }),
+      payload({ url: 'http://127.0.0.1:1/', method: 'POST', body: '{}' }),
+      payload({ token: LEAKED_TOKEN }),
+      payload({ action: 'confirmIntent' })
+    ]) {
+      await expect(Promise.resolve(call(DEGRAM_CHANNELS.mappingIntent, forged))).rejects.toThrow(/invalid mapping intent/i)
+    }
+
+    expect(mappingRequests(r)).toBe(before)
+    expect(r.agent.calls).toEqual([])
+    expect(r.agent.state.nativeWrites).toBe(0)
+  })
+
+  it('missing editor role or a lost sign-in: nothing is requested and nothing is written', async () => {
+    const viewer = intentRig({ role: 'viewer' })
+    const a = await ready(viewer)
+
+    expect(await a.call(DEGRAM_CHANNELS.mappingIntent, a.payload())).toMatchObject({ ok: false, code: 'NOT_EDITOR' })
+    expect(viewer.server.requests).toEqual([])
+    expect(viewer.agent.calls).toEqual([])
+
+    const signedOut = intentRig()
+    const b = await ready(signedOut)
+
+    signedOut.dg.setMe({ status: 401 })
+    await signedOut.wiring.runtime.session.refresh()
+    expect(await b.call(DEGRAM_CHANNELS.mappingIntent, b.payload({ requestId: 'req-0002' }))).toMatchObject({
+      ok: false,
+      code: 'NOT_SIGNED_IN'
+    })
+    expect(signedOut.server.requests).toEqual([])
+    expect(signedOut.agent.state.nativeWrites).toBe(0)
+  })
+
+  it('a server that refuses the CSRF/cookie lane creates no challenge: no dialog, no write', async () => {
+    const r = intentRig()
+    const { payload, call } = await ready(r)
+
+    r.server.flags.refuseChallenge = { status: 403, code: 'CSRF_REQUIRED' }
+
+    const result = await call(DEGRAM_CHANNELS.mappingIntent, payload())
+
+    expect(result).toMatchObject({ ok: false, code: 'CHALLENGE_REFUSED', serverCode: 'CSRF_REQUIRED' })
+    expect(r.agent.state.dialogs).toBe(0)
+    expect(r.agent.state.nativeWrites).toBe(0)
+    noLeak(result)
+  })
+
+  it('a cancelled native dialog creates no proof and no write; a duplicate request replays, never a second dialog', async () => {
+    const r = intentRig()
+    const { payload, call } = await ready(r)
+
+    r.agent.state.dialog = 'cancel'
+
+    const first = await call(DEGRAM_CHANNELS.mappingIntent, payload())
+    const duplicate = await call(DEGRAM_CHANNELS.mappingIntent, payload())
+
+    expect(first).toMatchObject({ ok: false, code: 'CANCELLED' })
+    expect(duplicate).toMatchObject({ ok: false, code: 'CANCELLED', replayed: true })
+    expect(r.agent.state.dialogs).toBe(1)
+    expect(r.agent.state.nativeWrites).toBe(0)
+    expect(r.agent.methods()).toEqual(['degram.mapping.advanced.confirmIntent'])
+  })
+
+  it('two clicks at once share one dialog; a different request meanwhile is busy', async () => {
+    const r = intentRig({ timeoutMs: 5000 })
+    const { payload, call } = await ready(r)
+    let release: () => void = () => undefined
+
+    r.agent.state.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const first = call(DEGRAM_CHANNELS.mappingIntent, payload()) as Promise<unknown>
+    const second = call(DEGRAM_CHANNELS.mappingIntent, payload()) as Promise<unknown>
+
+    await vi.waitFor(() => expect(r.agent.state.dialogs).toBe(1))
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, payload({ requestId: 'req-0009' }))).toMatchObject({
+      ok: false,
+      code: 'BUSY'
+    })
+    release()
+    await Promise.all([first, second])
+
+    expect(r.agent.state.dialogs).toBe(1)
+    expect(r.agent.state.nativeWrites).toBe(1)
+  })
+
+  it('timeout after the native confirm is settled by the server receipt; a hung operation is never called twice', async () => {
+    const r = intentRig()
+    const { payload, call, epoch } = await ready(r)
+
+    r.agent.state.dialog = 'confirm-then-timeout'
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, payload())).toMatchObject({ ok: true })
+    expect(r.agent.state.dialogs).toBe(1)
+    expect(r.agent.state.nativeWrites).toBe(1)
+
+    r.server.addDefinition(2)
+    r.agent.state.hang.add('degram.mapping.advanced.preview')
+    r.agent.state.dialog = 'confirm'
+
+    const preview = payload({ requestId: 'req-prev-01', action: 'preview', items: [tupleOf(2)] })
+
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, preview)).toMatchObject({ ok: false, code: 'UNRESOLVED', unresolved: true })
+
+    const previews = (): number => r.agent.methods().filter(m => m === 'degram.mapping.advanced.preview').length
+    const once = previews()
+
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, preview)).toMatchObject({ ok: false, code: 'UNRESOLVED' })
+    expect(previews()).toBe(once)
+    expect(
+      await call(DEGRAM_CHANNELS.mappingIntentStatus, {
+        environment: r.stamp,
+        project: 'alpha',
+        scopeEpoch: epoch,
+        sessionId: SESSION_ID,
+        requestId: 'req-prev-01'
+      })
+    ).toMatchObject({ ok: true, intents: [{ status: 'confirmed' }] })
+  })
+
+  it('a generation switch during the confirmation drops the request: the operation is never called', async () => {
+    const r = intentRig({ timeoutMs: 5000 })
+    const { payload, call } = await ready(r)
+    let release: () => void = () => undefined
+
+    r.agent.state.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const pending = call(DEGRAM_CHANNELS.mappingIntent, payload()) as Promise<unknown>
+
+    await vi.waitFor(() => expect(r.agent.state.dialogs).toBe(1))
+    // the environment coordinator replaced this runtime while the person was looking at the dialog
+    r.state.current = false
+    release()
+
+    expect(await pending).toMatchObject({ ok: false, code: 'STALE_ENVIRONMENT' })
+    expect(r.agent.methods()).toEqual(['degram.mapping.advanced.confirmIntent'])
+    expect(r.agent.state.nativeWrites).toBe(0)
+  })
+
+  it('a request stamped with another environment generation or scope epoch is refused without a request', async () => {
+    const r = intentRig()
+    const { payload, call } = await ready(r)
+    const before = mappingRequests(r)
+
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, payload({ environment: { ...r.stamp, generation: 2 } }))).toMatchObject({
+      ok: false,
+      code: 'STALE_ENVIRONMENT'
+    })
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, payload({ requestId: 'req-0003', scopeEpoch: 99 }))).toMatchObject({
+      ok: false,
+      code: 'STALE_ENVIRONMENT'
+    })
+    expect(mappingRequests(r)).toBe(before)
+    expect(r.agent.calls).toEqual([])
+  })
+
+  it('bulk approve through the composition is atomic on a stale tuple', async () => {
+    const r = intentRig()
+    const { payload, call } = await ready(r)
+
+    r.server.addDefinition(2)
+
+    const stale = payload({ requestId: 'req-bulk-01', items: [tupleOf(1), { ...tupleOf(2), resultHash: resultHash(99) }] })
+
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, stale)).toMatchObject({
+      ok: false,
+      code: 'STALE_TUPLE',
+      stale: [definitionId(2)],
+      completed: []
+    })
+    expect(r.server.challenges()).toEqual([])
+    expect(r.agent.calls).toEqual([])
+
+    const fresh = payload({ requestId: 'req-bulk-02', items: [tupleOf(1), tupleOf(2)] })
+
+    expect(await call(DEGRAM_CHANNELS.mappingIntent, fresh)).toMatchObject({ ok: true })
+    expect(r.agent.state.dialogs).toBe(1)
+    expect(r.agent.state.nativeWrites).toBe(1)
+  })
+})
+
+describe('1303-35 human-intent broker: environment coordinator A to B to A', () => {
+  function environmentIntentRig(timeoutMs = 40) {
+    const targets = configuredDgTargets({})
+    const handlers = new Map<string, Handler>()
+    const resources: {
+      dg: ReturnType<typeof createFakeDg>
+      server: ReturnType<typeof createFakeMappingServer>
+      agent: ReturnType<typeof createFakeAgent>
+      generation: number
+    }[] = []
+
+    const wiring = createDegramEnvironmentWiring({
+      targets,
+      selected: targets.developer,
+      persist: vi.fn(),
+      ipcMain: { handle: (channel, handler) => void handlers.set(channel, handler as Handler) },
+      createDeps: descriptor => {
+        const dg = createFakeDg({ origin: descriptor.origin })
+        const server = createFakeMappingServer({ origin: dg.origin, project: 'alpha', sessionId: SESSION_ID, base: dg.fetch })
+        const agent = createFakeAgent(server)
+        const rpc = createGatewayRpc({ WebSocketImpl: createFakeGatewaySocket(agent), timeoutMs })
+        const stamp = { environmentId: descriptor.environmentId, generation: descriptor.generation }
+
+        dg.setMe(dg.signedInMe('alpha', 'ACME', 'editor'))
+        resources.push({ dg, server, agent, generation: descriptor.generation })
+
+        return {
+          origin: descriptor.origin,
+          environmentId: descriptor.environmentId,
+          fetch: server.fetch,
+          clock: createFakeClock(),
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+          createView: createFakeViewFactory().factory,
+          openExternal: vi.fn(),
+          profiles: {
+            ensure: async () => ({ profile: 'p' }),
+            purge: async () => undefined,
+            purgeProject: async () => [],
+            migrateLegacy: async () => undefined,
+            cleanupLegacy: async () => ({ ran: false, failed: [] })
+          },
+          backend: {
+            ensure: async () => ({
+              call: async () => ({ ok: true }),
+              callSlow: (method: string, params: unknown) =>
+                rpc('ws://x/api/ws', method, { ...(params as object), _degram_environment: stamp })
+            }),
+            release: async () => undefined
+          },
+          cookieSession: { cookies: { on: () => undefined, removeListener: () => undefined } }
+        }
+      }
+    })
+
+    const w = fakeWindow()
+    const stampNow = () => {
+      const state = wiring.controller.getState()
+
+      return { environmentId: state.selected.environmentId, generation: state.generation }
+    }
+    const call = (channel: string, body?: unknown) => handlers.get(channel)!({ sender: w.webContents }, body)
+
+    return { wiring, w, resources, stampNow, call }
+  }
+
+  it('a protected action holds the environment (a switch is busy); after it, an A-stamped request is refused by B and by A again', async () => {
+    const r = environmentIntentRig(5000)
+
+    r.wiring.attachWindow(r.w.window)
+    await r.wiring.started()
+    await r.call(DEGRAM_CHANNELS.selectProject, 'alpha')
+
+    const epochOf = async () => ((await r.call(DEGRAM_CHANNELS.getState)) as { scope: { epoch: number } }).scope.epoch
+    const stampA = r.stampNow()
+    const request = async (stamp: unknown, requestId: string) => ({
+      environment: stamp,
+      project: 'alpha',
+      scopeEpoch: await epochOf(),
+      sessionId: SESSION_ID,
+      requestId,
+      action: 'approve',
+      items: [tupleOf(1)]
+    })
+    const first = r.resources[0]
+    let release: () => void = () => undefined
+
+    first.agent.state.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const running = r.call(DEGRAM_CHANNELS.mappingIntent, await request(stampA, 'req-env-001')) as Promise<unknown>
+
+    await vi.waitFor(() => expect(first.agent.state.dialogs).toBe(1))
+    // the operation lease keeps the environment: a switch while the person decides is refused
+    expect(await r.call(DEGRAM_CHANNELS.selectTarget, { ...stampA, mode: 'demo' })).toMatchObject({ ok: false, code: 'BUSY' })
+    release()
+    expect(await running).toMatchObject({ ok: true })
+    expect(first.agent.state.nativeWrites).toBe(1)
+
+    // switch A -> B: a delayed A-stamped request meets runtime B, which refuses it without a single request
+    await r.call(DEGRAM_CHANNELS.selectTarget, { ...stampA, mode: 'demo' })
+    await r.call(DEGRAM_CHANNELS.selectProject, 'alpha')
+
+    const second = r.resources[1]
+
+    expect(await r.call(DEGRAM_CHANNELS.mappingIntent, await request(stampA, 'req-env-002'))).toMatchObject({
+      ok: false,
+      code: 'STALE_ENVIRONMENT'
+    })
+    expect(second.server.requests.filter(x => x.path.includes('/mapping/'))).toEqual([])
+    expect(second.agent.calls).toEqual([])
+    expect(first.agent.state.nativeWrites).toBe(1)
+
+    // B -> A: the new A runtime has a newer generation, the first A stamp is stale for good
+    await r.call(DEGRAM_CHANNELS.selectTarget, { ...r.stampNow(), mode: 'developer' })
+    await r.call(DEGRAM_CHANNELS.selectProject, 'alpha')
+
+    const third = r.resources[2]
+
+    expect(await r.call(DEGRAM_CHANNELS.mappingIntent, await request(stampA, 'req-env-003'))).toMatchObject({
+      ok: false,
+      code: 'STALE_ENVIRONMENT'
+    })
+    expect(third.agent.calls).toEqual([])
+    expect(third.agent.state.nativeWrites).toBe(0)
+
+    // and the current stamp works against the current environment's own lanes only
+    expect(await r.call(DEGRAM_CHANNELS.mappingIntent, await request(r.stampNow(), 'req-env-004'))).toMatchObject({ ok: true })
+    expect(third.agent.state.nativeWrites).toBe(1)
+    expect(second.agent.state.nativeWrites).toBe(0)
   })
 })

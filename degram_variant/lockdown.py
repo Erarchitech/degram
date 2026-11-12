@@ -43,11 +43,14 @@ DEGRAM_TOOL_NAMES = frozenset({
     "degram_property_check",
     # 1303-33 (D-119): start a mapping and propose answers from the chat; the user confirms in the card.
     "degram_mapping"})
-# Revit is not an allowlist any more (D-45, owner decision 2026-10-18): DeGram runs the DG Revit connector,
-# which registers every upstream tool, writes included (parameter edits, element creation and deletion,
-# colour overrides, code execution). The rule is the server prefix; the 1301 read list below stays as the
-# documented subset DeGram's own reads were built and tested against, and as the historic name other modules
-# import.
+# Revit is not a read-only allowlist any more (D-45, owner decision 2026-10-18): DeGram runs the DG Revit connector,
+# which registers writes too (parameter edits, element creation and deletion, colour overrides, code execution).
+# 1303-35 (R11, D-45 permission delta): the prefix alone is no longer the rule. A tool is admitted only when it is
+# CLASSIFIED below; a name nobody classified (a tool the fork adds tomorrow) fails closed until it is. Classification
+# decides what REGISTERS (so what the agent can see and call); it is not the guard. The connector's native dispatch
+# guard (plan 1303-34 Task 6) stays authoritative for what an admitted tool may do, even when this table is bypassed.
+# The 1301 read list below stays as the documented subset DeGram's own reads were built and tested against, and as
+# the historic name other modules import.
 REVIT_SERVER = "revit"
 REVIT_TOOL_PREFIX = f"mcp__{REVIT_SERVER}__"
 REVIT_TOOL_READ_NAMES = frozenset({
@@ -56,16 +59,56 @@ REVIT_TOOL_READ_NAMES = frozenset({
     "mcp__revit__get_current_view_info", "mcp__revit__list_category_parameters"})
 REVIT_TOOL_NAMES = REVIT_TOOL_READ_NAMES
 ALLOWED_TOOL_NAMES = frozenset({"clarify", "todo_list"}) | DEGRAM_TOOL_NAMES | REVIT_TOOL_NAMES
+
+#: The D-45 permission classes of the connector's tools (plan 1303-35 Task 1; the native classes of
+#: ``dg_transport.ROUTE_POLICY`` are the finer authority). ``human-native`` tools confirm or run a protected action
+#: natively for the main-process broker: they are never registered, so an agent can neither see nor call them.
+_REVIT_TOOL_CLASS_ROWS = {
+    "read": (
+        "get_revit_status", "get_revit_model_info", "list_open_documents", "get_selection_snapshot",
+        "get_element_properties", "list_levels", "get_current_view_info", "list_category_parameters",
+        "get_revit_view", "list_revit_views", "get_current_view_elements", "get_selected_elements", "list_families",
+        "list_family_categories", "analyze_model_statistics", "ai_element_filter", "check_clashes",
+        "export_room_data", "get_material_quantities", "dg_mapping_status", "dg_list_mapping_categories",
+        "dg_list_mapping_views", "dg_model_overview", "dg_read_selection", "dg_derive_definition"),
+    "element-mutator": ("set_parameter", "modify_element", "transform_elements", "delete_elements", "dg_restate"),
+    "bulk-mutator": ("color_splash", "clear_colors"),
+    "creator": (
+        "create_line_based_element", "create_surface_based_element", "place_family", "create_detail_line",
+        "create_dimensions", "create_grid", "create_level", "create_duct", "create_pipe", "create_mep_system",
+        "create_room", "create_room_separation", "create_schedule", "create_sheet", "create_structural_framing",
+        "create_view", "tag_elements", "tag_walls", "link_file", "load_family"),
+    "code": ("execute_revit_code",),
+    "dg": ("dg_start_mapping", "dg_show_elements", "dg_clear_mapping_colours"),
+    "view": ("set_active_view",),
+    "export": ("save_document", "export_document", "export_ifc"),
+    "human-native": ("dg_confirm_mapping_intent", "dg_preview_definition", "dg_clear_definition_preview"),
+}
+REVIT_TOOL_CLASSES = {f"{REVIT_TOOL_PREFIX}{tool}": cls for cls, tools in _REVIT_TOOL_CLASS_ROWS.items()
+                      for tool in tools}
+REVIT_HUMAN_NATIVE_TOOLS = frozenset(name for name, cls in REVIT_TOOL_CLASSES.items() if cls == "human-native")
 ALLOWED_TOOLSETS = ("clarify", "todo", "degram", "mcp-revit")
 ALLOWED_MCP_SERVERS = frozenset({REVIT_SERVER})
 # Built-in tool modules that may be imported at all in variant degram (``tools.degram*`` is plan 11's).
 ALLOWED_TOOL_MODULES = frozenset({"tools.clarify_tool", "tools.todo_tool"})
 
 
+def revit_tool_class(name: str) -> str | None:
+    """The D-45 class of a full ``mcp__revit__*`` name, or None when nobody classified it (fail closed). The class
+    decides what registers; the connector's native guard stays authoritative for what a registered tool may do."""
+    return REVIT_TOOL_CLASSES.get(name) if isinstance(name, str) else None
+
+
 def revit_tool_allowed(name: str) -> bool:
-    """D-45: every tool of the configured DG Revit connector, writes included. The prefix is the whole rule —
-    the connector registers its own tool set, so a new upstream tool needs no change here."""
-    return isinstance(name, str) and name.startswith(REVIT_TOOL_PREFIX) and len(name) > len(REVIT_TOOL_PREFIX)
+    """Registry and agent admission: a CLASSIFIED connector tool that is not native-only. Writes stay allowed (typed
+    and guarded natively); an unclassified name and the three human-native tools are refused."""
+    cls = revit_tool_class(name)
+    return cls is not None and cls != "human-native"
+
+
+def revit_native_tool_allowed(name: str) -> bool:
+    """Broker admission: only the three human-native tools, and only through ``RevitBridgeClient.call_native``."""
+    return revit_tool_class(name) == "human-native"
 
 
 def tool_name_allowed(name: str) -> bool:
@@ -249,6 +292,10 @@ ALLOWED_RPC_METHODS = frozenset({
     "degram.mapping.filters",
     # 1303-29 (D-97): Restate from the Model Viewer
     "degram.restate",
+    # 1303-35 (R10): the advanced Revit mapping, six exact names and no wildcard. Every protected action takes the
+    # reference of a member's native-confirmed intent; none of them can create or set that confirmation.
+    "degram.mapping.advanced.answer", "degram.mapping.advanced.answers", "degram.mapping.advanced.derive", "degram.mapping.advanced.preview",
+    "degram.mapping.advanced.clearPreview", "degram.mapping.advanced.mode", "degram.mapping.advanced.confirmIntent",
 })
 
 # ``config.set`` keys that would re-open provider/model/toolset/MCP/auxiliary selection, the working

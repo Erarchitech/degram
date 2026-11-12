@@ -758,6 +758,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     tourSignal: kind => ipcRenderer.invoke(DEGRAM_CHANNELS.tourSignal, kind),
     captureDg: () => ipcRenderer.invoke(DEGRAM_CHANNELS.captureDg),
     reportOutcome: code => ipcRenderer.invoke(DEGRAM_CHANNELS.reportOutcome, code),
-    openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url)
+    openExternalConfirmed: url => ipcRenderer.invoke(DEGRAM_CHANNELS.openExternalConfirmed, url),
+    // 1303-35: protected advanced-mapping card actions run through the main-owned human-intent broker. The request
+    // names only what the card showed; main builds the proof (member challenge + the connector's native dialog).
+    // Nothing here can read or send a credential, an intent id or a confirmation flag.
+    mappingIntent: request => ipcRenderer.invoke(DEGRAM_CHANNELS.mappingIntent, request),
+    mappingIntentStatus: request => ipcRenderer.invoke(DEGRAM_CHANNELS.mappingIntentStatus, request),
+    recoverSnapshot: request => ipcRenderer.invoke(DEGRAM_CHANNELS.recoverSnapshot, request)
   }
 })

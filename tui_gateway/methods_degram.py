@@ -374,14 +374,14 @@ def _(rid, params: dict) -> dict:
 @method("degram.mapping.undo")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.undo",
-                         lambda m, t: {"session": m.undo(params.get("sessionId"), params.get("answerId"), t)}, params)
+                         lambda m, t: {"session": m.undo_from_ui(params.get("sessionId"), params.get("answerId"), t)}, params)
 
 
 @method("degram.mapping.apply")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.apply", lambda m, t: {"batch": m.apply(
         params.get("sessionId"), params.get("requestId"), params.get("revision"), params.get("answerIds"), t,
-        params.get("designStateName"), params.get("designStateNameSource"))}, params)
+        params.get("designStateName"), params.get("designStateNameSource"), params.get("intentId"))}, params)
 
 
 @method("degram.mapping.suggestName")
@@ -408,6 +408,61 @@ def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.focus", lambda m, t: m.focus(
         component_id=params.get("componentId"), app=params.get("app"), session_id=params.get("sessionId"),
         item_id=params.get("itemId"), cancel=t), params)
+
+
+# -- Advanced Revit mapping (1303-35, R10): exactly these six names. Each protected action takes the REFERENCE of a
+# member's native-confirmed intent (checked against DG, then enforced by it); none can create or set a confirmation.
+# ``confirmIntent``, ``preview`` and ``clearPreview`` are the main-process broker's doors to the connector's native
+# dialog and native steps; they are not agent tools and not arbitrary tool calls (the tool names are fixed in
+# ``RevitBridgeClient.call_native``).
+
+
+@method("degram.mapping.advanced.answer")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.answer", lambda m, t: {"session": m.answer_advanced(
+        params.get("sessionId"), params.get("requestId"), params.get("intentId"), params.get("action"),
+        params.get("scope"), t)}, params)
+
+
+@method("degram.mapping.advanced.answers")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.answers", lambda m, t: {"session": m.answers_advanced(
+        params.get("sessionId"), params.get("requestId"), params.get("intentId"), params.get("scope"), t)}, params)
+
+
+@method("degram.mapping.advanced.derive")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.derive", lambda m, t: m.derive(
+        params.get("sessionId"), params.get("definitionId"), params.get("requestId"),
+        definition_version=params.get("definitionVersion"),
+        binding=params.get("binding"),
+        expected_binding_revision=params.get("expectedBindingRevision"),
+        status_only=params.get("statusOnly") is True, cancel=t), params)
+
+
+@method("degram.mapping.advanced.preview")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.preview",
+                         lambda m, t: m.preview(params.get("sessionId"), params.get("intentId"), t), params)
+
+
+@method("degram.mapping.advanced.clearPreview")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.clearPreview",
+                         lambda m, t: m.clear_preview(params.get("sessionId"), params.get("intentId"), t), params)
+
+
+@method("degram.mapping.advanced.mode")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.mode", lambda m, t: {"definition": m.propose_mode(
+        params.get("definitionId"), params.get("mode"), params.get("expectedRevision"), params.get("reason"), t)},
+        params)
+
+
+@method("degram.mapping.advanced.confirmIntent")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.advanced.confirmIntent", lambda m, t: m.confirm_intent(
+        params.get("sessionId"), params.get("intentId"), params.get("scope"), t), params)
 
 
 @method("degram.restate")

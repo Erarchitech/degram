@@ -9,6 +9,8 @@ Field names are camelCase on purpose: they are the plan-12 handoff contract with
 
 from __future__ import annotations
 
+from typing import Literal
+
 from .base import JsonValue, Params, Result
 from .registry import method
 
@@ -211,6 +213,8 @@ class DegramMappingApplyParams(Params):
     requestId: str
     revision: str
     answerIds: list[str]
+    # 1303-35: the reference of the member's native-confirmed advanced-commit intent; advanced or mixed work needs it
+    intentId: str | None = None
     # DG 1303-31 (D-106): the confirmed name of the Design State a Revit confirmation records
     designStateName: str | None = None
     designStateNameSource: str | None = None
@@ -286,6 +290,89 @@ class DegramRestateResult(DegramOutcomeFields):
     report: JsonValue = None
 
 
+# -- Advanced Revit mapping (1303-35, R10): exactly six names, no wildcard ---------------------------------------------
+# Every protected action takes the REFERENCE (intentId and the scope echo) of a member's native-confirmed intent. There
+# is no field that could carry a confirmation (``confirmed``, ``byAgent``, ``actor``): params models are closed, so such
+# a key answers 4000 before any handler runs. ``project`` is never a parameter (the delegated credential's project is
+# the only one) and neither is a tool name, URL or method.
+
+
+class DegramMappingAdvancedAnswerParams(Params):
+    sessionId: str
+    requestId: str  # the idempotency key of this answer: a retry reuses it
+    intentId: str  # the confirmed approve/skip intent the main process issued for this member
+    action: Literal["approve", "skip"]
+    scope: JsonValue  # the intent's own scope (definitionId, definitionVersion, resultHash, bindingRevision, ...)
+
+
+class DegramMappingAdvancedAnswersParams(Params):
+    sessionId: str
+    requestId: str
+    intentId: str
+    scope: JsonValue
+
+
+class DegramMappingAdvancedDeriveParams(Params):
+    sessionId: str
+    definitionId: str
+    requestId: str  # names the frozen derive request; a retry or a status read reuses it
+    definitionVersion: int | None = None
+    expectedBindingRevision: int | None = None
+    binding: dict[str, JsonValue] | None = None  # model-local correction; DG validates closed keys per kind
+    statusOnly: bool = False  # read the status of requestId; ask nothing of Revit
+
+
+class DegramMappingAdvancedPreviewParams(Params):
+    sessionId: str
+    intentId: str  # the confirmed preview-definition (or clear-definition-preview) intent
+
+
+class DegramMappingAdvancedModeParams(Params):
+    definitionId: str
+    mode: Literal["ordinary", "advanced"]
+    expectedRevision: int  # compare-and-set on the definition revision
+    reason: str | None = None
+
+
+class DegramMappingAdvancedConfirmIntentParams(Params):
+    sessionId: str  # routes the status read; it grants nothing
+    intentId: str  # the pending challenge to show in the native dialog
+    scope: JsonValue  # the challenge's own scope, echoed so a different one is refused before the dialog
+
+
+class DegramAdvancedOutcomeFields(DegramOutcomeFields):
+    # an unresolved outcome (a timeout or a cancel after a native step may have begun): read the status, never repeat it
+    unresolved: bool | None = None
+    statusLink: JsonValue = None  # {route, sessionId, intentId | requestId}
+    intent: JsonValue = None  # the challenge as DG knows it: {intentId, action, status, ...}; never a proof secret
+    tool: str | None = None
+
+
+class DegramMappingAdvancedDeriveResult(DegramAdvancedOutcomeFields):
+    requestId: str | None = None
+    requestHash: str | None = None
+    definitionId: str | None = None
+    bindingRevision: int | None = None
+    outcome: str | None = None  # ok | failed | needs-input | pending | unresolved | unknown
+    ok: bool | None = None
+    resultStatus: str | None = None
+    resultHash: str | None = None
+    change: str | None = None  # new | unchanged | changed | none
+    nativeCode: str | None = None
+    nativeMessage: str | None = None
+
+
+class DegramMappingAdvancedModeResult(DegramAdvancedOutcomeFields):
+    definition: JsonValue = None  # the PublicDefinition: the approved version and the pending proposal side by side
+
+
+class DegramMappingAdvancedIntentResult(DegramAdvancedOutcomeFields):
+    outcome: str | None = None  # confirmIntent: confirmed | cancelled; preview/clear: the native step's outcome
+    decision: str | None = None  # confirmIntent only: the exact word the dialog answered, else cancelled
+    operationId: str | None = None
+    result: JsonValue = None  # the native step's own report, size capped
+
+
 method("degram.mapping.sessions", params=DegramMappingSessionsParams, result=DegramMappingSessionsResult,
        doc="Mapping sessions of the bound project, newest first; only those of one document when document is given. "
            "Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING.")
@@ -313,6 +400,36 @@ method("degram.mapping.filters", params=DegramMappingFiltersParams, result=Degra
        doc="DG 1303-33 (D-123): the model categories that can hold DG_Class (with counts) and the views a View filter "
            "can name, read from the open Revit model through the DG Revit connector. Outcomes: BRIDGE_OFF, BUSY, "
            "EXTENSION_NOT_LOADED, SETUP_INCOMPLETE.")
+method("degram.mapping.advanced.answer", params=DegramMappingAdvancedAnswerParams,
+       result=DegramMappingSessionResult,
+       doc="1303-35: approve or skip one advanced class as a DRAFT answer under the reference of a member's "
+           "native-confirmed intent for exactly this action and scope; returns the recomputed session with its "
+           "advancedState. Errors: INTENT_NOT_CONFIRMED, INTENT_HASH_CONFLICT, ADVANCED_ANSWER_STALE.")
+method("degram.mapping.advanced.answers", params=DegramMappingAdvancedAnswersParams,
+       result=DegramMappingSessionResult,
+       doc="Atomically approve the complete frozen definition list under one confirmed human intent.")
+method("degram.mapping.advanced.derive", params=DegramMappingAdvancedDeriveParams,
+       result=DegramMappingAdvancedDeriveResult,
+       doc="1303-35: freeze one canonical read-only derive request in DG, let the DG Revit connector derive and post "
+           "its own result, and read the outcome back (ok, failed, needs-input, pending, unresolved). statusOnly reads "
+           "the status of requestId and asks Revit nothing; a timeout is unresolved and is never retried.")
+method("degram.mapping.advanced.preview", params=DegramMappingAdvancedPreviewParams,
+       result=DegramMappingAdvancedIntentResult,
+       doc="1303-35 (broker): run the native preview of a definition for a confirmed preview-definition intent, "
+           "once. A timeout is an unresolved outcome with a status link, never a second native call.")
+method("degram.mapping.advanced.clearPreview", params=DegramMappingAdvancedPreviewParams,
+       result=DegramMappingAdvancedIntentResult,
+       doc="1303-35 (broker): remove that definition's own preview for a confirmed clear-definition-preview intent, "
+           "once. Never a generic delete.")
+method("degram.mapping.advanced.mode", params=DegramMappingAdvancedModeParams, result=DegramMappingAdvancedModeResult,
+       doc="1303-35: propose the class mode (ordinary or advanced) as a compare-and-set proposal; the effective mode "
+           "and any approved instance stay until a member confirms at the common commit. Errors: "
+           "MAPPING_DEFINITION_CONFLICT.")
+method("degram.mapping.advanced.confirmIntent", params=DegramMappingAdvancedConfirmIntentParams,
+       result=DegramMappingAdvancedIntentResult,
+       doc="1303-35 (broker): show a pending challenge the main process issued for this member in the native Revit "
+           "dialog. Only a person pressing Yes confirms; Cancel grants nothing. It accepts the intent id and the "
+           "scope echo only: it cannot create a member intent or set confirmed.")
 method("degram.restate", params=DegramRestateParams, result=DegramRestateResult,
        doc="Restate a Design State of the Model Viewer (1303-29): DG answers the state's recorded placements or "
            "ParamState; Revit gets them through the DG Revit connector (dg_restate, one transaction, moves and "

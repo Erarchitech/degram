@@ -6,7 +6,8 @@
 // the panel's own requestId / revision / answerIds path. A card from another project shows a neutral notice and no
 // actions, so a left project's session is never answered or confirmed from an old chat.
 
-import { useState } from 'react'
+import { useThreadRuntime } from '@assistant-ui/react'
+import { useEffect, useRef, useState } from 'react'
 
 import { parseMaybeObject } from '@/components/assistant-ui/tool/fallback-model/format'
 import { WIDGET_SHELL_CLASS } from '@/components/chat/widget-shell'
@@ -22,7 +23,7 @@ import { canContinueAfter } from './mapping-filters'
 import { Failure, Muted, SessionView, useMappingFocus } from './mapping-session-view'
 import { mappingFailureText } from './mapping-view'
 import type { BridgeApp } from './use-degram-gateway'
-import { useDegram } from './use-degram-state'
+import { environmentStamp, isCurrentEnvironment, useDegram } from './use-degram-state'
 import { useMappingSessionById } from './use-mapping-session'
 
 /** An over-limit start (D-124): the start that continues after it, and what the last one read. */
@@ -113,18 +114,36 @@ function SessionCardBody({
 }) {
   const { t, locale } = useI18n()
   const copy = t.degram
+  const thread = useThreadRuntime({ optional: true })
   const { state, adopt, reload } = useMappingSessionById(current.sessionId, scopeKey)
   const { focus, focusError } = useMappingFocus(anchor.app, current.sessionId, copy, project)
   const ru = locale.toLowerCase().startsWith('ru')
   const [continuing, setContinuing] = useState(false)
   const [continueError, setContinueError] = useState<null | string>(null)
+  const [clarifyBusy, setClarifyBusy] = useState(false)
+  const lifetime = useRef({ mounted: true, generation: 0, active: false })
+  // Continuations belong to this mounted session card, not a later card/environment.
+
+  useEffect(() => {
+    const live = lifetime.current
+    live.mounted = true
+
+    return () => { live.mounted = false; live.generation++ }
+  }, [])
 
   const continueMapping = async (next: MappingCardNext) => {
+    if (lifetime.current.active) {return}
+    lifetime.current.active = true
+    const generation = ++lifetime.current.generation
+    const stamp = environmentStamp()
+    const valid = () => lifetime.current.mounted && lifetime.current.generation === generation && isCurrentEnvironment(stamp)
     setContinuing(true)
     setContinueError(null)
 
     try {
       const result = await startMapping('revit', next.options)
+
+      if (!valid()) {return}
 
       if (result.outcome) {
         setContinueError(mappingFailureText(copy, result.outcome, { app: anchor.app, project }))
@@ -145,9 +164,11 @@ function SessionCardBody({
         setContinueError(result.message ?? copy.mapping.notStartedRevit)
       }
     } catch {
-      setContinueError(copy.errors.unknown)
+      if (valid()) {setContinueError(copy.errors.unknown)}
     } finally {
-      setContinuing(false)
+      lifetime.current.active = false
+
+      if (valid()) {setContinuing(false)}
     }
   }
 
@@ -165,6 +186,7 @@ function SessionCardBody({
       )}
       {state.outcome && <Failure text={mappingFailureText(copy, state.outcome, { app: anchor.app, project })} />}
       {focusError && <Failure text={focusError} />}
+      {clarifyBusy && <Muted>{copy.mapping.advanced.clarifyBusy}</Muted>}
       {current.next && (
         <div className="grid gap-1.5" data-testid="degram-mapping-over-limit" role="status">
           <p className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.4]">
@@ -192,6 +214,16 @@ function SessionCardBody({
           app={anchor.app}
           copy={copy}
           key={`${scopeKey}:${current.sessionId}`}
+          onClarify={thread ? text => {
+            if (thread.getState().isRunning) {
+              setClarifyBusy(true)
+
+              return
+            }
+
+            setClarifyBusy(false)
+            thread.append({ role: 'user', content: [{ type: 'text', text }] })
+          } : undefined}
           onFocus={focus}
           project={project}
           reload={reload}
@@ -217,5 +249,5 @@ export function MappingChatCard({ anchor }: { anchor: MappingCardAnchor }) {
     )
   }
 
-  return <SessionCard anchor={anchor} project={project} scopeKey={scopeKey} />
+  return <SessionCard anchor={anchor} key={`${scopeKey}:${anchor.sessionId}`} project={project} scopeKey={scopeKey} />
 }

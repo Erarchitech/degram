@@ -3,6 +3,20 @@
 // `defineLocale` (ru.ts). fr, de, es and the other overlays fall back to English by design (UI-SPEC: "fr/de/es
 // receive the English text"), so a missing translation can never render a blank.
 
+export interface AdvancedMappingCopy {
+  title: string; approve: string; approveUnchanged: string; skip: string; clarify: string; preview: string; clear: string
+  bulk: string; ordinary: string; derive: string; status: string; waiting: string; unsupported: string; incomplete: string
+  approvedKept: string; failedNoPartial: string; noScheme: string; scheme: string; draft: string; effective: string
+  selectedOnly: string; profileUnavailable: string; contractUnavailable: string; nativePending: string
+  unchosen: string; prefill: string; prefilled: string; affected: string; exactOperations: string; clarifyBusy: string
+  inputs: string; grids: string; members: string; correctionHint: string; invalidInputs: string; allPhases: string
+  similar: string; futureScope: string; capturedMatches: (matches: number, total: number) => string
+  snapshot: string; snapshotRecovery: string; recoverPublication: string; recoveryHint: string
+  snapshotStates: { pending: string; published: string; failed: string; skipped: string; unknown: string }
+  operations: (upserts: number, deletes: number, direct: number, ordinary: number) => string
+  kinds: { derived: string; compound: string; direct: string }
+}
+
 type Count = number | string
 
 const RU_PLURAL = new Intl.PluralRules('ru')
@@ -90,6 +104,7 @@ export interface DegramCopy {
    * DG 1303-30 (D-101): the section is titled Design State («Снимок модели»), the mapping sits under it.
    */
   mapping: {
+    advanced: AdvancedMappingCopy
     tab: string
     section: string
     stateHint: string
@@ -367,6 +382,38 @@ export const degramEn: DegramCopy = {
   },
   models: { title: 'Models' },
   mapping: {
+    advanced: {
+      title: 'Advanced mapping', approve: 'Approve class', approveUnchanged: 'Approve unchanged result', skip: 'Skip class',
+      clarify: 'Clarify in chat', preview: 'Show preview', clear: 'Clear preview', bulk: 'Approve unchanged classes together',
+      clarifyBusy: 'Wait for the response to finish, then click Clarify in chat again. No message was sent.',
+      ordinary: 'Return to ordinary mapping', derive: 'Derive result', status: 'Check status',
+      recoverPublication: 'Recover snapshot publication',
+      recoveryHint: 'Uses retained captured data only. No CAD write or new capture. An unknown publication is reconciled, not created again.',
+      snapshot: 'Design State snapshot',
+      snapshotStates: { pending: 'Snapshot pending', published: 'Snapshot published', failed: 'Snapshot failed', skipped: 'Snapshot skipped', unknown: 'Snapshot status unknown' },
+      snapshotRecovery: 'Check status to refresh the recorded delivery and publication. This does not retry the CAD write or snapshot publication. A failed publication needs separate recovery; do not confirm the batch again.',
+      inputs: 'Correct model inputs', grids: 'Grid ids', members: 'Element unique ids',
+      allPhases: 'Use every phase and design option of this model for the next derivation',
+      correctionHint: 'One exact model id per line. Changes only the next derivation; does not approve or write to CAD.',
+      invalidInputs: 'Provide valid model ids, one per line, within the limit for this definition kind.',
+      waiting: 'Draft answer — waiting for the common write, not written to the model.',
+      unsupported: 'Update the connector for advanced delivery. Saved drafts are kept; mixed writes are unavailable.',
+      incomplete: 'Population or measurement eligibility is incomplete. This is not a compliance verdict.',
+      approvedKept: 'The current approved version stays effective while this draft is reviewed.',
+      failedNoPartial: 'Derivation failed or needs input. No partial shape is shown; clarify the members or grids.',
+      noScheme: 'No verified scheme is available in this response.', scheme: 'Definition scheme (not dimensions)',
+      draft: 'Draft version', effective: 'Approved version', selectedOnly: 'Only explicitly selected elements.',
+      similar: 'Apply to similar in future sessions', futureScope: 'Future Revit sessions in this project only. Whole-model coverage is unknown; the captured scope may be truncated. Does not expand this batch.',
+      capturedMatches: (matches, total) => `${matches} matches among ${total} captured elements`,
+      profileUnavailable: 'Apply to similar is unavailable: the current response has no verified selector, matches or future scope.',
+      contractUnavailable: 'Details unavailable in this response; refresh or clarify the definition.',
+      nativePending: 'Waiting for native confirmation or reconciliation. Do not repeat the action.',
+      affected: 'Models requiring a future re-derivation (not written by this confirmation)', exactOperations: 'Exact operations of this confirmation',
+      unchosen: 'Classes without a draft answer are not included. This action does not write other models.',
+      prefill: 'Add clarification to chat draft', prefilled: 'Clarification added to the chat draft; nothing was sent.',
+      operations: (upserts, deletes, direct, ordinary) => `Advanced operations: ${upserts} upserts, ${deletes} owned deletions, ${direct} direct groups (${ordinary} elements).`,
+      kinds: { derived: 'Derived instance', compound: 'Compound instance', direct: 'Direct elements' }
+    },
     tab: 'Design State',
     section: 'Mapping',
     stateHint: 'Confirming the mapping records the Design State; Restate in the Model Viewer returns the model to it.',
@@ -667,6 +714,38 @@ export const degramRu: DegramCopy = {
   },
   models: { title: 'Модели' },
   mapping: {
+    advanced: {
+      title: 'Расширенный меппинг', approve: 'Одобрить класс', approveUnchanged: 'Одобрить неизменённый результат', skip: 'Пропустить класс',
+      clarify: 'Уточнить в чате', preview: 'Показать предпросмотр', clear: 'Убрать предпросмотр', bulk: 'Одобрить неизменённые классы вместе',
+      clarifyBusy: 'Дождитесь завершения ответа и нажмите «Уточнить в чате» ещё раз. Сообщение не отправлено.',
+      ordinary: 'Вернуться к обычному меппингу', derive: 'Построить результат', status: 'Проверить статус',
+      recoverPublication: 'Восстановить публикацию снимка',
+      recoveryHint: 'Только из сохранённых данных. Без записи в CAD и нового захвата. Неизвестный результат публикации сверяется, а не создаётся повторно.',
+      snapshot: 'Снимок Design State',
+      snapshotStates: { pending: 'Снимок ожидается', published: 'Снимок опубликован', failed: 'Ошибка снимка', skipped: 'Снимок пропущен', unknown: 'Статус снимка неизвестен' },
+      snapshotRecovery: 'Проверка статуса перечитывает доставку и публикацию. Она не повторяет запись в CAD или публикацию снимка. Для ошибки публикации нужно отдельное восстановление; не подтверждайте пакет повторно.',
+      inputs: 'Исправить входные данные модели', grids: 'Идентификаторы осей', members: 'Уникальные идентификаторы элементов',
+      allPhases: 'Использовать все фазы и варианты этой модели при следующем построении',
+      correctionHint: 'Один точный идентификатор модели на строку. Меняет только следующее построение, без одобрения и записи в CAD.',
+      invalidInputs: 'Укажите допустимые идентификаторы модели, по одному на строку, в пределах лимита этого вида определения.',
+      waiting: 'Черновой ответ — ожидает общей записи, ещё не записан в модель.',
+      unsupported: 'Обновите коннектор для расширенной записи. Черновики сохранены; смешанная запись недоступна.',
+      incomplete: 'Состав объектов или измерения пока неполны. Это не результат проверки правил.',
+      approvedKept: 'Текущая одобренная версия остаётся действующей, пока рассматривается черновик.',
+      failedNoPartial: 'Построение не удалось или нужны данные. Частичная форма не показана; уточните элементы или оси.',
+      noScheme: 'В ответе нет проверенной схемы.', scheme: 'Схема определения (без размеров)',
+      draft: 'Версия черновика', effective: 'Одобренная версия', selectedOnly: 'Только явно выбранные элементы.',
+      similar: 'Применять к похожим в будущих сессиях', futureScope: 'Только будущие Revit-сессии этого проекта. Полнота всей модели неизвестна; захваченная область может быть усечена. Текущий пакет не расширяется.',
+      capturedMatches: (matches, total) => `${matches} совпадений среди ${total} захваченных элементов`,
+      profileUnavailable: 'Применение к похожим недоступно: в ответе нет проверенного селектора, совпадений и будущей области.',
+      contractUnavailable: 'В ответе нет подробностей; обновите данные или уточните определение.',
+      nativePending: 'Ожидается нативное подтверждение или сверка статуса. Не повторяйте действие.',
+      affected: 'Модели для будущего пересчёта (это подтверждение их не изменяет)', exactOperations: 'Точные операции этого подтверждения',
+      unchosen: 'Классы без чернового ответа не входят в запись. Другие модели это действие не изменяет.',
+      prefill: 'Добавить уточнение в черновик чата', prefilled: 'Уточнение добавлено в черновик чата; ничего не отправлено.',
+      operations: (upserts, deletes, direct, ordinary) => `Расширенные операции: ${upserts} созданий/обновлений, ${deletes} удалений собственных объектов, ${direct} прямых групп (${ordinary} элементов).`,
+      kinds: { derived: 'Производный экземпляр', compound: 'Составной экземпляр', direct: 'Прямые элементы' }
+    },
     tab: 'Снимок модели',
     section: 'Меппинг',
     stateHint: 'Подтверждение меппинга записывает снимок модели; Restate в Model Viewer возвращает к нему модель.',

@@ -11,7 +11,17 @@ import { type GatewayEvent } from '@hermes/shared'
 
 import { $gateway, activeGateway } from '@/store/gateway'
 
-import { $degram, acquireEnvironmentOperation, environmentStamp, isCurrentEnvironment } from './use-degram-state'
+import type {
+  MappingIntentFailure,
+  MappingIntentRequest,
+  MappingIntentResult,
+  MappingIntentStatusRequest,
+  MappingIntentStatusResult,
+  SnapshotRecoveryRequest,
+  SnapshotRecoveryResult
+} from '../../electron/degram/mapping-intent'
+
+import { $degram, acquireEnvironmentOperation, degramBridge, environmentStamp, isCurrentEnvironment } from './use-degram-state'
 
 export type BridgeApp = 'grasshopper' | 'revit'
 
@@ -169,6 +179,103 @@ export async function request<T>(method: string, params: Record<string, unknown>
     }
 
     return result
+  } finally {
+    await release()
+  }
+}
+
+/** The request fields the renderer supplies; the environment, project and scope epoch stamp is added from the store. */
+type Fenceless<T> = T extends unknown ? Omit<T, 'environment' | 'project' | 'scopeEpoch'> : never
+
+export type MappingIntentInput = Fenceless<MappingIntentRequest>
+
+export type MappingIntentStatusInput = Fenceless<MappingIntentStatusRequest>
+
+const INTENT_REFUSALS = {
+  NOT_READY: 'No project scope is ready.',
+  STALE_ENVIRONMENT: 'The environment, project or scope changed; reconcile the original target before another action.'
+} as const
+
+function intentRefusal(
+  input: { action: MappingIntentInput['action']; requestId: string },
+  code: keyof typeof INTENT_REFUSALS
+): MappingIntentFailure {
+  return { ok: false, requestId: input.requestId, action: input.action, code, message: INTENT_REFUSALS[code], intents: [], completed: [], stale: [] }
+}
+
+/** The stamp main fences a protected action with: environment generation, project and scope epoch as painted now. */
+function intentStamp(): null | { environment: ReturnType<typeof environmentStamp>; project: string; scopeEpoch: number } {
+  const scope = $degram.get().state?.scope
+
+  if (!scope || scope.status !== 'ready' || !scope.project) {
+    return null
+  }
+
+  return { environment: environmentStamp(), project: scope.project, scopeEpoch: scope.epoch }
+}
+
+const sameStamp = (a: ReturnType<typeof intentStamp>, b: ReturnType<typeof intentStamp>): boolean =>
+  Boolean(a && b && a.project === b.project && a.scopeEpoch === b.scopeEpoch) && isCurrentEnvironment(a?.environment)
+
+/**
+ * One protected advanced-mapping action of a card the user clicked (approve, skip, commit, preview, clear preview).
+ * It goes to Electron main's human-intent broker, never to the gateway: main shows the connector's native dialog and
+ * holds the proof; this side only names what the card showed. A reply that arrives after the environment, project or
+ * scope moved is dropped (`STALE_ENVIRONMENT`), never painted. Resolves (does not throw) with an ok or a failure.
+ */
+export async function runMappingIntent(input: MappingIntentInput): Promise<MappingIntentResult> {
+  const bridge = degramBridge()
+  const stamp = intentStamp()
+
+  if (!bridge || !stamp) {
+    return intentRefusal(input, 'NOT_READY')
+  }
+
+  const release = await acquireEnvironmentOperation()
+
+  if (!release) {
+    return intentRefusal(input, 'STALE_ENVIRONMENT')
+  }
+
+  try {
+    const result = await bridge.mappingIntent({ ...stamp, ...input } as MappingIntentRequest)
+
+    return sameStamp(stamp, intentStamp()) ? result : intentRefusal(input, 'STALE_ENVIRONMENT')
+  } finally {
+    await release()
+  }
+}
+
+/** The status of the challenges of an earlier `runMappingIntent` (after an unresolved outcome); read-only. */
+export async function readMappingIntentStatus(input: MappingIntentStatusInput): Promise<MappingIntentStatusResult> {
+  const bridge = degramBridge()
+  const stamp = intentStamp()
+
+  if (!bridge || !stamp) {
+    return { ok: false, code: 'NOT_READY', message: INTENT_REFUSALS.NOT_READY }
+  }
+
+  const result = await bridge.mappingIntentStatus({ ...stamp, ...input } as MappingIntentStatusRequest)
+
+  return sameStamp(stamp, intentStamp())
+    ? result
+    : { ok: false, code: 'STALE_ENVIRONMENT', message: INTENT_REFUSALS.STALE_ENVIRONMENT }
+}
+
+// Publication recovery is a narrow member operation, not an agent/native intent.
+export async function recoverMappingSnapshot(input: Fenceless<SnapshotRecoveryRequest>): Promise<SnapshotRecoveryResult> {
+  const bridge = degramBridge()
+  const stamp = intentStamp()
+
+  if (!bridge || !stamp) {return { ok: false, code: 'NOT_READY', message: INTENT_REFUSALS.NOT_READY }}
+  const release = await acquireEnvironmentOperation()
+
+  if (!release) {return { ok: false, code: 'STALE_ENVIRONMENT', message: INTENT_REFUSALS.STALE_ENVIRONMENT }}
+
+  try {
+    const result = await bridge.recoverSnapshot({ ...stamp, ...input })
+
+    return sameStamp(stamp, intentStamp()) ? result : { ok: false, code: 'STALE_ENVIRONMENT', message: INTENT_REFUSALS.STALE_ENVIRONMENT }
   } finally {
     await release()
   }

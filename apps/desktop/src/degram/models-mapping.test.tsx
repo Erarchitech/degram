@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { I18nProvider } from '@/i18n'
+import { $composerDraft } from '@/store/composer'
 import { $degramEnabled } from '@/store/degram-flag'
 import { $activeGatewayProfile } from '@/store/profile'
 import { stubMenuDomApis } from '@/test/jsdom'
@@ -401,6 +402,23 @@ describe('Explicit batch confirmation', () => {
 })
 
 describe('Mapping sub-tab on the Models page (1303-10)', () => {
+  it('uses the shared advanced section and preserves an existing chat draft on explicit clarification', async () => {
+    await ready()
+    fakeGateway(backend({ 'degram.mapping.session': () => ({ status: 'ok', session: {
+      ...SESSION, advancedState: { complete: true, definitions: [{ definitionId: 'MD-000000000001', classIri: 'ex:Building',
+        head: { version: 1, kind: 'derived', text: 'Grid A/1' } }], bindings: [], pending: [] }
+    } }) }))
+    $composerDraft.set('Existing draft')
+    const tab = await openGh()
+    expect(within(tab).getAllByTestId('advanced-mapping-section')).toHaveLength(1)
+    expect($composerDraft.get()).toBe('Existing draft')
+    fireEvent.click(within(tab).getByRole('button', { name: 'Clarify in chat' }))
+    expect($composerDraft.get()).toBe('Existing draft')
+    fireEvent.click(within(tab).getByRole('button', { name: 'Add clarification to chat draft' }))
+    expect($composerDraft.get()).toBe('Existing draft\n\nClarify in chat: ex:Building\nGrid A/1')
+    $composerDraft.set('')
+  })
+
   it('sits collapsed under every document row and reads nothing until it is opened', async () => {
     await ready()
     const gw = fakeGateway(backend())

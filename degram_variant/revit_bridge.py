@@ -4,10 +4,15 @@ The Revit adapter is the DG Revit connector (``apps/dg-revit-connector``, D-44, 
 client as server ``revit`` (see ``config_template.yaml``: bundled Python, ``DEGRAM_MODE=1``, every tool registers, no
 resources/prompts, sampling off). It opens no HTTP/SSE port and exits with the gateway (``shutdown_mcp_servers``).
 
-Owner decision 2026-10-18 (D-45) lifted every Revit restriction: the connector registers its whole tool set, write
-tools included, and ``call`` accepts every ``mcp__revit__*`` name (``lockdown.revit_tool_allowed`` is the one rule).
-Kept as transport hygiene, not as a Revit restriction: the connector stays a stdio child with no HTTP/SSE port and
-each call stays bounded and cancellable.
+Owner decision 2026-10-18 (D-45) lifted the read-only restriction: the connector registers its whole tool set, write
+tools included. Plan 1303-35 (R11) makes the admission explicit instead of prefix-only: ``call`` accepts a CLASSIFIED
+connector tool (``lockdown.revit_tool_allowed``; an unclassified name fails closed until it is classified) and never
+a human-native one. The three human-native tools (confirm a challenge, preview, clear a preview) are not registered,
+so the agent can neither see nor call them; the main-process broker reaches them only through ``call_native``, which
+runs the same MCP handler directly, once, and reports a timeout or a cancel as an UNRESOLVED outcome with a status
+link instead of repeating a native action. The connector's native guard stays authoritative for what any admitted
+tool may do. Kept as transport hygiene: the connector stays a stdio child with no HTTP/SSE port and each call stays
+bounded and cancellable.
 
 This module calls the *registered* ``mcp__revit__*`` tool handlers, the same code path the agent's tool calls take, so
 the circuit breaker, stdio respawn and result rendering are not re-implemented. Each call runs on its own bounded
@@ -48,6 +53,12 @@ TOOL_PREFIX = f"mcp__{REVIT_SERVER}__"
 LIST_TOOL = "list_open_documents"
 SNAPSHOT_TOOL = "get_selection_snapshot"
 REVIT_DEADLINE_S = 40.0  # agent tool calls: matches mcp_servers.revit.timeout in config_template.yaml
+# 1303-35: the human-native tools wait for a person (the confirmation dialog) or for a native step. Provisional,
+# measured live in the joint acceptance; a longer wait is reported as UNRESOLVED, never repeated.
+NATIVE_DEADLINES_S = {"dg_confirm_mapping_intent": 180.0, "dg_preview_definition": 60.0,
+                      "dg_clear_definition_preview": 60.0}
+NATIVE_UNRESOLVED = "NATIVE_OUTCOME_UNRESOLVED"
+_NATIVE_MCP_MARGIN_S = 30.0  # the MCP-level timeout is longer than the bounded wait, so the bounded wait fires first
 # The context PREVIEW read (1301-19, G-14): must answer BUSY before the renderer's preview RPC gives up
 # (PREVIEW_RPC_TIMEOUT_MS = 45_000 in use-degram-gateway.ts), so a blocked Revit reads as "busy", not as a timeout.
 # Measured selection reads were under 2 s on the pilot PC, so 20 s only trips on a real block (dialog, modal command).
@@ -140,18 +151,28 @@ def _parse(output: Any, tool: str) -> dict[str, Any]:
     return inner
 
 
+def _native_handler(tool: str):
+    """The MCP handler of one human-native connector tool, built directly (the tool is never in the registry).
+    The seam tests replace."""
+    from tools.mcp_tool_handlers import _make_tool_handler
+
+    return _make_tool_handler(REVIT_SERVER, tool, max(NATIVE_DEADLINES_S.values()) + _NATIVE_MCP_MARGIN_S)
+
+
 class RevitBridgeClient:
-    """Calls one DG Revit connector tool through the registered MCP handler (every ``mcp__revit__*`` tool, D-45)."""
+    """Calls one DG Revit connector tool through the registered MCP handler (every classified ``mcp__revit__*``
+    tool, D-45) or, for the broker only, one human-native tool directly (``call_native``)."""
 
     def call(self, tool: str, arguments: dict[str, Any] | None = None, *,
              cancel: CancelToken | None = None, deadline_s: float | None = None) -> dict[str, Any]:
         from degram_variant.lockdown import revit_tool_allowed
         from tools.registry import registry
 
-        name = f"{TOOL_PREFIX}{tool}"
-        if not revit_tool_allowed(name):  # the one Revit rule: the server prefix (D-45)
+        name = f"{TOOL_PREFIX}{tool}" if isinstance(tool, str) else ""
+        if not revit_tool_allowed(name):  # D-45 / R11: a classified, non-native-only connector tool
             from .outcomes import DEGRAM_LOCKED
-            raise BridgeError(DEGRAM_LOCKED, "REVIT_TOOL_NOT_ALLOWED", f"Revit tool {tool!r} is not a DG Revit connector tool.")
+            raise BridgeError(DEGRAM_LOCKED, "REVIT_TOOL_NOT_ALLOWED",
+                              f"Revit tool {tool!r} is not an admitted DG Revit connector tool.")
         check(cancel)
         entry = registry.get_entry(name)
         if entry is None:
@@ -159,6 +180,33 @@ class RevitBridgeClient:
                               "The Revit adapter is not connected. Check the DeGram settings and the pyRevit extension.")
         output = _run_bounded(lambda: registry.dispatch(name, dict(arguments or {})), cancel, deadline_s)
         return _parse(output, tool)
+
+    def call_native(self, tool: str, arguments: dict[str, Any] | None = None, *,
+                    cancel: CancelToken | None = None, deadline_s: float | None = None) -> dict[str, Any]:
+        """The broker's door to one human-native tool (``dg_confirm_mapping_intent``, ``dg_preview_definition``,
+        ``dg_clear_definition_preview``). Nothing else is admitted here, and these three are admitted nowhere else.
+        No automatic retry: a timeout or a cancel leaves the native outcome unknown, so it is raised as
+        ``BUSY``/``CANCELLED`` with reason ``NATIVE_OUTCOME_UNRESOLVED`` and ``unresolved`` set, for the caller to
+        read the operation status instead of asking Revit again."""
+        from degram_variant.lockdown import revit_native_tool_allowed
+        from .outcomes import CANCELLED, DEGRAM_LOCKED
+
+        name = f"{TOOL_PREFIX}{tool}" if isinstance(tool, str) else ""
+        if not revit_native_tool_allowed(name):
+            raise BridgeError(DEGRAM_LOCKED, "REVIT_TOOL_NOT_ALLOWED",
+                              f"Revit tool {tool!r} is not a human-native connector tool.")
+        check(cancel)
+        wait = NATIVE_DEADLINES_S[tool] if deadline_s is None else deadline_s
+        handler = _native_handler(tool)
+        try:
+            output = _run_bounded(lambda: handler(dict(arguments or {})), cancel, wait)
+            return _parse(output, tool)
+        except BridgeError as exc:
+            if exc.code in (BUSY, CANCELLED):
+                raise BridgeError(exc.code, NATIVE_UNRESOLVED,
+                                  f"The native outcome of {tool} is unknown ({exc.message}); read its operation "
+                                  "status, do not repeat it.", unresolved=True, tool=tool) from exc
+            raise
 
 
 class RevitDocumentSource:

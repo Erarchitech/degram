@@ -18,7 +18,9 @@ export interface WebSocketLike {
 
 export interface GatewayRpcDeps {
   WebSocketImpl: new (url: string) => WebSocketLike
+  /** Explicit override (for bounded tests); otherwise exact native budgets take precedence over fallback. */
   timeoutMs?: number
+  defaultTimeoutMs?: number
 }
 
 export class GatewayRpcError extends Error {
@@ -48,7 +50,13 @@ export function gatewayWsUrl(baseUrl: string, token: string): string {
 export function createGatewayRpc(
   deps: GatewayRpcDeps
 ): (wsUrl: string, method: string, params: unknown) => Promise<unknown> {
-  const timeoutMs: number = deps.timeoutMs ?? 10_000
+  // Native dialogs may wait 180s and preview/clear 60s in the Python bridge.
+  // Only these exact main-owned doors get margin; ordinary RPCs retain their budget.
+  const nativeTimeouts: Readonly<Record<string, number>> = {
+    'degram.mapping.advanced.confirmIntent': 195_000,
+    'degram.mapping.advanced.preview': 75_000,
+    'degram.mapping.advanced.clearPreview': 75_000
+  }
   let seq = 0
 
   return (wsUrl: string, method: string, params: unknown): Promise<unknown> =>
@@ -78,7 +86,7 @@ export function createGatewayRpc(
 
       const timer = setTimeout(
         () => settle(() => reject(new GatewayRpcError(`gateway call ${method} timed out`, null, 'RPC_TIMEOUT'))),
-        timeoutMs
+        deps.timeoutMs ?? nativeTimeouts[method] ?? deps.defaultTimeoutMs ?? 10_000
       )
 
       timer.unref?.()
