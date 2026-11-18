@@ -50,6 +50,7 @@ import {
   sessionLabels,
   typeLabel
 } from './mapping-view'
+import { RecognisedGroupsSection } from './recognised-groups'
 import type { BridgeApp, OutcomeInfo } from './use-degram-gateway'
 import { environmentStamp, isCurrentEnvironment } from './use-degram-state'
 
@@ -776,6 +777,16 @@ export function SessionView({
         </div>
       )}
       <AdvancedMappingSection adopt={adopt} copy={copy} key={`${session.sessionId}:${session.document}`} onClarify={onClarify} reload={reload} session={session} />
+
+      <RecognisedGroupsSection
+        adopt={adopt}
+        busy={pending !== null}
+        copy={copy}
+        project={project}
+        ru={ru}
+        session={session}
+        target={target}
+      />
 
       <div className="grid gap-1">
         <h4 className="text-[0.75rem] font-medium tracking-wide text-muted-foreground uppercase">

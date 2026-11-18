@@ -242,6 +242,13 @@ class DgClient:
     def undo_mapping_answer(self, session_id: str, answer_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
         return _session_of(self._mapping("POST", session_id, "undo", cancel, {"answerId": answer_id}))
 
+    def reclassify_mapping_group(self, session_id: str, group_id: str, class_iris: list[str],
+                                 cancel: CancelToken | None = None) -> dict[str, Any]:
+        """1303-36 (D-141): change the class of a profile-recognised group as a draft answer. DG writes nothing to the
+        CAD file until the explicit apply; the delegated token of the bound project is the only credential."""
+        return _session_of(self._mapping("POST", session_id, "reclassify", cancel,
+                                         {"groupId": group_id, "classIris": list(class_iris)}))
+
     # -- Restate of a Design State (1303-29, D-97) ----------------------------------------------------------
     def get_restate(self, state_id: str, cancel: CancelToken | None = None) -> dict[str, Any]:
         """What DeGram sends to put a Design State back into its model: ``{connector: "revit", stateId, label,

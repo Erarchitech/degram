@@ -318,6 +318,16 @@ function parseAdvanced(raw: unknown): AdvancedState | null {
   }
 }
 
+/** DG 1303-36 (D-140): a group a stored profile mapped on its own; the owner may change its class for the whole group. */
+export interface RecognisedGroup {
+  groupId: string
+  title: string
+  titleRu: string
+  size: number
+  classes: MappingLabel[]
+  profiles: { profileId: string; source: string; confirmations: number }[]
+}
+
 export interface MappingSession {
   advanced: AdvancedState | null
   revision: string
@@ -335,6 +345,9 @@ export interface MappingSession {
   agentAnswerIds: string[]
   /** The background LLM proposal: `pending` while it runs. */
   llmStatus: null | string
+  /** DG 1303-36: profile-recognised groups (empty when DG sends none), and the project classes to change them to. */
+  recognised: RecognisedGroup[]
+  recognisedClasses: MappingLabel[]
 }
 
 export interface MappingSessionRow {
@@ -499,6 +512,42 @@ function parseBatch(raw: unknown): MappingBatch | null {
     : null
 }
 
+function parseClassLabel(raw: unknown): MappingLabel | null {
+  const r = asRecord(raw)
+  const iri = asString(r?.classIri)
+
+  return iri ? { iri, label: asString(r?.label) || iri } : null
+}
+
+function parseRecognised(raw: unknown): RecognisedGroup | null {
+  const r = asRecord(raw)
+  const groupId = asString(r?.groupId)
+
+  if (!r || !groupId) {
+    return null
+  }
+
+  return {
+    groupId,
+    title: asString(r.title),
+    titleRu: asString(r.titleRu) || asString(r.title),
+    size: asCount(r.size),
+    classes: asList(r.classes).flatMap(c => {
+      const label = parseClassLabel(c)
+
+      return label ? [label] : []
+    }),
+    profiles: asList(r.profiles).flatMap(p => {
+      const rec = asRecord(p)
+      const profileId = asString(rec?.profileId)
+
+      return rec && profileId
+        ? [{ profileId, source: asString(rec.source) || 'learned', confirmations: asCount(rec.confirmations) }]
+        : []
+    })
+  }
+}
+
 export function parseSession(raw: unknown): MappingSession | null {
   const s = asRecord(raw)
   const sessionId = asString(s?.sessionId)
@@ -533,6 +582,16 @@ export function parseSession(raw: unknown): MappingSession | null {
       return answer ? [answer] : []
     }),
     llmStatus: asString(asRecord(s.llm)?.status) || null,
+    recognised: asList(s.recognised).flatMap(g => {
+      const group = parseRecognised(g)
+
+      return group ? [group] : []
+    }),
+    recognisedClasses: asList(s.recognisedClasses).flatMap(c => {
+      const label = parseClassLabel(c)
+
+      return label ? [label] : []
+    }),
     agentAnswerIds: asList(s.agentAnswerIds).filter((v): v is string => typeof v === 'string' && Boolean(v))
   }
 }
@@ -717,6 +776,15 @@ export async function answerMapping(sessionId: string, questionId: string, optio
 
 export async function undoMappingAnswer(sessionId: string, answerId: string): Promise<SessionResult> {
   return sessionResult(await call('degram.mapping.undo', { sessionId, answerId }))
+}
+
+/** DG 1303-36 (D-141): change the class of a recognised group as a draft answer; the explicit confirmation writes it. */
+export async function reclassifyMappingGroup(
+  sessionId: string,
+  groupId: string,
+  classIris: string[]
+): Promise<SessionResult> {
+  return sessionResult(await call('degram.mapping.reclassify', { sessionId, groupId, classIris }))
 }
 
 /**

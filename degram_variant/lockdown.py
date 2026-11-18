@@ -288,6 +288,8 @@ ALLOWED_RPC_METHODS = frozenset({
     # Mapping: explicit user intent is forwarded to DG, whose principal policy remains authoritative.
     "degram.mapping.sessions", "degram.mapping.session", "degram.mapping.answer", "degram.mapping.undo",
     "degram.mapping.apply", "degram.mapping.start", "degram.mapping.focus", "degram.mapping.suggestName",
+    # 1303-36 (D-141): the exact name, no wildcard; a draft the explicit apply later writes
+    "degram.mapping.reclassify",
     # 1303-33 (D-123): the categories and views the Revit mapping filters offer
     "degram.mapping.filters",
     # 1303-29 (D-97): Restate from the Model Viewer

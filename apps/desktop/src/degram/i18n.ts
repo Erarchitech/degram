@@ -190,6 +190,21 @@ export interface DegramCopy {
     }
     sending: string
     undone: string
+    /** DG 1303-36 (D-140, D-141): groups a profile mapped on its own, and the class change for a whole group. */
+    recognised: {
+      title: (count: number) => string
+      hint: string
+      elements: (count: number) => string
+      show: string
+      change: string
+      apply: string
+      cancel: string
+      search: string
+      noMatch: string
+      current: string
+      source: { learned: string; authored: string }
+      failed: string
+    }
     noSession: string
     noSessionRevit: string
     start: string
@@ -505,6 +520,20 @@ export const degramEn: DegramCopy = {
     },
     sending: 'Sending the answer',
     undone: 'Decision undone',
+    recognised: {
+      title: count => `Recognised (${count})`,
+      hint: 'Recognised by profiles; the class can be changed for the whole group. The change is written after “Confirm”.',
+      elements: count => `${count} el.`,
+      show: 'Show',
+      change: 'Change class',
+      apply: 'Apply',
+      cancel: 'Cancel',
+      search: 'Search classes',
+      noMatch: 'No class matches',
+      current: 'current',
+      source: { learned: 'learned', authored: 'authored' },
+      failed: 'The class could not be changed.'
+    },
     noSession: 'Mapping has not been run for this model yet.',
     noSessionRevit: 'There are no mapping sessions for this model yet.',
     start: 'Start mapping',
@@ -838,6 +867,20 @@ export const degramRu: DegramCopy = {
     },
     sending: 'Отправка ответа',
     undone: 'Решение отменено',
+    recognised: {
+      title: count => `Распознано (${count})`,
+      hint: 'Распознано по профилям; классы можно изменить для всей группы. Изменение записывается после «Подтвердить».',
+      elements: count => `${count} эл.`,
+      show: 'Показать',
+      change: 'Изменить класс',
+      apply: 'Применить',
+      cancel: 'Отмена',
+      search: 'Поиск класса',
+      noMatch: 'Нет подходящего класса',
+      current: 'текущий',
+      source: { learned: 'выучен', authored: 'задан вручную' },
+      failed: 'Не удалось изменить класс.'
+    },
     noSession: 'Меппинг для этой модели ещё не запускался.',
     noSessionRevit: 'Для этой модели ещё нет сессий меппинга.',
     start: 'Запустить меппинг',

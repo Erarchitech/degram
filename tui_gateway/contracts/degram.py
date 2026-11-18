@@ -208,6 +208,12 @@ class DegramMappingUndoParams(Params):
     answerId: str
 
 
+class DegramMappingReclassifyParams(Params):
+    sessionId: str
+    groupId: str
+    classIris: list[str]
+
+
 class DegramMappingApplyParams(Params):
     sessionId: str
     requestId: str
@@ -384,6 +390,9 @@ method("degram.mapping.answer", params=DegramMappingAnswerParams, result=DegramM
 method("degram.mapping.undo", params=DegramMappingUndoParams, result=DegramMappingSessionResult,
        doc="Take one answer back; returns the recomputed session. Errors: MAPPING_SESSION_APPLIED, "
            "MAPPING_ANSWER_NOT_FOUND.")
+method("degram.mapping.reclassify", params=DegramMappingReclassifyParams, result=DegramMappingSessionResult,
+       doc="Change the class of a profile-recognised group as a draft answer (1303-36, D-141); written only by "
+           "degram.mapping.apply. Errors: MAPPING_GROUP_NOT_FOUND, MAPPING_INPUT_INVALID, MAPPING_SESSION_APPLIED.")
 method("degram.mapping.apply", params=DegramMappingApplyParams, result=DegramMappingApplyResult,
        doc="Explicitly confirm the pending accepted answer ids at the given revision. Retries reuse requestId. "
            "DG enforces existing permissions; ACCESS_DENIED does not grant delegated apply. "

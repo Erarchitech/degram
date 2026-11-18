@@ -377,6 +377,13 @@ def _(rid, params: dict) -> dict:
                          lambda m, t: {"session": m.undo_from_ui(params.get("sessionId"), params.get("answerId"), t)}, params)
 
 
+@method("degram.mapping.reclassify")
+def _(rid, params: dict) -> dict:
+    return _mapping_call(rid, "degram.mapping.reclassify",
+                         lambda m, t: {"session": m.reclassify_from_ui(params.get("sessionId"), params.get("groupId"),
+                                                                       params.get("classIris"), t)}, params)
+
+
 @method("degram.mapping.apply")
 def _(rid, params: dict) -> dict:
     return _mapping_call(rid, "degram.mapping.apply", lambda m, t: {"batch": m.apply(

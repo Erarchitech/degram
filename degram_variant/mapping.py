@@ -496,6 +496,18 @@ class MappingService:
         return self._undo_answer(_require_id(session_id, "sessionId"), _require_id(answer_id, "answerId"), cancel,
                                  self._fence(models=True))
 
+    def reclassify_from_ui(self, session_id: Any, group_id: Any, class_iris: Any,
+                           cancel: CancelToken | None = None) -> dict[str, Any]:
+        """1303-36 (D-141): the «Изменить класс» button of a recognised group. A draft answer DG records; it is written
+        to the model only by the explicit apply. Not an agent action and never a proof flag."""
+        sid, gid = _require_id(session_id, "sessionId"), _require_id(group_id, "groupId")
+        if not isinstance(class_iris, list) or not 1 <= len(class_iris) <= 8                 or not all(isinstance(i, str) and i.strip() and len(i) <= _MAX_ID for i in class_iris):
+            raise ValueError("classIris must list 1 to 8 class iris")
+        fence = self._fence(models=True)
+        session = panel_session(self._dg.reclassify_mapping_group(sid, gid, list(class_iris), cancel))
+        fence.check()
+        return self._marked(session)
+
     def _undo_answer(self, session_id: str, answer_id: str, cancel: CancelToken | None, fence: _Fence) -> dict[str, Any]:
         session = panel_session(self._dg.undo_mapping_answer(session_id, answer_id, cancel))
         fence.check()

@@ -1390,6 +1390,11 @@ export interface DegramMappingUndoParams {
   sessionId: string
   answerId: string
 }
+export interface DegramMappingReclassifyParams {
+  sessionId: string
+  groupId: string
+  classIris: string[]
+}
 export interface DegramMappingApplyParams {
   sessionId: string
   requestId: string
@@ -5344,6 +5349,8 @@ export interface RpcMethods {
   'degram.mapping.filters': { params: DegramMappingFiltersParams; result: DegramMappingFiltersResult }
   /** Show one item in its CAD application: bring the Grasshopper editor forward, select one component and zoom to it (bridge focus_component), or with app revit select the elements of one session group in Revit and zoom the active view to them (dg_show_elements). */
   'degram.mapping.focus': { params: DegramMappingFocusParams; result: DegramMappingFocusResult }
+  /** Change the class of a profile-recognised group as a draft answer (1303-36, D-141); written only by degram.mapping.apply. Errors: MAPPING_GROUP_NOT_FOUND, MAPPING_INPUT_INVALID, MAPPING_SESSION_APPLIED. */
+  'degram.mapping.reclassify': { params: DegramMappingReclassifyParams; result: DegramMappingSessionResult }
   /** One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND. */
   'degram.mapping.session': { params: DegramMappingSessionParams; result: DegramMappingSessionResult }
   /** Mapping sessions of the bound project, newest first; only those of one document when document is given. Outcomes: ACCESS_DENIED, DG_UNAVAILABLE, CREDENTIALS_MISSING. */
@@ -5842,6 +5849,7 @@ export const RPC_METHODS = [
   'degram.mapping.apply',
   'degram.mapping.filters',
   'degram.mapping.focus',
+  'degram.mapping.reclassify',
   'degram.mapping.session',
   'degram.mapping.sessions',
   'degram.mapping.start',

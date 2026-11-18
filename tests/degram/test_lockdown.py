@@ -341,6 +341,11 @@ class TestRpcLock:
                             "degram.mapping.advanced.mode", "degram.mapping.advanced.preview"]
         assert not [n for n in ALLOWED_RPC_METHODS if "*" in n or n.endswith(".")]
 
+    def test_the_reclassify_name_is_exact_and_not_a_wildcard(self):
+        """1303-36 (D-141): one new exact name for the recognised-group class change."""
+        reclassify = sorted(n for n in ALLOWED_RPC_METHODS if "reclassify" in n)
+        assert reclassify == ["degram.mapping.reclassify"]
+
     def test_every_registered_method_is_classified(self, degram):
         registered = set(server._methods)
         assert ALLOWED_RPC_METHODS <= registered | {"degram.credentials.set"}, (

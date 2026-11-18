@@ -1177,6 +1177,24 @@
       }
     },
     {
+      "name": "degram.mapping.reclassify",
+      "summary": "Change the class of a profile-recognised group as a draft answer (1303-36, D-141); written only by degram.mapping.apply. Errors: MAPPING_GROUP_NOT_FOUND, MAPPING_INPUT_INVALID, MAPPING_SESSION_APPLIED.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DegramMappingReclassifyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DegramMappingSessionResult"
+        }
+      }
+    },
+    {
       "name": "degram.mapping.session",
       "summary": "One mapping session (summary, questions with items, answers, llm). Errors: MAPPING_SESSION_NOT_FOUND.",
       "params": [
@@ -14630,6 +14648,33 @@
           "status"
         ],
         "title": "DegramMappingFocusResult",
+        "type": "object"
+      },
+      "DegramMappingReclassifyParams": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "classIris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Classiris",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionId",
+          "groupId",
+          "classIris"
+        ],
+        "title": "DegramMappingReclassifyParams",
         "type": "object"
       },
       "DegramMappingSessionParams": {
