@@ -5,7 +5,7 @@
 
 export interface AdvancedMappingCopy {
   title: string; approve: string; approveUnchanged: string; skip: string; clarify: string; preview: string; clear: string
-  bulk: string; ordinary: string; derive: string; status: string; waiting: string; unsupported: string; incomplete: string
+  bulk: string; ordinary: string; derive: string; status: string; statusChecked: (state: string, time: string) => string; waiting: string; unsupported: string; incomplete: string
   approvedKept: string; failedNoPartial: string; noScheme: string; scheme: string; draft: string; effective: string
   selectedOnly: string; profileUnavailable: string; contractUnavailable: string; nativePending: string
   unchosen: string; prefill: string; prefilled: string; affected: string; exactOperations: string; clarifyBusy: string
@@ -116,6 +116,7 @@ export interface DegramCopy {
     openQuestions: (count: Count) => string
     llmPending: string
     proposals: string
+    category: string
     noProposals: string
     waitingApply: string
     confirm: (count: number) => string
@@ -402,6 +403,7 @@ export const degramEn: DegramCopy = {
       clarify: 'Clarify in chat', preview: 'Show preview', clear: 'Clear preview', bulk: 'Approve unchanged classes together',
       clarifyBusy: 'Wait for the response to finish, then click Clarify in chat again. No message was sent.',
       ordinary: 'Return to ordinary mapping', derive: 'Derive result', status: 'Check status',
+      statusChecked: (state, time) => `Checked at ${time}: ${state}`,
       recoverPublication: 'Recover snapshot publication',
       recoveryHint: 'Uses retained captured data only. No CAD write or new capture. An unknown publication is reconciled, not created again.',
       snapshot: 'Design State snapshot',
@@ -446,6 +448,7 @@ export const degramEn: DegramCopy = {
     openQuestions: n => `Open proposals: ${n}`,
     llmPending: 'The LLM proposal is still being prepared; this view updates on its own.',
     proposals: 'Proposals',
+    category: 'Category',
     noProposals: 'No open proposals.',
     waitingApply: 'Answers are drafts. Confirm once to queue only accepted decisions; other proposals remain open.',
     confirm: n => `Confirm and write (${n})`,
@@ -748,6 +751,7 @@ export const degramRu: DegramCopy = {
       clarify: 'Уточнить в чате', preview: 'Показать предпросмотр', clear: 'Убрать предпросмотр', bulk: 'Одобрить неизменённые классы вместе',
       clarifyBusy: 'Дождитесь завершения ответа и нажмите «Уточнить в чате» ещё раз. Сообщение не отправлено.',
       ordinary: 'Вернуться к обычному меппингу', derive: 'Построить результат', status: 'Проверить статус',
+      statusChecked: (state, time) => `Проверено в ${time}: ${state}`,
       recoverPublication: 'Восстановить публикацию снимка',
       recoveryHint: 'Только из сохранённых данных. Без записи в CAD и нового захвата. Неизвестный результат публикации сверяется, а не создаётся повторно.',
       snapshot: 'Снимок Design State',
@@ -792,6 +796,7 @@ export const degramRu: DegramCopy = {
     openQuestions: n => `Открытых предложений: ${n}`,
     llmPending: 'LLM ещё готовит предложение; этот вид обновится сам.',
     proposals: 'Предложения',
+    category: 'Категория',
     noProposals: 'Открытых предложений нет.',
     waitingApply:
       'Ответы — черновики. Одно подтверждение отправит на запись только принятые решения; остальные предложения останутся открытыми.',

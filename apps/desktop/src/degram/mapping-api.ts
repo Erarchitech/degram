@@ -69,6 +69,8 @@ export interface MappingQuestion {
   textRu: string
   items: MappingItem[]
   options: MappingOption[]
+  /** The Revit categories of the question's elements, most frequent first (DG 2026-11-19; empty when DG sends none). */
+  categories: string[]
 }
 
 export interface MappingAnswer {
@@ -465,7 +467,8 @@ function parseQuestion(raw: unknown): MappingQuestion | null {
       const optionId = asString(option?.optionId)
 
       return optionId ? [{ optionId, label: asString(option?.label) }] : []
-    })
+    }),
+    categories: asList(q.categories).filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
   }
 }
 

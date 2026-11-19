@@ -285,7 +285,15 @@ export function MappingSubtab({ app, document }: { app: BridgeApp; document: str
             <span className="text-[0.75rem] text-muted-foreground">{t.degram.mapping.stateHint}</span>
           </div>
         )}
-        <MappingBody app={app} document={document} open={open} />
+        {/* The panel can be taller than the window (sections, proposals, batch status): it scrolls on its own, so the
+            lower sections (Recognised, Proposals) are always reachable (owner 2026-11-19). */}
+        <div
+          className="max-h-[78vh] overflow-y-auto pr-1"
+          data-testid="degram-mapping-scroll"
+          tabIndex={open ? 0 : undefined}
+        >
+          <MappingBody app={app} document={document} open={open} />
+        </div>
       </div>
     </div>
   )

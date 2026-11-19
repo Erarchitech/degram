@@ -240,6 +240,15 @@ function ProposalCard({
         <Badge variant={question.type === 'mapping-or-design' ? 'warn' : 'outline'}>
           {typeLabel(copy.mapping, question.type)}
         </Badge>
+        {question.categories.length > 0 && (
+          <span
+            className="max-w-[40%] shrink-0 truncate text-[0.75rem] text-muted-foreground"
+            data-testid="degram-mapping-category"
+            title={`${copy.mapping.category}: ${question.categories.join(', ')}`}
+          >
+            {question.categories.join(', ')}
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate">{heading || text}</span>
         <span className="shrink-0 text-[0.75rem] text-muted-foreground">
           {copy.mapping.components(question.items.length)}
@@ -455,6 +464,7 @@ export function SessionView({
   const [commitUnresolved, setCommitUnresolved] = useState(false)
   const committedScope = useRef<{ requestId: string; revision: string; answerIds: string[] } | null>(null)
   const [readingDelivery, setReadingDelivery] = useState(false)
+  const [deliveryNote, setDeliveryNote] = useState<null | string>(null)
   const deliveryRead = useRef(false)
   const intent = useRef<MappingCommitIntent | null>(null)
   const applying = useRef(false)
@@ -728,6 +738,16 @@ export function SessionView({
             if (current()) {
               if (!result.outcome && result.session.sessionId === session.sessionId && result.session.document === session.document) {
                 adopt(result.session)
+                // The check changes nothing on screen when the state is unchanged, so it says what it found.
+                const latest = result.session.batches.at(-1)
+
+                setErrors(s => ({ ...s, apply: '' }))
+                setDeliveryNote(
+                  copy.mapping.advanced.statusChecked(
+                    latest ? copy.mapping.delivery[latest.delivery] : copy.mapping.waitingApply,
+                    new Date().toLocaleTimeString()
+                  )
+                )
               } else {
                 setErrors(s => ({ ...s, apply: copy.mapping.advanced.contractUnavailable }))
               }
@@ -740,6 +760,11 @@ export function SessionView({
             if (mounted.current) {setReadingDelivery(false)}
           }
         }} size="xs" variant="outline">{copy.mapping.advanced.status}</Button>
+        {deliveryNote && (
+          <p className="text-[0.75rem] leading-[1.4] text-muted-foreground" data-testid="mapping-delivery-note" role="status">
+            {deliveryNote}
+          </p>
+        )}
       </div>}
       {notice && <Muted>{notice}</Muted>}
       {commitRequest && (
